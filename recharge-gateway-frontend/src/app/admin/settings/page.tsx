@@ -411,6 +411,37 @@ export default function AdminSettingsPage() {
             <Field label="USDT-TRC20 合约">
               <input value={text("usdt_trc20_contract", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")} onChange={(event) => setValue("usdt_trc20_contract", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" />
             </Field>
+            <Field label="启用的直收币种" hint="逗号分隔；地址/API 未配置的币种不会展示">
+              <input value={text("direct_crypto_coins", "USDT_TRC20")} onChange={(event) => setValue("direct_crypto_coins", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" placeholder="USDT_TRC20,USDC_ERC20,ETH,BTC" />
+            </Field>
+            <Field label="USDC-ERC20 收款地址">
+              <input value={text("usdc_erc20_wallet_address")} onChange={(event) => setValue("usdc_erc20_wallet_address", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" placeholder="0x..." />
+            </Field>
+            <Field label="ETH 收款地址">
+              <input value={text("eth_wallet_address")} onChange={(event) => setValue("eth_wallet_address", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" placeholder="0x..." />
+            </Field>
+            <Field label="BTC 收款地址">
+              <input value={text("btc_wallet_address")} onChange={(event) => setValue("btc_wallet_address", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" placeholder="bc1... 或 1.../3..." />
+            </Field>
+            {secretProps("etherscan_api_key", "Etherscan API Key", data.secret_configured.etherscan_api_key, "ETH/USDC 自动确认必需")}
+            <Field label="Etherscan API 地址">
+              <input value={text("etherscan_api_base", "https://api.etherscan.io/v2/api")} onChange={(event) => setValue("etherscan_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="BTC API 地址">
+              <input value={text("btc_api_base", "https://blockstream.info/api")} onChange={(event) => setValue("btc_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="ETH 确认数">
+              <input type="number" value={text("eth_confirmations", "12")} onChange={(event) => setValue("eth_confirmations", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="BTC 确认数">
+              <input type="number" value={text("btc_confirmations", "2")} onChange={(event) => setValue("btc_confirmations", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="ETH 人民币价（CNY/ETH）" hint="用于订单折算，需手动更新">
+              <input type="number" step="0.01" value={text("crypto_eth_cny_rate", "0")} onChange={(event) => setValue("crypto_eth_cny_rate", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="BTC 人民币价（CNY/BTC）" hint="用于订单折算，需手动更新">
+              <input type="number" step="0.01" value={text("crypto_btc_cny_rate", "0")} onChange={(event) => setValue("crypto_btc_cny_rate", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
             <Field label="账单有效期（分钟）">
               <input type="number" value={text("crypto_invoice_minutes", "30")} onChange={(event) => setValue("crypto_invoice_minutes", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>

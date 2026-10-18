@@ -121,6 +121,7 @@ export type BrandInfo = {
   crypto_ready?: boolean;
   crypto_provider?: string;
   crypto_coins: string[];
+  crypto_coin_options?: { key: string; label: string }[];
   payment_mode: string;
   mock_payment_enabled: boolean;
   support_wechat: string;

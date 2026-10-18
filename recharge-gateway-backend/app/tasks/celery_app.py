@@ -27,8 +27,8 @@ celery_app.conf.update(
             "task": "app.tasks.celery_worker.cleanup_tokens_task",
             "schedule": crontab(minute="*"),
         },
-        "scan-trc20-payments": {
-            "task": "app.tasks.celery_worker.scan_trc20_payments_task",
+        "scan-direct-crypto-payments": {
+            "task": "app.tasks.celery_worker.scan_direct_crypto_payments_task",
             "schedule": crontab(minute="*"),
         },
         "feishu-daily-summary": {

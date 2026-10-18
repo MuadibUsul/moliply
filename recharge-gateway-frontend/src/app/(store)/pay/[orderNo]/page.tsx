@@ -32,6 +32,13 @@ const BASE_PROVIDERS: { key: PaymentProviderKey; label: string }[] = [
   { key: "alipay", label: "支付宝支付" },
 ];
 
+const PROVIDER_TO_COIN: Record<string, string> = {
+  usdt_trc20: "USDT_TRC20",
+  usdc_erc20: "USDC_ERC20",
+  eth: "ETH",
+  btc: "BTC",
+};
+
 function PayContent() {
   const params = useParams<{ orderNo: string }>();
   const searchParams = useSearchParams();
@@ -43,6 +50,8 @@ function PayContent() {
   const [channel, setChannel] = useState<PaymentProviderKey>(initialProvider);
   const [cryptoEnabled, setCryptoEnabled] = useState(false);
   const [cryptoCoins, setCryptoCoins] = useState<string[]>([]);
+  const [cryptoOptions, setCryptoOptions] = useState<{ key: string; label: string }[]>([]);
+  const [cryptoCoin, setCryptoCoin] = useState("");
   const [order, setOrder] = useState<Order | null>(null);
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,6 +69,9 @@ function PayContent() {
       .then((data) => {
         setCryptoEnabled(data.crypto_enabled);
         setCryptoCoins(data.crypto_coins || []);
+        const options = data.crypto_coin_options || [];
+        setCryptoOptions(options);
+        if (options.length) setCryptoCoin((current) => current || options[0].key);
       })
       .catch(() => undefined);
   }, []);
@@ -73,13 +85,18 @@ function PayContent() {
   }, [orderNo]);
 
   const startPayment = useCallback(
-    async (provider: PaymentProviderKey) => {
+    async (provider: PaymentProviderKey, coinOverride?: string) => {
       setIntentLoading(true);
       setPayError(null);
       try {
         const data = await api<PaymentIntent>(`/api/v1/store/orders/${orderNo}/pay`, {
           method: "POST",
-          body: { provider },
+          body: {
+            provider,
+            ...(provider === "crypto" && (coinOverride || cryptoCoin)
+              ? { coin: coinOverride || cryptoCoin }
+              : {}),
+          },
         });
         setIntent(data);
         if (data.expires_at) {
@@ -95,7 +112,7 @@ function PayContent() {
         setIntentLoading(false);
       }
     },
-    [orderNo],
+    [orderNo, cryptoCoin],
   );
 
   useEffect(() => {
@@ -107,7 +124,9 @@ function PayContent() {
       .then((data) => {
         if (!active) return;
         if (data.status === "PENDING") {
-          void startPayment(initialProvider);
+          const orderCoin = PROVIDER_TO_COIN[data.payment_provider || ""] || "";
+          if (orderCoin) setCryptoCoin(orderCoin);
+          void startPayment(initialProvider, orderCoin);
         }
       })
       .catch((err: Error) => {
@@ -163,7 +182,7 @@ function PayContent() {
   async function switchChannel(next: PaymentProviderKey) {
     setChannel(next);
     if (order?.status === "PENDING") {
-      await startPayment(next);
+      await startPayment(next, next === "crypto" ? cryptoCoin : undefined);
     }
   }
 
@@ -192,7 +211,7 @@ function PayContent() {
       );
       setOrder(data.order);
       if (!data.matched) {
-        setPayError("暂未检测到已确认的 USDT-TRC20 转账，请核对收款地址、金额和网络后再试。");
+        setPayError("暂未检测到已确认的转账，请核对币种、网络、收款地址和金额后再试。");
       }
     } catch (err) {
       setPayError((err as Error).message);
@@ -396,19 +415,22 @@ function PayContent() {
   }
 
   const expired = remaining <= 0 && order.status === "PENDING";
-  const directCrypto = intent?.provider === "usdt_trc20" && Boolean(intent.payment_address);
+  const directCrypto = Boolean(intent?.payment_address);
   const directAmount = Number(intent?.payment_amount || 0);
+  const directCurrency = intent?.payment_currency || "USDT";
+  const directDecimals = directCurrency === "BTC" ? 8 : directCurrency === "ETH" ? 6 : 2;
+  const directNetwork = intent?.network || "TRC20";
 
   return (
     <div className="container-page pb-16 pt-12">
       <div className="text-center">
         <p className="eyebrow justify-center">PAYMENT / PENDING</p>
         <h1 className="mt-3 font-display text-[36px] font-bold tracking-tight text-white sm:text-[46px]">
-          {directCrypto ? "USDT-TRC20 转账" : "扫码完成支付"}
+          {directCrypto ? `${directCurrency} 转账` : "扫码完成支付"}
         </h1>
         <p className="mt-3 text-sm text-slate-500">
           {directCrypto
-            ? "请向下方 TRON 地址转入精确金额；到账并确认后系统自动交付。"
+            ? `请向下方 ${directNetwork} 地址转入精确金额；到账并确认后系统自动交付。`
             : "请使用微信或支付宝扫描下方二维码，完成后系统将自动更新订单状态。"}
         </p>
       </div>
@@ -431,6 +453,28 @@ function PayContent() {
                 </button>
               ))}
             </div>
+
+            {channel === "crypto" && cryptoOptions.length > 1 && (
+              <div className="mx-auto mt-3 flex max-w-[360px] flex-wrap justify-center gap-2">
+                {cryptoOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => {
+                      setCryptoCoin(option.key);
+                      if (order?.status === "PENDING") void startPayment("crypto", option.key);
+                    }}
+                    className={`rounded-full border px-3 py-1.5 text-[10px] transition ${
+                      cryptoCoin === option.key
+                        ? "border-sky-400/45 bg-sky-400/15 text-sky-200"
+                        : "border-white/[0.08] text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="mt-7 flex flex-col items-center">
               <div className="relative rounded-2xl bg-white p-4 shadow-2xl">
@@ -456,13 +500,13 @@ function PayContent() {
               </div>
 
               <p className="mt-5 price text-[32px]">
-                {directCrypto ? `${directAmount.toFixed(2)} USDT` : formatMoney(order.amount)}
+                {directCrypto ? `${directAmount.toFixed(directDecimals)} ${directCurrency}` : formatMoney(order.amount)}
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
                 {expired ? "订单已超时，请重新下单" : `请在 ${formatCountdown(remaining)} 内完成支付`}
               </p>
               <p className="mt-2 text-[10px] text-slate-600">
-                {directCrypto ? "只支持 TRON（TRC20）网络，转错链无法找回。" : "扫码支付后，页面将自动跳转至交付结果。"}
+                {directCrypto ? `只支持 ${directNetwork} 网络，转错链无法找回。` : "扫码支付后，页面将自动跳转至交付结果。"}
               </p>
 
               {payError && (
@@ -485,7 +529,7 @@ function PayContent() {
                 <div className="mt-5 w-full space-y-3 rounded-xl border border-sky-400/20 bg-sky-400/[0.045] p-4 text-left">
                   <div className="flex items-center justify-between">
                     <span className="rounded-full border border-sky-400/25 bg-sky-400/10 px-2 py-0.5 text-[9px] font-medium text-sky-300">
-                      USDT · TRC20
+                      {directCurrency} · {directNetwork}
                     </span>
                     <span className="text-[9px] text-slate-500">自动确认到账</span>
                   </div>
@@ -501,8 +545,8 @@ function PayContent() {
                   <div>
                     <p className="text-[10px] text-slate-500">精确金额</p>
                     <div className="mt-1 flex items-center justify-between gap-2">
-                      <span className="font-mono text-lg font-semibold text-sky-200">{directAmount.toFixed(2)} USDT</span>
-                      <CopyButton value={directAmount.toFixed(2)} label="复制金额" />
+                      <span className="font-mono text-lg font-semibold text-sky-200">{directAmount.toFixed(directDecimals)} {directCurrency}</span>
+                      <CopyButton value={directAmount.toFixed(directDecimals)} label="复制金额" />
                     </div>
                     <p className="mt-1 text-[9px] text-slate-600">必须转入与上方完全一致的金额，否则无法自动匹配。</p>
                   </div>

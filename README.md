@@ -273,10 +273,12 @@ cd recharge-gateway-frontend && npm run build
 
 支持两种模式，由 `CRYPTO_PROVIDER` 选择。
 
-**A. 自建 USDT-TRC20 直收（无第三方 KYC，资金直达自己的钱包）**
+**A. 自建多币种直收（无第三方 KYC，资金直达自己的钱包）**
 
-1. 准备一个 TRON 主网收款地址（只提供地址，**不要在服务器保存私钥/助记词**）；
-2. 在后台「系统设置 → 加密货币」选择「自建 USDT-TRC20 直收」，填写收款地址；
+支持 `USDT_TRC20`、`USDC_ERC20`、`ETH`、`BTC` 四种直收币种。每个币种独立配置收款地址；ETH/USDC 需要 Etherscan API Key，BTC 使用 Blockstream 公共 API；BTC/ETH 需要填写人民币参考价。
+
+1. 准备对应的收款地址（只提供地址，**不要在服务器保存私钥/助记词**）；
+2. 在后台「系统设置 → 加密货币」选择「自建 USDT-TRC20 直收」，填写启用的币种和各币种收款地址；
 3. 可选填写 TronGrid API Key（不填走公共节点，生产建议配置）；
 4. 保持 `CRYPTO_ENABLED=true`，设置 `CRYPTO_PROVIDER=usdt_trc20`；
 5. 前台结算会显示收款地址、精确 USDT 金额、二维码和有效期；
@@ -286,8 +288,18 @@ cd recharge-gateway-frontend && npm run build
 ```dotenv
 CRYPTO_ENABLED=true
 CRYPTO_PROVIDER=usdt_trc20
+DIRECT_CRYPTO_COINS=USDT_TRC20,USDC_ERC20,ETH,BTC
 USDT_TRC20_WALLET_ADDRESS=T...
 USDT_TRC20_CONTRACT=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+USDC_ERC20_WALLET_ADDRESS=0x...
+USDC_ERC20_CONTRACT=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+ETH_WALLET_ADDRESS=0x...
+BTC_WALLET_ADDRESS=bc1...
+ETHERSCAN_API_KEY=...
+ETH_CONFIRMATIONS=12
+BTC_CONFIRMATIONS=2
+CRYPTO_ETH_CNY_RATE=...
+CRYPTO_BTC_CNY_RATE=...
 TRON_API_BASE=https://api.trongrid.io
 TRON_API_KEY=
 TRON_CONFIRMATIONS=19
@@ -295,6 +307,8 @@ CRYPTO_INVOICE_MINUTES=30
 CRYPTO_PAYMENT_GRACE_MINUTES=15
 CRYPTO_CNY_PER_USD=7.20
 ```
+
+客户在支付页可以选择已启用的币种；未配置地址/汇率/API 的币种不会展示。
 
 **B. NOWPayments 托管收银台**
 

@@ -123,6 +123,20 @@ class Settings(BaseSettings):
     tron_api_base: str = "https://api.trongrid.io"
     tron_api_key: str = ""
     tron_confirmations: int = 19
+    # Optional multi-coin direct collection. Comma-separated:
+    # USDT_TRC20,USDC_ERC20,ETH,BTC
+    direct_crypto_coins: str = "USDT_TRC20"
+    usdc_erc20_wallet_address: str = ""
+    usdc_erc20_contract: str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    eth_wallet_address: str = ""
+    btc_wallet_address: str = ""
+    etherscan_api_base: str = "https://api.etherscan.io/v2/api"
+    etherscan_api_key: str = ""
+    eth_confirmations: int = 12
+    btc_api_base: str = "https://blockstream.info/api"
+    btc_confirmations: int = 2
+    crypto_btc_cny_rate: float = 0.0
+    crypto_eth_cny_rate: float = 0.0
     crypto_invoice_minutes: int = 30
     crypto_payment_grace_minutes: int = 15
 

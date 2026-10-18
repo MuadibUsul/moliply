@@ -27,13 +27,13 @@ def cleanup_tokens_task() -> int:
         db.close()
 
 
-@celery_app.task(name="app.tasks.celery_worker.scan_trc20_payments_task")
-def scan_trc20_payments_task() -> int:
-    from app.services import trc20_watcher
+@celery_app.task(name="app.tasks.celery_worker.scan_direct_crypto_payments_task")
+def scan_direct_crypto_payments_task() -> int:
+    from app.services import crypto_watcher
 
     db = SessionLocal()
     try:
-        return trc20_watcher.scan_pending_orders(db)
+        return crypto_watcher.scan_pending_orders(db)
     finally:
         db.close()
 

@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.security import limiter
+from app.services import direct_crypto
 from app.services import redeem as redeem_service
 from app.services import runtime_settings as runtime
 from app.services.orders import OrderError
@@ -102,21 +103,17 @@ def healthz() -> dict:
 @app.get("/api/v1/brand", tags=["brand"])
 def brand() -> dict:
     crypto_provider = runtime.get("crypto_provider", settings.crypto_provider).lower()
-    crypto_configured = bool(
-        (
-            crypto_provider == "usdt_trc20"
-            and runtime.get("usdt_trc20_wallet_address", settings.usdt_trc20_wallet_address)
-        )
-        or (
-            crypto_provider != "usdt_trc20"
-            and runtime.get("nowpayments_api_key", settings.nowpayments_api_key)
+    if crypto_provider == "usdt_trc20":
+        enabled_coins = direct_crypto.enabled_coins()
+        crypto_configured = bool(enabled_coins)
+        crypto_coins = [direct_crypto.coin_label(coin) for coin in enabled_coins]
+    else:
+        crypto_configured = bool(
+            runtime.get("nowpayments_api_key", settings.nowpayments_api_key)
             and runtime.get("nowpayments_ipn_secret", settings.nowpayments_ipn_secret)
         )
-    )
+        crypto_coins = runtime.get_list("crypto_supported_coins", settings.crypto_coin_list)
     crypto_enabled = runtime.get_bool("crypto_enabled", settings.crypto_enabled) and crypto_configured
-    crypto_coins = ["USDT-TRC20"] if crypto_provider == "usdt_trc20" else runtime.get_list(
-        "crypto_supported_coins", settings.crypto_coin_list
-    )
     return {
         "name_en": settings.brand_name_en,
         "name_cn": settings.brand_name_cn,
@@ -136,6 +133,11 @@ def brand() -> dict:
         "crypto_ready": crypto_configured,
         "crypto_provider": crypto_provider,
         "crypto_coins": crypto_coins,
+        "crypto_coin_options": (
+            [{"key": coin, "label": direct_crypto.coin_label(coin)} for coin in enabled_coins]
+            if crypto_provider == "usdt_trc20"
+            else []
+        ),
         "support_wechat": runtime.get("support_wechat", settings.support_wechat),
         "support_hours": runtime.get("support_hours", settings.support_hours),
         "catalog_seeded": settings.seed_demo_data,

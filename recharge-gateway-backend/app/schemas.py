@@ -48,6 +48,7 @@ class AdminResetPasswordRequest(StrictModel):
 
 class PaymentCreateRequest(StrictModel):
     provider: Literal["wechat", "alipay", "xunhupay", "crypto"] = "wechat"
+    coin: str = Field(default="", max_length=20)
 
 
 class CouponValidateRequest(StrictModel):

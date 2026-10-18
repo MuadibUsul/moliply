@@ -28,6 +28,7 @@ SECRET_KEYS = {
     "nowpayments_api_key",
     "nowpayments_ipn_secret",
     "tron_api_key",
+    "etherscan_api_key",
     "upstream_api_key",
     "upstream_api_secret",
     "rdvcc_imap_password",
@@ -61,6 +62,8 @@ INT_KEYS = {
     "feishu_low_stock_threshold",
     "self_vcc_timeout_seconds",
     "tron_confirmations",
+    "eth_confirmations",
+    "btc_confirmations",
     "crypto_invoice_minutes",
     "crypto_payment_grace_minutes",
 }
@@ -70,6 +73,8 @@ FLOAT_KEYS = {
     "self_vcc_min_balance",
     "self_vcc_ph_min_balance",
     "self_vcc_us_min_balance",
+    "crypto_btc_cny_rate",
+    "crypto_eth_cny_rate",
     "ph_plus_amount_php",
     "ph_pro_20x_amount_php",
     "us_plus_amount_usd",
@@ -96,6 +101,17 @@ ENV_DEFAULTS = {
     "usdt_trc20_contract": lambda: settings.usdt_trc20_contract,
     "tron_api_base": lambda: settings.tron_api_base,
     "tron_confirmations": lambda: settings.tron_confirmations,
+    "direct_crypto_coins": lambda: settings.direct_crypto_coins,
+    "usdc_erc20_wallet_address": lambda: settings.usdc_erc20_wallet_address,
+    "usdc_erc20_contract": lambda: settings.usdc_erc20_contract,
+    "eth_wallet_address": lambda: settings.eth_wallet_address,
+    "btc_wallet_address": lambda: settings.btc_wallet_address,
+    "etherscan_api_base": lambda: settings.etherscan_api_base,
+    "eth_confirmations": lambda: settings.eth_confirmations,
+    "btc_api_base": lambda: settings.btc_api_base,
+    "btc_confirmations": lambda: settings.btc_confirmations,
+    "crypto_btc_cny_rate": lambda: settings.crypto_btc_cny_rate,
+    "crypto_eth_cny_rate": lambda: settings.crypto_eth_cny_rate,
     "crypto_invoice_minutes": lambda: settings.crypto_invoice_minutes,
     "crypto_payment_grace_minutes": lambda: settings.crypto_payment_grace_minutes,
     "nowpayments_api_base": lambda: settings.nowpayments_api_base,
@@ -156,6 +172,7 @@ SECRET_ENV_DEFAULTS = {
     "nowpayments_api_key": lambda: settings.nowpayments_api_key,
     "nowpayments_ipn_secret": lambda: settings.nowpayments_ipn_secret,
     "tron_api_key": lambda: settings.tron_api_key,
+    "etherscan_api_key": lambda: settings.etherscan_api_key,
     "upstream_api_key": lambda: settings.upstream_api_key,
     "upstream_api_secret": lambda: settings.upstream_api_secret,
     "rdvcc_imap_password": lambda: settings.rdvcc_imap_password,
@@ -352,6 +369,17 @@ def _coerce_public(key: str, value: str) -> Any:
     return value
 
 
+def _crypto_ready(data: dict[str, str]) -> bool:
+    if data.get("crypto_provider") == "usdt_trc20":
+        try:
+            from app.services import direct_crypto
+
+            return bool(direct_crypto.enabled_coins())
+        except Exception:
+            return False
+    return bool(data.get("nowpayments_api_key") and data.get("nowpayments_ipn_secret"))
+
+
 def public_settings() -> dict:
     data = _all()
     values = {key: _coerce_public(key, val) for key, val in data.items() if key not in SECRET_KEYS}
@@ -363,18 +391,7 @@ def public_settings() -> dict:
             (data.get("payment_gateway") == "xunhupay" and data.get("xunhupay_app_id") and data.get("xunhupay_app_secret"))
             or (data.get("payment_gateway") != "xunhupay" and data.get("ltzf_mch_id") and data.get("ltzf_key"))
         ),
-        "crypto_ready": bool(
-            (
-                data.get("crypto_provider") == "usdt_trc20"
-                and data.get("usdt_trc20_wallet_address")
-                and data.get("usdt_trc20_contract")
-            )
-            or (
-                data.get("crypto_provider") != "usdt_trc20"
-                and data.get("nowpayments_api_key")
-                and data.get("nowpayments_ipn_secret")
-            )
-        ),
+        "crypto_ready": _crypto_ready(data),
         "upstream_ready": bool(
             data.get("upstream_mode") == "http" and data.get("upstream_api_base") and data.get("upstream_api_key")
         ),

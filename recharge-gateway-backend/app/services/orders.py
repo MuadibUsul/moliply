@@ -40,6 +40,8 @@ from app.services.payments import get_callback_provider, get_provider, masked_or
 from app.services.payments.base import PaymentProviderError
 from app.services.payments.guards import mock_payments_allowed
 from app.services.payments.trc20 import DirectTrc20Provider
+from app.services.payments.direct_multi import DirectBitcoinProvider, DirectEthereumProvider
+from app.services import direct_crypto
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,9 @@ PAYMENT_LABELS = {
     "crypto": "加密货币",
     "nowpayments": "加密货币",
     "usdt_trc20": "USDT-TRC20",
+    "usdc_erc20": "USDC-ERC20",
+    "eth": "ETH",
+    "btc": "BTC",
     "mock": "模拟支付",
     "mock_wechat": "微信支付",
     "mock_alipay": "支付宝",
@@ -205,7 +210,7 @@ def _direct_payment_response(order: Order) -> dict[str, Any]:
     if order.expires_at:
         remaining = max(0, int((order.expires_at - utcnow()).total_seconds()))
     return {
-        "provider": "usdt_trc20",
+        "provider": order.payment_provider or "usdt_trc20",
         "qr_content": order.payment_address or "",
         "pay_url": "",
         "trade_no": "",
@@ -216,12 +221,22 @@ def _direct_payment_response(order: Order) -> dict[str, Any]:
         "payment_address": order.payment_address or "",
         "payment_amount": money(order.payment_amount),
         "payment_currency": order.payment_currency or "USDT",
-        "network": "TRC20",
+        "network": order.payment_network or "",
         "expires_at": order.expires_at.isoformat() + "Z" if order.expires_at else "",
     }
 
 
-def create_payment(db: Session, order: Order, provider_name: str, client_ip: str):
+def _direct_provider_for(coin: str):
+    if coin == "USDT_TRC20":
+        return DirectTrc20Provider()
+    if coin in {"USDC_ERC20", "ETH"}:
+        return DirectEthereumProvider(coin)
+    if coin == "BTC":
+        return DirectBitcoinProvider()
+    raise PaymentProviderError("CRYPTO_COIN_UNSUPPORTED", "不支持的加密货币币种")
+
+
+def create_payment(db: Session, order: Order, provider_name: str, client_ip: str, coin: str = ""):
     if order.status == OrderStatus.DELIVERED:
         raise OrderError("ORDER_ALREADY_PAID", "订单已支付并交付")
     if order.status != OrderStatus.PENDING:
@@ -231,17 +246,29 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
         db.add(order)
         db.commit()
         raise OrderError("ORDER_EXPIRED", "订单已超时，请重新下单")
-    if (
-        order.payment_provider == "usdt_trc20"
-        and order.payment_address
-        and order.payment_amount
-        and order.expires_at
-        and order.expires_at > utcnow()
-    ):
-        return _direct_payment_response(order)
-    try:
-        provider = get_provider(provider_name)
-        if isinstance(provider, DirectTrc20Provider):
+
+    direct_mode = (
+        provider_name in {"crypto", "usdt_trc20", "usdc_erc20", "eth", "btc"}
+        and runtime.get("crypto_provider", settings.crypto_provider).lower() == "usdt_trc20"
+    )
+    if direct_mode:
+        enabled = direct_crypto.enabled_coins()
+        if not enabled:
+            raise OrderError("CRYPTO_NOT_CONFIGURED", "自建加密收款尚未配置", 502)
+        requested = (coin or "").strip().upper()
+        if requested and requested not in enabled:
+            raise OrderError("CRYPTO_COIN_DISABLED", "该币种暂未启用", 409)
+        selected = requested or enabled[0]
+        if (
+            order.payment_provider == selected.lower()
+            and order.payment_address
+            and order.payment_amount
+            and order.expires_at
+            and order.expires_at > utcnow()
+        ):
+            return _direct_payment_response(order)
+        try:
+            provider = _direct_provider_for(selected)
             payment_amount = provider.select_unique_amount(db, order.amount)
             intent = provider.create_native(
                 order.order_no,
@@ -250,32 +277,41 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
                 client_ip,
                 payment_amount=payment_amount,
             )
-        else:
+        except PaymentProviderError as exc:
+            raise OrderError(exc.code, exc.message, 502) from exc
+    else:
+        try:
+            provider = get_provider(provider_name)
             intent = provider.create_native(
                 order.order_no,
                 order.amount,
                 masked_order_title(order.order_no),
                 client_ip,
             )
-    except PaymentProviderError as exc:
-        raise OrderError(exc.code, exc.message, 502) from exc
+        except PaymentProviderError as exc:
+            raise OrderError(exc.code, exc.message, 502) from exc
+
     order.payment_provider = intent.provider
     raw_amount = intent.raw.get("price_amount")
-    if intent.provider == "usdt_trc20":
+    if intent.provider in {"usdt_trc20", "usdc_erc20", "eth", "btc"}:
         order.payment_address = intent.payment_address
         order.payment_amount = intent.payment_amount
-        order.payment_currency = intent.payment_currency or "USDT"
+        order.payment_currency = intent.payment_currency
+        order.payment_network = intent.network
         order.expires_at = utcnow() + timedelta(seconds=intent.expires_in)
     elif intent.provider == "crypto" and raw_amount is not None:
         order.payment_address = None
+        order.payment_network = None
         order.payment_amount = Decimal(str(raw_amount))
         order.payment_currency = str(intent.raw.get("price_currency") or "USD").upper()
     elif intent.provider == "crypto":
         order.payment_address = None
+        order.payment_network = None
         order.payment_amount = None
         order.payment_currency = None
     else:
         order.payment_address = None
+        order.payment_network = None
         order.payment_amount = order.amount
         order.payment_currency = "CNY"
     db.add(order)
@@ -397,7 +433,7 @@ def serialize_order(
         "payment_address": order.payment_address,
         "payment_amount": money(order.payment_amount) if order.payment_amount is not None else None,
         "payment_currency": order.payment_currency,
-        "payment_network": "TRC20" if order.payment_provider == "usdt_trc20" else None,
+        "payment_network": order.payment_network,
         "stock_pending": order.stock_pending,
         "created_at": order.created_at.isoformat() + "Z",
         "expires_at": order.expires_at.isoformat() + "Z" if order.expires_at else None,
