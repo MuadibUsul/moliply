@@ -68,7 +68,15 @@ IMAP_USER="$(get RDVCC_IMAP_USER)"
 IMAP_PASSWORD_SET="$RUNTIME_IMAP_PASSWORD"
 [ -n "$(get RDVCC_IMAP_PASSWORD)" ] && IMAP_PASSWORD_SET="true"
 SEED_INV="$(get SEED_DEMO_INVENTORY)"
+SEED_DATA="$(get SEED_DEMO_DATA)"
+APP_ENV_VALUE="$(get APP_ENV)"
+DEBUG_VALUE="$(get DEBUG)"
 ADMIN_PASSWORD="$(get ADMIN_PASSWORD)"
+ADMIN_JWT_SECRET="$(get ADMIN_JWT_SECRET)"
+USER_JWT_SECRET="$(get USER_JWT_SECRET)"
+SECRET_KEY_VALUE="$(get SECRET_KEY)"
+POSTGRES_PASSWORD="$(get POSTGRES_PASSWORD)"
+ALLOW_MOCK_PROD="$(lower "$(get ALLOW_MOCK_PAYMENT_IN_PRODUCTION)")"
 MASTER_KEY="$(get MASTER_AES_KEY)"
 SMTP_HOST="${RUNTIME_SMTP:-$(get SMTP_HOST)}"
 CONTACT="$(get NEXT_PUBLIC_CONTACT_WECHAT)"
@@ -83,6 +91,10 @@ XH_KEY="$(get XUNHUPAY_APP_SECRET)"
 [[ "$STORE_URL" == https://* ]] && ok "PUBLIC_STORE_URL uses HTTPS" || bad "PUBLIC_STORE_URL must be HTTPS"
 [[ "$PAYMENT_MODE" == "live" ]] && ok "PAYMENT_MODE=live" || bad "PAYMENT_MODE is not live (currently ${PAYMENT_MODE:-unset})"
 [[ "$MOCK" == "false" ]] && ok "MOCK_PAYMENT_ENABLED=false" || bad "mock payment must be disabled before launch"
+[[ "$ALLOW_MOCK_PROD" != "true" ]] && ok "production mock override is disabled" || bad "ALLOW_MOCK_PAYMENT_IN_PRODUCTION must not be true in production"
+[[ "$APP_ENV_VALUE" == "production" ]] && ok "APP_ENV=production" || bad "APP_ENV must be production"
+[[ "$DEBUG_VALUE" == "false" ]] && ok "DEBUG=false" || bad "DEBUG must be false in production"
+[[ "$SEED_DATA" == "false" ]] && ok "SEED_DEMO_DATA=false" || bad "SEED_DEMO_DATA must be false before launch"
 
 if [ "$RUNTIME_PAYMENT_READY" = "true" ] || { { [ -n "$LTZF_ID" ] && [ -n "$LTZF_KEY" ]; } || { [ -n "$XH_ID" ] && [ -n "$XH_KEY" ]; }; }; then
   ok "payment merchant keys configured"
@@ -93,6 +105,14 @@ fi
 [[ -n "$ADMIN_PASSWORD" && "$ADMIN_PASSWORD" != "change-me" && ${#ADMIN_PASSWORD} -ge 12 ]] \
   && ok "admin password is non-default and >=12 chars" \
   || bad "admin password is default/too short"
+for pair in "ADMIN_JWT_SECRET:$ADMIN_JWT_SECRET" "USER_JWT_SECRET:$USER_JWT_SECRET" "SECRET_KEY:$SECRET_KEY_VALUE" "POSTGRES_PASSWORD:$POSTGRES_PASSWORD"; do
+  name="${pair%%:*}"; value="${pair#*:}"
+  if [ ${#value} -ge 32 ] && [[ "$(lower "$value")" != *change* ]]; then
+    ok "$name is strong"
+  else
+    bad "$name is missing, default or shorter than 32 chars"
+  fi
+done
 [[ -n "$MASTER_KEY" ]] && ok "MASTER_AES_KEY configured" || bad "MASTER_AES_KEY missing"
 [[ "$SEED_INV" == "false" ]] && ok "SEED_DEMO_INVENTORY=false" || bad "SEED_DEMO_INVENTORY must be false before launch"
 

@@ -423,8 +423,11 @@ export default function AdminSettingsPage() {
                 <option value="http">真实 HTTP</option>
               </select>
             </Field>
-            <Field label="API Base">
+            <Field label="API Base" hint="生产环境必须为 HTTPS">
               <input value={text("upstream_api_base")} onChange={(event) => setValue("upstream_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="允许的上游域名（可选）" hint="逗号分隔；留空表示任意 HTTPS 域名">
+              <input value={text("upstream_allowed_hosts")} onChange={(event) => setValue("upstream_allowed_hosts", event.target.value)} className="admin-input w-full py-2.5" placeholder="api.supplier.com,.supplier.net" />
             </Field>
             {secretProps("upstream_api_key", "API Key", data.secret_configured.upstream_api_key)}
             {secretProps("upstream_api_secret", "API Secret", data.secret_configured.upstream_api_secret)}
@@ -462,6 +465,9 @@ export default function AdminSettingsPage() {
             </Field>
             <Field label="结账 URL 模板（可选）" hint="支持 {access_token} {user_id} {region} {currency} {amount}">
               <input value={text("rdvcc_checkout_url_template")} onChange={(event) => setValue("rdvcc_checkout_url_template", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="允许的结账域名" hint="银行卡/CVV 只会填入这些 HTTPS 域名">
+              <input value={text("rdvcc_checkout_allowed_hosts", "chatgpt.com,*.openai.com,stripe.com,*.stripe.com")} onChange={(event) => setValue("rdvcc_checkout_allowed_hosts", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
             <Field label="代理健康检查地址">
               <input value={text("proxy_health_url")} onChange={(event) => setValue("proxy_health_url", event.target.value)} className="admin-input w-full py-2.5" />

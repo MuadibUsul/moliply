@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.models import (
@@ -38,6 +38,7 @@ from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.mailer import send_delivery_email
 from app.services.payments import get_callback_provider, get_provider, masked_order_title
 from app.services.payments.base import PaymentProviderError
+from app.services.payments.guards import mock_payments_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,13 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
     except PaymentProviderError as exc:
         raise OrderError(exc.code, exc.message, 502) from exc
     order.payment_provider = intent.provider
+    raw_amount = intent.raw.get("price_amount")
+    if intent.provider == "crypto" and raw_amount is not None:
+        order.payment_amount = Decimal(str(raw_amount))
+        order.payment_currency = str(intent.raw.get("price_currency") or "USD").upper()
+    elif intent.provider != "crypto":
+        order.payment_amount = order.amount
+        order.payment_currency = "CNY"
     db.add(order)
     db.commit()
     return {
@@ -350,6 +358,16 @@ def find_user_orders(db: Session, user_id: int) -> list[Order]:
 
 
 def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> bool:
+    # Serialise concurrent callbacks (and manual settlement) on the order row.
+    order = (
+        db.query(Order)
+        .filter(Order.id == order.id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
     if order.status in {OrderStatus.PAID, OrderStatus.DELIVERED}:
         return False
     if order.status != OrderStatus.PENDING:
@@ -359,7 +377,12 @@ def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> 
     order.payment_provider = provider
     order.payment_trade_no = trade_no
     if order.coupon_code:
-        coupon = db.query(Coupon).filter(Coupon.code == order.coupon_code).first()
+        coupon = (
+            db.query(Coupon)
+            .filter(Coupon.code == order.coupon_code)
+            .with_for_update()
+            .first()
+        )
         if coupon:
             coupon.used_count += 1
             db.add(coupon)
@@ -417,6 +440,16 @@ def smtp_configured_safe() -> bool:
 
 
 def fulfill_order(db: Session, order: Order) -> Order:
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.deliveries))
+        .filter(Order.id == order.id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
     if order.status == OrderStatus.PENDING:
         raise OrderError("ORDER_NOT_PAID", "订单尚未支付")
     if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
@@ -550,11 +583,68 @@ def fulfill_order(db: Session, order: Order) -> Order:
 
 
 def settle_mock_order(db: Session, order: Order, channel: str = "wechat") -> Order:
-    if not settings.mock_payment_enabled:
+    if not mock_payments_allowed():
         raise OrderError("MOCK_PAYMENT_DISABLED", "模拟支付未启用", 403)
     mark_order_paid(db, order, f"mock_{channel}", f"MOCK-{secrets.token_hex(6)}")
     db.refresh(order)
     return order
+
+
+def _payment_event_succeeded(event: PaymentEvent) -> bool:
+    return bool((event.raw_json or {}).get("success"))
+
+
+def _apply_success_event(
+    db: Session,
+    provider_key: str,
+    parsed: Any,
+    event_key: str,
+    order: Order,
+) -> None:
+    """Record a successful notification, upgrading an earlier pending event.
+
+    Gateways commonly send ``waiting``/``confirming`` before ``finished`` with
+    the same transaction id. The earlier implementation stored every status as
+    an immutable event, so the final success was swallowed as a duplicate.
+    """
+    for _ in range(3):
+        existing = (
+            db.query(PaymentEvent)
+            .filter(PaymentEvent.provider == provider_key, PaymentEvent.event_id == event_key)
+            .first()
+        )
+        if existing and _payment_event_succeeded(existing):
+            return
+        try:
+            if existing:
+                existing.order_no = parsed.order_no
+                existing.amount = parsed.amount
+                existing.raw_json = {"success": True, "status": parsed.raw.get("status", "")}
+                db.add(existing)
+            else:
+                db.add(
+                    PaymentEvent(
+                        provider=provider_key,
+                        event_id=event_key,
+                        order_no=parsed.order_no,
+                        amount=parsed.amount,
+                        verified=True,
+                        raw_json={"success": True, "status": parsed.raw.get("status", "")},
+                    )
+                )
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            continue
+        try:
+            paid = mark_order_paid(db, order, parsed.provider, parsed.trade_no)
+            if not paid:
+                db.commit()
+        except OrderError:
+            db.rollback()
+            raise
+        return
+    raise OrderError("PAYMENT_EVENT_RACE", "支付事件正在处理，请稍后重试", 409)
 
 
 def process_payment_notify(
@@ -574,7 +664,15 @@ def process_payment_notify(
     order = db.query(Order).filter(Order.order_no == parsed.order_no).first()
     if not order:
         raise OrderError("ORDER_NOT_FOUND", "回调对应的订单不存在", 404)
-    if not parsed.skip_amount_check and abs(parsed.amount - order.amount) > Decimal("0.01"):
+    expected_amount = order.payment_amount
+    expected_currency = (order.payment_currency or "").upper()
+    if expected_amount is not None:
+        if expected_currency and parsed.currency.upper() != expected_currency:
+            raise OrderError("PAYMENT_CURRENCY_MISMATCH", "支付币种与订单不一致", 400)
+        tolerance = Decimal("0.02") if expected_currency == "USD" else Decimal("0.01")
+        if abs(parsed.amount - expected_amount) > tolerance:
+            raise OrderError("PAYMENT_AMOUNT_MISMATCH", "支付金额与订单金额不一致", 400)
+    elif not parsed.skip_amount_check and abs(parsed.amount - order.amount) > Decimal("0.01"):
         raise OrderError("PAYMENT_AMOUNT_MISMATCH", "支付金额与订单金额不一致", 400)
 
     event_key = parsed.trade_no or f"{parsed.order_no}:{parsed.amount:.2f}"
@@ -583,30 +681,28 @@ def process_payment_notify(
         .filter(PaymentEvent.provider == provider_key, PaymentEvent.event_id == event_key)
         .first()
     )
-    if existing:
-        return provider.success_body()
-
-    event = PaymentEvent(
-        provider=provider_key,
-        event_id=event_key,
-        order_no=parsed.order_no,
-        amount=parsed.amount,
-        verified=True,
-        raw_json={"success": parsed.success, "status": parsed.raw.get("status", "")},
-    )
-    db.add(event)
-    try:
-        db.flush()
-    except IntegrityError:
-        db.rollback()
+    if existing and _payment_event_succeeded(existing):
         return provider.success_body()
 
     if parsed.success:
+        _apply_success_event(db, provider_key, parsed, event_key, order)
+        return provider.success_body()
+
+    # Pending/failed notifications are recorded for audit only; a later
+    # success for the same event must still be allowed through.
+    if existing is None:
+        db.add(
+            PaymentEvent(
+                provider=provider_key,
+                event_id=event_key,
+                order_no=parsed.order_no,
+                amount=parsed.amount,
+                verified=True,
+                raw_json={"success": False, "status": parsed.raw.get("status", "")},
+            )
+        )
         try:
-            mark_order_paid(db, order, parsed.provider, parsed.trade_no)
-        except OrderError:
+            db.commit()
+        except IntegrityError:
             db.rollback()
-            raise
-    else:
-        db.commit()
     return provider.success_body()

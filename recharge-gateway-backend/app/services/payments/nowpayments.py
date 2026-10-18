@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
@@ -41,6 +42,10 @@ class NowPaymentsProvider(PaymentProvider):
         self.api_key = runtime.get("nowpayments_api_key")
         self.ipn_secret = runtime.get("nowpayments_ipn_secret")
         self.api_base = runtime.get("nowpayments_api_base", "https://api.nowpayments.io")
+        try:
+            net_guard.ensure_https(self.api_base)
+        except ValueError as exc:
+            raise PaymentProviderError("PAYMENT_INSECURE_URL", "支付 API 必须使用 HTTPS") from exc
         self.ipn_url = runtime.get("nowpayments_ipn_url")
         if not self.api_key or not self.ipn_secret:
             raise PaymentProviderError("CRYPTO_NOT_CONFIGURED", "加密货币支付商户参数尚未配置")
@@ -90,7 +95,7 @@ class NowPaymentsProvider(PaymentProvider):
             trade_no=str(data.get("id") or data.get("invoice_id") or ""),
             mock=False,
             expires_in=runtime.get_int("order_expire_minutes", settings.order_expire_minutes) * 60,
-            raw={"invoice_id": data.get("id"), "price_currency": "usd"},
+            raw={"invoice_id": data.get("id"), "price_currency": "usd", "price_amount": float(usd_amount)},
         )
 
     def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
@@ -105,6 +110,7 @@ class NowPaymentsProvider(PaymentProvider):
             trade_no=str(payload.get("payment_id") or payload.get("invoice_id") or payload.get("id") or ""),
             verified=verified,
             success=status == "finished",
+            currency="USD",
             skip_amount_check=True,
             raw={"status": status},
         )

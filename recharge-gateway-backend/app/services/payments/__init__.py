@@ -7,6 +7,7 @@ from decimal import Decimal
 from app.config import settings
 from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
+from app.services.payments.guards import mock_payments_allowed
 from app.services.payments.ltzf import LtzfProvider
 from app.services.payments.mock import MockPaymentProvider
 from app.services.payments.nowpayments import NowPaymentsProvider
@@ -100,4 +101,5 @@ __all__ = [
     "get_callback_provider",
     "get_provider",
     "masked_order_title",
+    "mock_payments_allowed",
 ]

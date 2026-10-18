@@ -41,6 +41,18 @@ from app.services.session_parser import (
 logger = logging.getLogger(__name__)
 
 TERMINAL_STATES = {RechargeState.SUCCESS, RechargeState.FAILED}
+# A worker crash after the payment request was submitted must never be
+# retried automatically: the previous charge may already have succeeded.
+RISKY_STATES = {RechargeState.CREATING_CHECKOUT, RechargeState.PAYING, RechargeState.AWAITING_3DS}
+MANUAL_REVIEW_ERRORS = {
+    "PAYMENT_OUTCOME_UNKNOWN",
+    "AWAITING_MANUAL_REVIEW",
+    "AWAITING_3DS_CODE",
+    "CHECKOUT_UI_CHANGED",
+    "SELF_VCC_ERROR",
+    "UPSTREAM_PENDING",
+    "CARD_DECLINED",
+}
 REDEEMABLE_SKUS = {
     SkuType.CHATGPT_PLUS_1M,
     SkuType.CHATGPT_PLUS_3M,
@@ -442,7 +454,9 @@ def _reconstruct_session(task: RechargeTask) -> SessionInfo:
 
 def run_recharge_task(task_id: str) -> None:
     """Execute a queued task. Safe to invoke from Celery or a local thread."""
-    with redis_lock(f"lock:task:{task_id}") as acquired:
+    # Keep the lock longer than the Celery hard limit so a slow checkout cannot
+    # be picked up by a second delivery before the first worker finishes.
+    with redis_lock(f"lock:task:{task_id}", ttl_seconds=900) as acquired:
         if not acquired:
             return
         db = SessionLocal()
@@ -453,6 +467,16 @@ def run_recharge_task(task_id: str) -> None:
             code = db.get(ActivationCode, task.code_id)
             if not code:
                 _finalize_failure(db, task, None, "CODE_NOT_FOUND", "激活码不存在", False)
+                return
+            if task.state in RISKY_STATES:
+                _finalize_failure(
+                    db,
+                    task,
+                    code,
+                    "PAYMENT_OUTCOME_UNKNOWN",
+                    "上一次支付请求的结果未知，已转人工复核，请勿自动重试",
+                    False,
+                )
                 return
             task.attempts += 1
             _set_state(db, task, RechargeState.CHECKING_ACCOUNT)
@@ -578,6 +602,12 @@ def retry_task(db: Session, task_id: str, ip: str = "") -> RechargeTask:
         raise RedeemError("TASK_NOT_FOUND", "充值任务不存在", 404)
     if task.state != RechargeState.FAILED:
         raise RedeemError("TASK_NOT_RETRYABLE", "仅失败任务可以重试", 409)
+    if task.error_code in MANUAL_REVIEW_ERRORS:
+        raise RedeemError(
+            "MANUAL_REVIEW_REQUIRED",
+            "该任务可能已提交支付，禁止自动重试，请先到上游/卡台核对结果并人工处理",
+            409,
+        )
     if not task.encrypted_session_raw and not task.encrypted_access_token:
         raise RedeemError("SESSION_CLEARED", "该任务的 Session 凭证已按安全策略清除，请让用户重新提交", 409)
     code = db.get(ActivationCode, task.code_id)

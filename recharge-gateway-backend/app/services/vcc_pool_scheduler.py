@@ -20,6 +20,13 @@ class NoAvailableVccError(Exception):
 
 
 def acquire_card(db: Session, region: str) -> VccCard | None:
+    """Reserve one bind slot before a slow checkout starts.
+
+    ``current_bind_count`` doubles as the reservation counter: it is incremented
+    atomically while the card row is locked, so concurrent workers cannot pick
+    the same slot. The caller must call :func:`release_reservation` when the
+    checkout definitely did not charge, or :func:`mark_success` after success.
+    """
     minimum = region_router.min_balance_for(region)
     query = db.query(VccCard).filter(
         VccCard.status == VccStatus.ACTIVE,
@@ -29,16 +36,29 @@ def acquire_card(db: Session, region: str) -> VccCard | None:
     )
     if region == region_router.PH:
         query = query.filter(VccCard.ph_billing_address_json.isnot(None))
-    return (
+    card = (
         query.order_by(VccCard.available_balance.desc(), VccCard.id.asc())
         .with_for_update(skip_locked=True)
         .first()
     )
+    if card is None:
+        return None
+    card.current_bind_count += 1
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+def release_reservation(db: Session, card: VccCard) -> None:
+    """Return an unused reservation; never call this after a successful charge."""
+    card.current_bind_count = max(0, card.current_bind_count - 1)
+    db.add(card)
+    db.commit()
 
 
 def mark_success(db: Session, card: VccCard, region: str) -> None:
     cost = region_router.cost_usd_for(region)
-    card.current_bind_count += 1
     card.available_balance = max(Decimal("0"), card.available_balance - cost)
     if card.current_bind_count >= card.max_bind_count:
         card.status = VccStatus.EXHAUSTED

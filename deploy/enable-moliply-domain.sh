@@ -28,21 +28,41 @@ backup="$BACKUP_DIR/Caddyfile.pre-moliply-$ts"
 cp "$CADDYFILE" "$backup"
 
 python3 - <<'PY'
+import os
 from pathlib import Path
 
 path = Path("/opt/caddy/Caddyfile")
 text = path.read_text(encoding="utf-8")
-block = """
-# >>> MOLIPLY DOMAIN (managed by deploy)
-moliply.shop {
+marker = "# >>> MOLIPLY DOMAIN (managed by deploy)"
+if marker in text:
+    print("Caddyfile already contains moliply.shop; leaving it unchanged")
+    raise SystemExit(0)
+gateway_hash = os.environ.get("MOLIPLY_ADMIN_GATEWAY_HASH", "").strip()
+auth_block = ""
+if gateway_hash:
+    auth_block = f"""
+    @admin path /admin /admin/*
+    basic_auth @admin {{
+        moliply {gateway_hash}
+    }}
+"""
+block = f"""
+{marker}
+moliply.shop {{
     encode zstd gzip
-    header {
+    request_body {{
+        max_size 2MB
+    }}{auth_block}
+    header {{
         X-Content-Type-Options nosniff
         X-Frame-Options SAMEORIGIN
         Referrer-Policy strict-origin-when-cross-origin
-    }
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+    }}
     reverse_proxy moliply-web:3000
-}
+}}
 # <<< MOLIPLY DOMAIN
 """
 path.write_text(text.rstrip() + "\n" + block, encoding="utf-8")

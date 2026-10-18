@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     payment_mode: str = "mock"  # mock | live
     mock_payment_enabled: bool = True
+    # Hard safety gate: production never accepts mock settlement unless this
+    # environment-only switch is explicitly enabled for a controlled test.
+    allow_mock_payment_in_production: bool = False
     order_expire_minutes: int = 15
     enforce_stock: bool = True
     ltzf_mch_id: str = ""
@@ -126,6 +129,8 @@ class Settings(BaseSettings):
     upstream_api_base: str = ""
     upstream_api_key: str = ""
     upstream_api_secret: str = ""
+    # Optional comma-separated host allowlist; empty means any HTTPS host.
+    upstream_allowed_hosts: str = ""
     upstream_mock_delay_seconds: float = 2.0
     upstream_mock_fail_rate: float = 0.0
     upstream_max_wait_seconds: int = 180
@@ -166,6 +171,8 @@ class Settings(BaseSettings):
     # Optional comma-separated BIN allowlist (first 6 digits) for US cards.
     us_bin_allowlist: str = ""
     rdvcc_checkout_url_template: str = ""
+    # Hosts allowed to receive card data in the self-owned checkout flow.
+    rdvcc_checkout_allowed_hosts: str = "chatgpt.com,*.openai.com,stripe.com,*.stripe.com"
 
     # ------------------------------------------------------------------
     # RDVCC 3DS mailbox (IMAP)

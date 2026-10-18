@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
@@ -39,6 +40,10 @@ class LtzfProvider(PaymentProvider):
         self.app_id = runtime.get("ltzf_app_id")
         self.signing_key = runtime.get("ltzf_key")
         self.api_base = runtime.get("ltzf_api_base", "https://api.ltzf.cn")
+        try:
+            net_guard.ensure_https(self.api_base)
+        except ValueError as exc:
+            raise PaymentProviderError("PAYMENT_INSECURE_URL", "支付 API 必须使用 HTTPS") from exc
         self.notify_url = runtime.get("ltzf_notify_url")
         if not (self.mch_id and self.signing_key):
             raise PaymentProviderError("PAYMENT_NOT_CONFIGURED", "蓝兔支付商户参数尚未配置")

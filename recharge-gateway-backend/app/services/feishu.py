@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.models import NotificationLog
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.notification_events import FEISHU_EVENTS
 
@@ -126,6 +127,11 @@ def send_feishu(
     if not webhook:
         _log(event, title, "failed", "Feishu webhook URL is empty")
         return {"status": "failed", "error": "webhook missing"}
+    try:
+        net_guard.ensure_https(webhook)
+    except ValueError:
+        _log(event, title, "failed", "Feishu webhook must use HTTPS")
+        return {"status": "failed", "error": "webhook must use HTTPS"}
 
     payload: dict[str, Any] = {
         "msg_type": "interactive",

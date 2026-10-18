@@ -31,6 +31,7 @@ class ParsedNotify:
     trade_no: str
     verified: bool
     success: bool
+    currency: str = "CNY"
     skip_amount_check: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 

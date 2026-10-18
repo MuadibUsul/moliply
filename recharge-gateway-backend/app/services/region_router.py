@@ -14,6 +14,7 @@ import httpx
 
 from app.config import settings
 from app.models import RegionPreference, SkuType
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.session_parser import SessionInfo
 
@@ -104,17 +105,33 @@ def billing_for(card, region: str) -> dict:
     return billing
 
 
+def _validated_checkout_url(url: str) -> str:
+    allowed = runtime.get_list(
+        "rdvcc_checkout_allowed_hosts",
+        settings.rdvcc_checkout_allowed_hosts.split(","),
+    )
+    try:
+        return net_guard.ensure_checkout_url(url, allowed)
+    except ValueError as exc:
+        logger.warning("Checkout URL rejected by security policy")
+        raise RegionError(
+            "CHECKOUT_HOST_NOT_ALLOWED",
+            "结账地址不在安全白名单内，任务已转人工处理",
+        ) from exc
+
+
 def create_checkout_url(session: SessionInfo, region: str, sku_type: SkuType) -> str:
     currency, amount = amount_for(region, sku_type)
     template = runtime.get("rdvcc_checkout_url_template", settings.rdvcc_checkout_url_template)
     if template:
-        return (
+        url = (
             template.replace("{access_token}", session.access_token)
             .replace("{user_id}", session.user_id)
             .replace("{region}", region)
             .replace("{currency}", currency)
             .replace("{amount}", str(amount))
         )
+        return _validated_checkout_url(url)
 
     plan_type = "pro" if sku_type in {SkuType.CHATGPT_PRO_200, SkuType.CHATGPT_PRO_20X_1M} else "plus"
     payload = {
@@ -147,7 +164,7 @@ def create_checkout_url(session: SessionInfo, region: str, sku_type: SkuType) ->
         url = data.get("url") or data.get("checkout_url") or (data.get("data") or {}).get("url")
         if not url or not str(url).startswith("http"):
             raise RegionError("CHECKOUT_CREATE_FAILED", f"{region} 结账地址未返回")
-        return str(url)
+        return _validated_checkout_url(str(url))
     except RegionError:
         raise
     except Exception as exc:

@@ -79,13 +79,42 @@ VCC_STATUS_LABELS = {"ACTIVE": "可用", "EXHAUSTED": "待销卡回血", "SUSPEN
 
 @router.post("/login")
 @limiter.limit(settings.admin_login_rate_limit)
-def admin_login(payload: AdminLoginRequest, request: Request) -> dict:
+def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     import secrets
 
     username_ok = secrets.compare_digest(payload.username, settings.admin_username)
     password_ok = verify_admin_password(payload.password)
+    ip = client_ip(request)
     if not (username_ok and password_ok):
+        try:
+            db.add(
+                AuditLog(
+                    actor=payload.username[:64],
+                    action="admin.login_failed",
+                    entity_type="admin",
+                    entity_id=payload.username[:64],
+                    detail="invalid credentials",
+                    ip=ip,
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+    try:
+        db.add(
+            AuditLog(
+                actor=payload.username,
+                action="admin.login",
+                entity_type="admin",
+                entity_id=payload.username,
+                detail="success",
+                ip=ip,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
     token, ttl = create_admin_token(payload.username)
     return {"token": token, "expires_in": ttl, "username": payload.username}
 

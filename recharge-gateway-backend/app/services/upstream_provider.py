@@ -21,6 +21,7 @@ from datetime import datetime
 import httpx
 
 from app.config import settings
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.errors import RechargeError
 
@@ -83,6 +84,19 @@ class UpstreamProvider:
     def _http_recharge(self, session_raw: str, sku_type: str, upstream_code: str | None) -> UpstreamResult:
         if not self.base or not self.merchant_key:
             raise RechargeError("UPSTREAM_NOT_CONFIGURED", "上游充值通道尚未配置，请联系客服")
+        try:
+            net_guard.ensure_https(self.base)
+        except ValueError as exc:
+            raise RechargeError(
+                "UPSTREAM_INSECURE_URL",
+                "上游 API 必须使用 HTTPS，请先在系统设置中修正",
+            ) from exc
+        allowed = runtime.get_list("upstream_allowed_hosts", [])
+        if allowed and not net_guard.host_allowed(self.base, allowed):
+            raise RechargeError(
+                "UPSTREAM_HOST_NOT_ALLOWED",
+                "上游 API 域名不在允许列表内，请先在系统设置中确认",
+            )
         base = self.base.rstrip("/")
         payload = {
             "session_raw": session_raw,

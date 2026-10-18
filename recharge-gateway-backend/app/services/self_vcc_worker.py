@@ -23,6 +23,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.models import SkuType, VccCard, VccStatus
 from app.services.crypto import decrypt_text
@@ -257,6 +258,18 @@ class PlaywrightCheckout:
         proxy_url: str,
         on_state: Callable[[str], None] | None = None,
     ) -> str:
+        try:
+            allowed = runtime.get_list(
+                "rdvcc_checkout_allowed_hosts",
+                settings.rdvcc_checkout_allowed_hosts.split(","),
+            )
+            checkout_url = net_guard.ensure_checkout_url(checkout_url, allowed)
+        except ValueError as exc:
+            raise SelfVccFailure(
+                "CHECKOUT_HOST_NOT_ALLOWED",
+                "结账地址不在安全白名单内，任务已转人工处理",
+                release_code=False,
+            ) from exc
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:  # pragma: no cover - deployment guard

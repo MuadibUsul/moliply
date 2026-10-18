@@ -5,6 +5,7 @@ from typing import Any
 
 from app.config import settings
 from app.services import runtime_settings as runtime
+from app.services.payments.guards import mock_payments_allowed
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
 
@@ -17,7 +18,7 @@ class MockPaymentProvider(PaymentProvider):
         self.channel = channel
 
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
-        if not runtime.get_bool("mock_payment_enabled", settings.mock_payment_enabled):
+        if not mock_payments_allowed():
             raise PaymentProviderError("PAYMENT_NOT_CONFIGURED", "支付通道尚未配置，请联系客服")
         pay_url = f"{settings.public_store_url.rstrip('/')}/pay/{order_no}?mock=1&channel={self.channel}"
         return PaymentIntent(

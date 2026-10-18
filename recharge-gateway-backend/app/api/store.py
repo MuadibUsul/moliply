@@ -88,7 +88,8 @@ def product_detail(slug: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/coupons/validate")
-def coupon_validate(payload: CouponValidateRequest, db: Session = Depends(get_db)) -> dict:
+@limiter.limit(settings.lookup_rate_limit)
+def coupon_validate(payload: CouponValidateRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     try:
         coupon, discount = order_service.validate_coupon(db, payload.code, Decimal(str(payload.amount)))
     except order_service.OrderError as exc:
@@ -199,8 +200,6 @@ def mock_settle(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not settings.mock_payment_enabled:
-        raise HTTPException(status_code=403, detail="模拟支付未启用")
     order = _get_order(db, order_no, user)
     order_service.settle_mock_order(db, order, channel=channel)
     order = _get_order(db, order_no, user)

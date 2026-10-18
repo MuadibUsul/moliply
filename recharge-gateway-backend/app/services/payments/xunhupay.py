@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.config import settings
+from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
@@ -38,6 +39,10 @@ class XunhupayProvider(PaymentProvider):
         self.app_id = runtime.get("xunhupay_app_id")
         self.app_secret = runtime.get("xunhupay_app_secret")
         self.api_base = runtime.get("xunhupay_api_base", "https://api.xunhupay.com")
+        try:
+            net_guard.ensure_https(self.api_base)
+        except ValueError as exc:
+            raise PaymentProviderError("PAYMENT_INSECURE_URL", "支付 API 必须使用 HTTPS") from exc
         self.notify_url = runtime.get("xunhupay_notify_url")
         self.return_url = runtime.get("xunhupay_return_url")
         if not (self.app_id and self.app_secret):
