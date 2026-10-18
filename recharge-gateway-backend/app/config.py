@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     admin_password: str = "change-me"
     admin_jwt_secret: str = "dev-admin-jwt-secret-change-me"
     admin_token_ttl_minutes: int = 720
+    # Customer order accounts. Falls back to SECRET_KEY when unset in dev.
+    user_jwt_secret: str = ""
+    user_token_ttl_days: int = 30
+    login_rate_limit: str = "10/minute"
     max_session_bytes: int = 262_144
     redeem_rate_limit: str = "10/minute"
     admin_login_rate_limit: str = "10/minute"
@@ -85,6 +89,26 @@ class Settings(BaseSettings):
     xunhupay_api_base: str = "https://api.xunhupay.com"
     xunhupay_notify_url: str = ""
     xunhupay_return_url: str = ""
+
+    # ------------------------------------------------------------------
+    # Crypto checkout (NOWPayments: USDT / USDC / BTC / ETH)
+    # ------------------------------------------------------------------
+    crypto_enabled: bool = False
+    crypto_provider: str = "nowpayments"  # nowpayments | mock
+    nowpayments_api_key: str = ""
+    nowpayments_ipn_secret: str = ""
+    nowpayments_api_base: str = "https://api.nowpayments.io"
+    nowpayments_ipn_url: str = ""
+    crypto_cny_per_usd: float = 7.20
+    crypto_supported_coins: str = "USDT,USDC,BTC,ETH"
+
+    @property
+    def crypto_coin_list(self) -> list[str]:
+        return [item.strip().upper() for item in self.crypto_supported_coins.split(",") if item.strip()]
+
+    @property
+    def nowpayments_ipn(self) -> str:
+        return self.nowpayments_ipn_url or f"{self.api_base_url}/api/v1/payments/nowpayments/ipn"
 
     # ------------------------------------------------------------------
     # Upstream recharge channel

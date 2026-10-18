@@ -77,7 +77,7 @@ class XunhupayProvider(PaymentProvider):
             raw={"errcode": payload.get("errcode")},
         )
 
-    def parse_notify(self, payload: dict[str, Any]) -> ParsedNotify:
+    def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
         received_hash = str(payload.get("hash") or "").lower()
         expected = _sign(payload, settings.xunhupay_app_secret)
         verified = bool(received_hash) and received_hash == expected

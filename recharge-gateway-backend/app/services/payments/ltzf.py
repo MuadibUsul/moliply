@@ -80,7 +80,7 @@ class LtzfProvider(PaymentProvider):
             raw={"code": code_value},
         )
 
-    def parse_notify(self, payload: dict[str, Any]) -> ParsedNotify:
+    def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
         received_sign = str(payload.get("sign") or "").upper()
         expected = _sign(payload, settings.ltzf_key)
         verified = bool(received_sign) and received_sign == expected

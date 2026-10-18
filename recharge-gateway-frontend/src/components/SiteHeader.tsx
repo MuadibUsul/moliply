@@ -77,7 +77,7 @@ export function SiteHeader() {
             <Link
               href="/orders"
               className="hidden h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:text-white sm:flex"
-              aria-label="订单查询"
+              aria-label="我的订单"
             >
               <ReceiptText size={16} />
             </Link>
@@ -99,7 +99,7 @@ export function SiteHeader() {
               href="/orders"
               className="hidden items-center gap-1.5 rounded-xl border border-brand-400/20 bg-brand-500/10 px-4 py-2.5 text-xs font-medium text-brand-200 transition hover:bg-brand-500/15 sm:inline-flex"
             >
-              订单查询
+              我的订单
               <ArrowUpRight size={13} />
             </Link>
 
@@ -145,7 +145,7 @@ export function SiteHeader() {
               onClick={() => setMenuOpen(false)}
               className="flex items-center justify-between rounded-xl px-3 py-3 text-sm text-slate-300 transition hover:bg-white/[0.05] hover:text-white"
             >
-              订单查询
+              我的订单
               <ArrowUpRight size={15} className="text-slate-600" />
             </Link>
             <Link

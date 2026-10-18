@@ -25,13 +25,29 @@ class OrderItemIn(StrictModel):
 
 class OrderCreateRequest(StrictModel):
     email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
     items: list[OrderItemIn] = Field(min_length=1, max_length=10)
     coupon_code: str | None = Field(default=None, max_length=32)
-    payment_method: Literal["wechat", "alipay"] = "wechat"
+    payment_method: Literal["wechat", "alipay", "crypto"] = "wechat"
+
+
+class UserLoginRequest(StrictModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class ChangePasswordRequest(StrictModel):
+    old_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AdminResetPasswordRequest(StrictModel):
+    email: EmailStr
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class PaymentCreateRequest(StrictModel):
-    provider: Literal["wechat", "alipay", "xunhupay"] = "wechat"
+    provider: Literal["wechat", "alipay", "xunhupay", "crypto"] = "wechat"
 
 
 class CouponValidateRequest(StrictModel):

@@ -54,6 +54,8 @@ PAYMENT_LABELS = {
     "ltzf_wechat": "微信支付",
     "ltzf_alipay": "支付宝",
     "xunhupay": "虎皮椒",
+    "crypto": "加密货币",
+    "nowpayments": "加密货币",
     "mock": "模拟支付",
     "mock_wechat": "微信支付",
     "mock_alipay": "支付宝",
@@ -99,10 +101,12 @@ def create_order(
     items: list[Any],
     coupon_code: str | None,
     client_ip: str,
+    user_id: int | None = None,
 ) -> Order:
     order = Order(
         order_no=generate_order_no(db),
-        email=str(email),
+        user_id=user_id,
+        email=str(email).strip().lower(),
         amount=Decimal("0"),
         status=OrderStatus.PENDING,
         client_ip=client_ip,
@@ -321,20 +325,14 @@ def serialize_order(
     }
 
 
-def find_orders(db: Session, query: str) -> list[Order]:
-    value = query.strip()
-    if not value:
-        return []
-    if "@" in value:
-        return (
-            db.query(Order)
-            .filter(func.lower(Order.email) == value.lower())
-            .order_by(Order.created_at.desc())
-            .limit(10)
-            .all()
-        )
-    order = db.query(Order).filter(func.upper(Order.order_no) == value.upper()).first()
-    return [order] if order else []
+def find_user_orders(db: Session, user_id: int) -> list[Order]:
+    return (
+        db.query(Order)
+        .filter(Order.user_id == user_id)
+        .order_by(Order.created_at.desc())
+        .limit(50)
+        .all()
+    )
 
 
 def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> bool:
@@ -482,11 +480,16 @@ def settle_mock_order(db: Session, order: Order, channel: str = "wechat") -> Ord
     return order
 
 
-def process_payment_notify(db: Session, provider_key: str, payload: dict[str, Any]) -> str:
+def process_payment_notify(
+    db: Session,
+    provider_key: str,
+    payload: dict[str, Any],
+    signature: str | None = None,
+) -> str:
     """Verify, deduplicate and apply an asynchronous payment notification."""
     try:
         provider = get_callback_provider(provider_key)
-        parsed = provider.parse_notify(payload)
+        parsed = provider.parse_notify(payload, signature)
     except PaymentProviderError as exc:
         raise OrderError(exc.code, exc.message, 502) from exc
     if not parsed.verified:
@@ -494,7 +497,7 @@ def process_payment_notify(db: Session, provider_key: str, payload: dict[str, An
     order = db.query(Order).filter(Order.order_no == parsed.order_no).first()
     if not order:
         raise OrderError("ORDER_NOT_FOUND", "回调对应的订单不存在", 404)
-    if abs(parsed.amount - order.amount) > Decimal("0.01"):
+    if not parsed.skip_amount_check and abs(parsed.amount - order.amount) > Decimal("0.01"):
         raise OrderError("PAYMENT_AMOUNT_MISMATCH", "支付金额与订单金额不一致", 400)
 
     event_key = parsed.trade_no or f"{parsed.order_no}:{parsed.amount:.2f}"

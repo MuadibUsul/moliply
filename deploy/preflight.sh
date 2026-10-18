@@ -36,6 +36,9 @@ ADMIN_PASSWORD="$(get ADMIN_PASSWORD)"
 MASTER_KEY="$(get MASTER_AES_KEY)"
 SMTP_HOST="$(get SMTP_HOST)"
 CONTACT="$(get NEXT_PUBLIC_CONTACT_WECHAT)"
+CRYPTO_ENABLED="$(get CRYPTO_ENABLED)"
+NOWPAYMENTS_API_KEY="$(get NOWPAYMENTS_API_KEY)"
+NOWPAYMENTS_IPN_SECRET="$(get NOWPAYMENTS_IPN_SECRET)"
 LTZF_ID="$(get LTZF_MCH_ID)"
 LTZF_KEY="$(get LTZF_KEY)"
 XH_ID="$(get XUNHUPAY_APP_ID)"
@@ -87,6 +90,16 @@ if [ -n "$CONTACT" ] && [ "$CONTACT" != "MOLIPLY-SUPPORT" ]; then
   ok "customer service contact configured"
 else
   bad "NEXT_PUBLIC_CONTACT_WECHAT is still a placeholder; set a real contact and rebuild web"
+fi
+
+if [ "$CRYPTO_ENABLED" = "true" ]; then
+  if [ -n "$NOWPAYMENTS_API_KEY" ] && [ -n "$NOWPAYMENTS_IPN_SECRET" ]; then
+    ok "crypto checkout enabled and NOWPayments keys configured"
+  else
+    bad "CRYPTO_ENABLED=true but NOWPayments API/IPN secrets are missing"
+  fi
+else
+  warnf "crypto checkout is disabled (USDT/USDC/BTC/ETH not offered)"
 fi
 
 latest_backup="$(find "$BASE/backups/db" -type f -name '*.dump' -mmin -1440 2>/dev/null | head -n1 || true)"

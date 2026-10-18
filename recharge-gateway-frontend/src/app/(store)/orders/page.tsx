@@ -6,55 +6,122 @@ import {
   ArrowRight,
   ArrowUpRight,
   ClipboardList,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LogIn,
+  LogOut,
+  Mail,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { api, queryString } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  clearUserToken,
+  getUserEmail,
+  getUserToken,
+  setUserEmail,
+  setUserToken,
+} from "@/lib/api";
 import { formatDateTime, formatMoney } from "@/lib/format";
-import type { Order } from "@/lib/types";
+import type { Order, UserLoginResult } from "@/lib/types";
 
-type OrderListResponse = { items: Order[] };
+type MyOrdersResponse = { email: string; items: Order[] };
 
 function OrdersContent() {
   const searchParams = useSearchParams();
-  const initialQuery = searchParams.get("order_no") || searchParams.get("q") || "";
-  const [input, setInput] = useState(initialQuery);
+  const requestedOrder = searchParams.get("order_no") || "";
+
+  const [token, setToken] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [booting, setBooting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedNo, setSelectedNo] = useState<string | null>(null);
-  const [searched, setSearched] = useState(false);
 
-  const search = useCallback(async (value: string) => {
-    const keyword = value.trim();
-    if (!keyword) return;
+  const loadOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setSearched(true);
     try {
-      const data = await api<OrderListResponse>(`/api/v1/store/orders${queryString({ q: keyword })}`);
+      const data = await api<MyOrdersResponse>("/api/v1/store/my/orders");
       setOrders(data.items);
-      setSelectedNo(data.items[0]?.order_no || null);
+      setEmail(data.email);
+      setUserEmail(data.email);
+      setSelectedNo((current) => {
+        const wanted = requestedOrder || current;
+        if (wanted && data.items.some((order) => order.order_no === wanted)) return wanted;
+        return data.items[0]?.order_no || null;
+      });
     } catch (err) {
-      setOrders([]);
-      setSelectedNo(null);
-      setError((err as Error).message);
+      if (err instanceof ApiError && err.status === 401) {
+        clearUserToken();
+        setToken(null);
+        setOrders([]);
+        setSelectedNo(null);
+        setError("登录已失效，请重新输入邮箱和密码");
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [requestedOrder]);
 
   useEffect(() => {
-    if (initialQuery) {
-      setInput(initialQuery);
-      void search(initialQuery);
+    const savedEmail = getUserEmail();
+    if (savedEmail) setEmail(savedEmail);
+    const savedToken = getUserToken();
+    if (!savedToken) {
+      setBooting(false);
+      return;
     }
-  }, [initialQuery, search]);
+    setToken(savedToken);
+    void loadOrders().finally(() => setBooting(false));
+  }, [loadOrders]);
+
+  async function login(event: React.FormEvent) {
+    event.preventDefault();
+    if (!email.trim() || !password) {
+      setError("请输入下单时填写的邮箱和密码");
+      return;
+    }
+    setLoginLoading(true);
+    setError(null);
+    try {
+      const data = await api<UserLoginResult>("/api/v1/auth/login", {
+        method: "POST",
+        body: { email: email.trim(), password },
+      });
+      setUserToken(data.token);
+      setUserEmail(data.email);
+      setToken(data.token);
+      setEmail(data.email);
+      setPassword("");
+      await loadOrders();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  function logout() {
+    clearUserToken();
+    setToken(null);
+    setOrders([]);
+    setSelectedNo(null);
+    setPassword("");
+    setError(null);
+  }
 
   const selected = orders.find((order) => order.order_no === selectedNo) || orders[0] || null;
 
@@ -62,105 +129,169 @@ function OrdersContent() {
     <div className="relative overflow-hidden">
       <div className="pointer-events-none absolute left-1/2 top-0 h-[380px] w-[900px] -translate-x-1/2 rounded-full bg-brand-600/[0.08] blur-[120px]" />
       <div className="container-page relative pb-16 pt-12">
-        <p className="eyebrow">ORDER LOOKUP</p>
+        <p className="eyebrow">MY ORDERS</p>
         <h1 className="mt-3 font-display text-[36px] font-bold tracking-tight text-white sm:text-[46px]">
           查询我的订单<span className="text-brand-400">.</span>
         </h1>
-        <p className="mt-3 text-sm text-slate-500">随时查询支付状态、交付结果、激活码和售后记录。</p>
+        <p className="mt-3 text-sm text-slate-500">
+          使用下单时填写的邮箱和密码登录，管理订单、卡密与交付内容。
+        </p>
 
         <div className="mt-9 grid gap-5 lg:grid-cols-[0.82fr_1.18fr]">
           <section className="surface h-fit p-5 sm:p-6 lg:sticky lg:top-24">
-            <h2 className="text-sm font-semibold text-slate-100">快速查询</h2>
-            <p className="mt-2 text-[11px] leading-5 text-slate-500">请输入订单编号或下单时填写的接收邮箱。</p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void search(input);
-              }}
-              className="mt-5"
-            >
-              <div className="relative">
-                <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  placeholder="订单编号 / 邮箱"
-                  className="field pl-10"
-                  aria-label="订单编号或邮箱"
-                />
-              </div>
-              <button type="submit" disabled={loading || !input.trim()} className="btn-primary mt-3 w-full">
-                {loading ? "正在查询..." : "查询订单"}
-                {!loading && <ArrowRight size={15} />}
-              </button>
-            </form>
-
-            {orders.length > 1 && (
-              <div className="mt-6">
-                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-slate-600">查询结果 · {orders.length} 条订单</p>
-                <div className="grid gap-2">
-                  {orders.map((order) => (
-                    <button
-                      key={order.order_no}
-                      type="button"
-                      onClick={() => setSelectedNo(order.order_no)}
-                      className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
-                        selected?.order_no === order.order_no
-                          ? "border-brand-400/35 bg-brand-500/[0.08]"
-                          : "border-white/[0.07] bg-white/[0.02] hover:border-white/15"
-                      }`}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate font-mono text-[10px] text-slate-300">{order.order_no}</span>
-                        <span className="mt-0.5 block text-[10px] text-slate-600">{formatDateTime(order.created_at)}</span>
-                      </span>
-                      <span className="shrink-0 text-[10px] text-slate-500">{formatMoney(order.amount)}</span>
-                    </button>
-                  ))}
+            {!token ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-brand-400/20 bg-brand-500/10 text-brand-300">
+                    <LogIn size={17} />
+                  </span>
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">登录订单中心</h2>
+                    <p className="mt-1 text-[10px] text-slate-600">首次下单会自动创建账户</p>
+                  </div>
                 </div>
-              </div>
+                <p className="mt-4 text-[11px] leading-6 text-slate-500">
+                  下单时填写的邮箱与密码就是你的订单账户。登录后可查看交付内容、充值进度与售后记录。
+                </p>
+                <form onSubmit={login} className="mt-5 space-y-3">
+                  <div>
+                    <label htmlFor="login-email" className="mb-2 block text-[11px] text-slate-400">下单邮箱</label>
+                    <div className="relative">
+                      <Mail size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input
+                        id="login-email"
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        placeholder="name@example.com"
+                        className="field pl-10"
+                        autoComplete="email"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="login-password" className="mb-2 block text-[11px] text-slate-400">订单密码</label>
+                    <div className="relative">
+                      <KeyRound size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input
+                        id="login-password"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder="下单时设置的密码"
+                        className="field pl-10 pr-11"
+                        autoComplete="current-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((value) => !value)}
+                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-slate-500 hover:text-slate-300"
+                        aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                      >
+                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                  {error && (
+                    <p className="rounded-lg border border-rose-400/20 bg-rose-400/[0.07] px-3 py-2.5 text-[11px] leading-5 text-rose-200">
+                      {error}
+                    </p>
+                  )}
+                  <button type="submit" disabled={loginLoading} className="btn-primary w-full">
+                    {loginLoading ? "正在登录..." : "登录并查看订单"}
+                    {!loginLoading && <ArrowRight size={15} />}
+                  </button>
+                </form>
+                <div className="mt-5 space-y-2 border-t border-white/[0.06] pt-4 text-[10px] leading-5 text-slate-600">
+                  <p className="flex items-start gap-2"><ShieldCheck size={13} className="mt-0.5 shrink-0" /> 密码使用加盐哈希存储，客服也无法查看明文。</p>
+                  <p className="flex items-start gap-2"><RefreshCw size={13} className="mt-0.5 shrink-0" /> 忘记密码请联系在线客服，核实订单后为你重置。</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">我的账户</h2>
+                    <p className="mt-1 break-all text-[11px] text-brand-300">{email}</p>
+                  </div>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-400/20 bg-emerald-400/10 text-emerald-300">
+                    <ShieldCheck size={17} />
+                  </span>
+                </div>
+                <div className="mt-5 grid gap-2">
+                  <button type="button" onClick={() => void loadOrders()} className="btn-secondary w-full py-2.5">
+                    刷新订单
+                    <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+                  </button>
+                  <button type="button" onClick={logout} className="btn-ghost w-full">
+                    <LogOut size={13} />
+                    退出登录
+                  </button>
+                </div>
+                <div className="mt-4 rounded-lg border border-white/[0.05] bg-white/[0.02] p-3 text-[10px] leading-5 text-slate-600">
+                  交付内容只对登录账户可见。请勿把订单密码告诉他人。
+                </div>
+              </>
             )}
-
-            <div className="mt-6 space-y-2 border-t border-white/[0.06] pt-4 text-[10px] leading-5 text-slate-600">
-              <p className="flex items-start gap-2"><ShieldCheck size={13} className="mt-0.5 shrink-0" /> 订单信息仅用于交付与售后，我们不会向第三方出售。</p>
-              <p className="flex items-start gap-2"><RefreshCw size={13} className="mt-0.5 shrink-0" /> 支付后页面会自动更新，也可手动刷新查询。</p>
-            </div>
           </section>
 
-          <section className="surface min-h-[400px] p-5 sm:p-6">
-            {loading ? (
+          <section className="surface min-h-[420px] p-5 sm:p-6">
+            {booting || loading ? (
               <div className="space-y-4">
                 <div className="skeleton h-6 w-40" />
                 <div className="skeleton h-24 w-full" />
                 <div className="skeleton h-16 w-full" />
               </div>
-            ) : error ? (
-              <div className="flex min-h-[340px] flex-col items-center justify-center text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-slate-500">
-                  <Search size={20} />
-                </div>
-                <p className="mt-4 text-sm text-slate-300">{error}</p>
-                <p className="mt-1.5 text-xs text-slate-600">请检查订单编号是否完整，或确认下单邮箱是否正确。</p>
-                <Link href="/help#contact" className="btn-soft mt-5">联系客服</Link>
-              </div>
-            ) : !selected ? (
-              <div className="flex min-h-[340px] flex-col items-center justify-center text-center">
+            ) : !token ? (
+              <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.025] text-slate-600">
                   <ClipboardList size={24} />
                 </div>
-                <p className="mt-5 text-sm text-slate-400">{searched ? "没有找到对应订单" : "输入订单信息开始查询"}</p>
+                <p className="mt-5 text-sm text-slate-400">登录后查看你的订单</p>
                 <p className="mt-1.5 max-w-xs text-xs leading-5 text-slate-600">
-                  订单编号可在支付成功页或交付邮件中找到，邮箱为下单时填写的接收邮箱。
+                  使用下单邮箱和密码登录。订单详情包含激活码、成品号账密、充值进度与售后记录。
                 </p>
-                {searched && (
-                  <div className="mt-5 flex gap-2">
-                    <Link href="/products" className="btn-soft">去选购</Link>
-                    <Link href="/help#contact" className="btn-secondary">联系客服</Link>
-                  </div>
-                )}
+                <Link href="/products" className="btn-soft mt-5">去选购</Link>
+              </div>
+            ) : error && orders.length === 0 ? (
+              <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
+                <p className="text-sm text-slate-300">{error}</p>
+                <button type="button" onClick={() => void loadOrders()} className="btn-soft mt-5">重新加载</button>
+              </div>
+            ) : !selected ? (
+              <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.025] text-slate-600">
+                  <ClipboardList size={24} />
+                </div>
+                <p className="mt-5 text-sm text-slate-400">这个账户还没有订单</p>
+                <p className="mt-1.5 text-xs text-slate-600">选购商品后，使用同一邮箱和密码即可在这里查看。</p>
+                <Link href="/products" className="btn-primary mt-5">去选购</Link>
               </div>
             ) : (
               <div>
+                {orders.length > 1 && (
+                  <div className="mb-5">
+                    <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-slate-600">我的订单 · {orders.length} 条</p>
+                    <div className="scrollbar-thin flex gap-2 overflow-x-auto pb-1">
+                      {orders.map((order) => (
+                        <button
+                          key={order.order_no}
+                          type="button"
+                          onClick={() => setSelectedNo(order.order_no)}
+                          className={`shrink-0 rounded-lg border px-3 py-2.5 text-left transition ${
+                            selected.order_no === order.order_no
+                              ? "border-brand-400/35 bg-brand-500/[0.08]"
+                              : "border-white/[0.07] bg-white/[0.02] hover:border-white/15"
+                          }`}
+                        >
+                          <span className="block font-mono text-[10px] text-slate-300">{order.order_no}</span>
+                          <span className="mt-0.5 block text-[10px] text-slate-600">{formatDateTime(order.created_at)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-base font-semibold text-slate-100">订单详情</h2>
@@ -168,6 +299,12 @@ function OrdersContent() {
                   </div>
                   <StatusBadge status={selected.status} label={selected.status_label} />
                 </div>
+
+                {error && (
+                  <p className="mt-4 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2.5 text-[10px] text-amber-200">
+                    {error}
+                  </p>
+                )}
 
                 <div className="mt-5 grid gap-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
@@ -263,11 +400,11 @@ function OrdersContent() {
                   <Link href="/help#contact" className="btn-secondary py-2.5">申请售后</Link>
                   <button
                     type="button"
-                    onClick={() => void search(selected.order_no)}
+                    onClick={() => void loadOrders()}
                     className="btn-secondary py-2.5"
                   >
                     刷新状态
-                    <RefreshCw size={13} />
+                    <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
                   </button>
                 </div>
 

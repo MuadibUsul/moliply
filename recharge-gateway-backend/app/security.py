@@ -21,6 +21,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False)
+user_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -127,3 +128,37 @@ async def require_admin(
     if credentials is None or not credentials.credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录运营后台")
     return decode_admin_token(credentials.credentials)
+
+
+# ---------------------------------------------------------------------------
+# Customer order-account tokens
+# ---------------------------------------------------------------------------
+def _user_jwt_key() -> str:
+    return settings.user_jwt_secret or settings.secret_key
+
+
+def create_user_token(user: Any) -> tuple[str, int]:
+    ttl_seconds = settings.user_token_ttl_days * 86400
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "role": "user",
+        "ver": user.token_version,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+    }
+    token = jwt.encode(payload, _user_jwt_key(), algorithm="HS256")
+    return token, ttl_seconds
+
+
+def decode_user_token(token: str) -> dict[str, Any]:
+    try:
+        payload = jwt.decode(token, _user_jwt_key(), algorithms=["HS256"])
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已过期，请重新登录") from exc
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的登录凭证") from exc
+    if payload.get("role") != "user":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+    return payload

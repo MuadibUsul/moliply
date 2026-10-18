@@ -29,6 +29,8 @@ os.environ.update(
         "ADMIN_USERNAME": "admin",
         "ADMIN_PASSWORD": "test-admin-pass",
         "ADMIN_JWT_SECRET": "test-admin-jwt-secret",
+        "USER_JWT_SECRET": "test-user-jwt-secret",
+        "LOGIN_RATE_LIMIT": "1000/minute",
         "MASTER_AES_KEY": base64.b64encode(b"m" * 32).decode("ascii"),
         "SECRET_KEY": "test-secret",
         "REDEEM_RATE_LIMIT": "1000/minute",

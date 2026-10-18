@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Copy,
+  KeyRound,
   Loader2,
   PackageCheck,
   RefreshCw,
@@ -78,6 +79,30 @@ function AdminOrdersContent() {
       });
       setSelected(result.order);
       await load();
+    } catch (err) {
+      setError(handleAdminError(err));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function resetCustomerPassword() {
+    if (!selected) return;
+    const next = window.prompt(`为 ${selected.email} 设置新的订单密码（至少 8 位）`);
+    if (!next) return;
+    if (next.length < 8) {
+      window.alert("密码至少需要 8 位");
+      return;
+    }
+    if (!window.confirm("确认重置？该客户现有的登录状态会立即失效。")) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      await api("/api/v1/admin/users/reset-password", {
+        method: "POST",
+        body: { email: selected.email, new_password: next },
+      });
+      window.alert("客户密码已重置，请把新密码安全地告知客户。");
     } catch (err) {
       setError(handleAdminError(err));
     } finally {
@@ -257,6 +282,14 @@ function AdminOrdersContent() {
                     <PackageCheck size={13} /> 重新发货
                   </button>
                 )}
+                <button
+                  type="button"
+                  disabled={actionLoading}
+                  onClick={() => void resetCustomerPassword()}
+                  className="btn-soft py-2"
+                >
+                  <KeyRound size={13} /> 重置客户密码
+                </button>
                 <span className="flex items-center gap-1 font-mono text-[10px] text-slate-600">
                   <Copy size={11} /> {selected.order_no}
                 </span>

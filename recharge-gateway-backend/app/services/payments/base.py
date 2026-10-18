@@ -31,6 +31,7 @@ class ParsedNotify:
     trade_no: str
     verified: bool
     success: bool
+    skip_amount_check: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -40,7 +41,7 @@ class PaymentProvider:
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
         raise NotImplementedError
 
-    def parse_notify(self, payload: dict[str, Any]) -> ParsedNotify:
+    def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
         raise NotImplementedError
 
     def success_body(self) -> str:

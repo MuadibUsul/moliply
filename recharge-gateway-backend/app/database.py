@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -35,11 +35,31 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def ensure_schema_compatibility() -> None:
+    """Apply the one additive migration needed by existing installations.
+
+    ``create_all`` creates new tables (users) but does not add columns to an
+    existing orders table. This adds orders.user_id once, without touching
+    existing rows. Fresh databases already have the column from metadata.
+    """
+    inspector = inspect(engine)
+    if "orders" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("orders")}
+    if "user_id" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
+    logger.info("Schema compatibility: added orders.user_id for customer accounts")
+
+
 def init_db() -> None:
     """Create tables and seed the demo catalogue when the database is empty."""
     from app import models  # noqa: F401  (register metadata)
 
     Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility()
     if settings.seed_demo_data:
         from app.seed import seed_demo_data
 

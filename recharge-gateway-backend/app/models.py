@@ -180,11 +180,27 @@ class ProductVariant(Base):
     product: Mapped[Product] = relationship(back_populates="variants")
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(160), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    orders: Mapped[list["Order"]] = relationship(back_populates="user")
+
+
 class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     order_no: Mapped[str] = mapped_column(String(40), unique=True, nullable=False, index=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     email: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
@@ -205,6 +221,7 @@ class Order(Base):
         order_by="OrderItem.id",
         lazy="selectin",
     )
+    user: Mapped["User"] = relationship(back_populates="orders")
 
 
 class OrderItem(Base):
@@ -382,6 +399,7 @@ __all__ = [
     "RechargeTask",
     "SKU_LABELS",
     "SkuType",
+    "User",
     "VccCard",
     "VccStatus",
     "utcnow",

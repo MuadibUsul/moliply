@@ -28,7 +28,7 @@ class MockPaymentProvider(PaymentProvider):
             expires_in=settings.order_expire_minutes * 60,
         )
 
-    def parse_notify(self, payload: dict[str, Any]) -> ParsedNotify:
+    def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
         return ParsedNotify(
             provider=self.channel,
             order_no=str(payload.get("order_no", "")),

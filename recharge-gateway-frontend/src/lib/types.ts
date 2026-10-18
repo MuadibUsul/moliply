@@ -112,6 +112,34 @@ export type Order = {
   timeline: TimelineStep[];
 };
 
+export type BrandInfo = {
+  crypto_enabled: boolean;
+  crypto_coins: string[];
+  payment_mode: string;
+  mock_payment_enabled: boolean;
+};
+
+export type OrderCreateResult = {
+  order: Order;
+  payment_method: string;
+  user_token: string;
+  user_email: string;
+  account_created: boolean;
+};
+
+export type UserLoginResult = {
+  token: string;
+  expires_in: number;
+  email: string;
+};
+
+export type UserProfile = {
+  id: number;
+  email: string;
+  created_at: string;
+  last_login_at: string | null;
+};
+
 export type PaymentIntent = {
   provider: string;
   qr_content: string;

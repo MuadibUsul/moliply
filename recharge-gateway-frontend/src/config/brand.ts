@@ -28,7 +28,7 @@ export const NAV_LINKS = [
 export const FOOTER_LINKS = [
   { href: "/help#terms", label: "服务条款" },
   { href: "/help#privacy", label: "隐私政策" },
-  { href: "/orders", label: "订单查询" },
+  { href: "/orders", label: "我的订单" },
   { href: "/help#contact", label: "联系客服" },
 ] as const;
 
@@ -89,5 +89,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export const ADMIN_TOKEN_KEY = "moliply_admin_token";
+export const USER_TOKEN_KEY = "moliply_user_token";
+export const USER_EMAIL_KEY = "moliply_user_email";
 export const CART_KEY = "moliply_cart_v1";
 export const LAST_TASK_KEY = "moliply_last_redeem_task";

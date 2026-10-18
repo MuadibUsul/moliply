@@ -8,6 +8,7 @@ from app.config import settings
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 from app.services.payments.ltzf import LtzfProvider
 from app.services.payments.mock import MockPaymentProvider
+from app.services.payments.nowpayments import NowPaymentsProvider
 from app.services.payments.xunhupay import XunhupayProvider
 
 MASKED_TITLE_POOL = [
@@ -53,11 +54,19 @@ def get_callback_provider(name: str) -> PaymentProvider:
         return LtzfProvider(channel="wechat")
     if provider == "xunhupay":
         return XunhupayProvider()
+    if provider == "nowpayments":
+        return NowPaymentsProvider()
     return MockPaymentProvider(provider or "mock")
 
 
 def get_provider(name: str) -> PaymentProvider:
     provider = (name or "").lower()
+    if provider in {"crypto", "nowpayments"}:
+        if not settings.crypto_enabled:
+            raise PaymentProviderError("CRYPTO_DISABLED", "加密货币支付暂未启用")
+        if settings.crypto_provider.lower() == "mock":
+            return MockPaymentProvider("crypto")
+        return NowPaymentsProvider()
     if provider in {"wechat", "wxpay", "ltzf", "lanttu"}:
         if settings.payment_mode != "live":
             return MockPaymentProvider("wechat")
@@ -81,6 +90,7 @@ __all__ = [
     "PaymentIntent",
     "PaymentProvider",
     "PaymentProviderError",
+    "get_callback_provider",
     "get_provider",
     "masked_order_title",
 ]

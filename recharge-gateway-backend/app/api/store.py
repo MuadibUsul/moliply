@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_user
 from app.config import settings
 from app.database import get_db
 from app.models import (
@@ -14,9 +15,11 @@ from app.models import (
     OrderStatus,
     Product,
     ProductCategory,
+    User,
 )
 from app.schemas import CouponValidateRequest, OrderCreateRequest, PaymentCreateRequest
-from app.security import client_ip, limiter
+from app.security import client_ip, create_user_token, limiter
+from app.services import accounts
 from app.services import orders as order_service
 from app.services.catalog import list_categories, money, serialize_product
 from app.services.payments import masked_order_title
@@ -101,50 +104,62 @@ def coupon_validate(payload: CouponValidateRequest, db: Session = Depends(get_db
 @router.post("/orders", status_code=201)
 @limiter.limit("20/minute")
 def create_order(payload: OrderCreateRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    try:
+        user, account_created = accounts.get_or_create_user(db, str(payload.email), payload.password)
+    except accounts.AccountError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     order = order_service.create_order(
         db,
-        email=str(payload.email),
+        email=user.email,
+        user_id=user.id,
         items=payload.items,
         coupon_code=payload.coupon_code,
         client_ip=client_ip(request),
     )
+    user_token, _ = create_user_token(user)
     return {
         "order": order_service.serialize_order(db, order, reveal=False, reveal_email=True),
         "payment_method": payload.payment_method,
+        "user_token": user_token,
+        "user_email": user.email,
+        "account_created": account_created,
     }
 
 
-@router.get("/orders")
-@limiter.limit(settings.lookup_rate_limit)
-def lookup_orders(
-    request: Request,
-    q: str = Query(min_length=3, max_length=160),
-    db: Session = Depends(get_db),
-) -> dict:
-    orders = order_service.find_orders(db, q)
-    if not orders:
-        raise HTTPException(status_code=404, detail="未找到对应订单，请检查订单编号或邮箱")
+@router.get("/my/orders")
+def my_orders(user: User = Depends(require_user), db: Session = Depends(get_db)) -> dict:
+    orders = order_service.find_user_orders(db, user.id)
     return {
+        "email": user.email,
         "items": [order_service.serialize_order(db, order, reveal=True) for order in orders],
     }
 
 
-def _get_order(db: Session, order_no: str) -> Order:
+def _get_order(db: Session, order_no: str, user: User) -> Order:
     order = db.query(Order).filter(func.upper(Order.order_no) == order_no.strip().upper()).first()
-    if not order:
+    if not order or order.user_id != user.id:
         raise HTTPException(status_code=404, detail="订单不存在")
     return order
 
 
 @router.get("/orders/{order_no}")
-def order_detail(order_no: str, db: Session = Depends(get_db)) -> dict:
-    order = _get_order(db, order_no)
+def order_detail(
+    order_no: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    order = _get_order(db, order_no, user)
     return {"order": order_service.serialize_order(db, order, reveal=True)}
 
 
 @router.get("/orders/{order_no}/status")
-def order_status(order_no: str, db: Session = Depends(get_db)) -> dict:
-    order = _get_order(db, order_no)
+def order_status(
+    order_no: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    order = _get_order(db, order_no, user)
     payload = order_service.serialize_order(db, order, reveal=True)
     return {
         "order_no": order.order_no,
@@ -163,9 +178,10 @@ def pay(
     order_no: str,
     payload: PaymentCreateRequest,
     request: Request,
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    order = _get_order(db, order_no)
+    order = _get_order(db, order_no, user)
     if order.status == OrderStatus.PENDING and order.expires_at:
         from app.models import utcnow
 
@@ -180,13 +196,14 @@ def mock_settle(
     order_no: str,
     request: Request,
     channel: str = Query(default="wechat"),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
     if not settings.mock_payment_enabled:
         raise HTTPException(status_code=403, detail="模拟支付未启用")
-    order = _get_order(db, order_no)
+    order = _get_order(db, order_no, user)
     order_service.settle_mock_order(db, order, channel=channel)
-    order = _get_order(db, order_no)
+    order = _get_order(db, order_no, user)
     return {"order": order_service.serialize_order(db, order, reveal=True)}
 
 

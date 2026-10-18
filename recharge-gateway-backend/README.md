@@ -37,10 +37,13 @@ PUBLIC_STORE_URL=http://localhost:3000 PUBLIC_REDEEM_URL=http://localhost:3000/r
 | GET | `/api/v1/store/products` | 商品列表（分类/交付/搜索/排序/分页） |
 | GET | `/api/v1/store/products/{slug-or-id}` | 商品详情 |
 | POST | `/api/v1/store/coupons/validate` | 优惠码校验 |
-| POST | `/api/v1/store/orders` | 创建订单（服务端计价） |
-| GET | `/api/v1/store/orders?q=...` | 订单查询（订单号/邮箱） |
-| GET | `/api/v1/store/orders/{order_no}` | 订单详情 |
-| GET | `/api/v1/store/orders/{order_no}/status` | 支付/交付状态轮询 |
+| POST | `/api/v1/store/orders` | 创建订单（服务端计价 + 邮箱/密码建账户） |
+| POST | `/api/v1/auth/login` | 客户邮箱+密码登录 |
+| GET | `/api/v1/auth/me` | 当前客户账户 |
+| POST | `/api/v1/auth/change-password` | 修改客户密码（旧令牌失效） |
+| GET | `/api/v1/store/my/orders` | 当前账户的订单列表 |
+| GET | `/api/v1/store/orders/{order_no}` | 订单详情（仅订单所属账户） |
+| GET | `/api/v1/store/orders/{order_no}/status` | 支付/交付状态轮询（仅所属账户） |
 | POST | `/api/v1/store/orders/{order_no}/pay` | 创建支付二维码 |
 | POST | `/api/v1/store/orders/{order_no}/mock-settle` | 仅演示：模拟支付成功 |
 | POST | `/api/v1/redeem/verify-code` | 验证 MOLI 激活码 |
@@ -49,6 +52,7 @@ PUBLIC_STORE_URL=http://localhost:3000 PUBLIC_REDEEM_URL=http://localhost:3000/r
 | GET | `/api/v1/redeem/status/{task_id}` | 任务进度 |
 | POST | `/api/v1/payments/ltzf/notify` | 蓝兔支付异步回调 |
 | POST | `/api/v1/payments/xunhupay/notify` | 虎皮椒异步回调 |
+| POST | `/api/v1/payments/nowpayments/ipn` | NOWPayments IPN（USDT/USDC/BTC/ETH） |
 
 运营后台（Bearer JWT）：
 
@@ -74,6 +78,7 @@ PUBLIC_STORE_URL=http://localhost:3000 PUBLIC_REDEEM_URL=http://localhost:3000/r
 | PATCH | `/api/v1/admin/products/{id}` | 上下架/价格/角标 |
 | POST | `/api/v1/admin/accounts/import` | 导入成品号账密 |
 | GET | `/api/v1/admin/channels` | 双通道状态 |
+| POST | `/api/v1/admin/users/reset-password` | 后台重置客户密码 |
 
 ## 充值状态机
 
@@ -96,7 +101,7 @@ PENDING
 ## 目录
 
 - `app/api`：路由；
-- `app/services`：加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付；
+- `app/services`：加密、卡密、Session、账户、上游、自营 VCC、IMAP、订单、支付；
 - `app/tasks`：Celery Worker/Beat；
 - `app/seed.py`：演示目录与库存；
-- `tests/`：53 项 pytest。
+- `tests/`：59 项 pytest。

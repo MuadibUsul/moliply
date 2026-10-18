@@ -1,4 +1,4 @@
-import { ADMIN_TOKEN_KEY } from "@/config/brand";
+import { ADMIN_TOKEN_KEY, USER_EMAIL_KEY, USER_TOKEN_KEY } from "@/config/brand";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
@@ -46,9 +46,17 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     headers.set("Content-Type", "application/json");
   }
   if (options.auth !== false && typeof window !== "undefined") {
-    const token = window.localStorage.getItem(ADMIN_TOKEN_KEY);
-    if (token && path.startsWith("/api/v1/admin")) {
-      headers.set("Authorization", `Bearer ${token}`);
+    if (path.startsWith("/api/v1/admin")) {
+      const adminToken = window.localStorage.getItem(ADMIN_TOKEN_KEY);
+      if (adminToken) headers.set("Authorization", `Bearer ${adminToken}`);
+    } else if (
+      path.startsWith("/api/v1/store/orders") ||
+      path.startsWith("/api/v1/store/my") ||
+      path.startsWith("/api/v1/auth/me") ||
+      path.startsWith("/api/v1/auth/change-password")
+    ) {
+      const userToken = window.localStorage.getItem(USER_TOKEN_KEY);
+      if (userToken) headers.set("Authorization", `Bearer ${userToken}`);
     }
   }
 
@@ -106,4 +114,30 @@ export function setAdminToken(token: string): void {
 
 export function clearAdminToken(): void {
   window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+export function getUserToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(USER_TOKEN_KEY);
+}
+
+export function setUserToken(token: string): void {
+  window.localStorage.setItem(USER_TOKEN_KEY, token);
+}
+
+export function clearUserToken(): void {
+  window.localStorage.removeItem(USER_TOKEN_KEY);
+}
+
+export function getUserEmail(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(USER_EMAIL_KEY);
+}
+
+export function setUserEmail(email: string): void {
+  window.localStorage.setItem(USER_EMAIL_KEY, email);
+}
+
+export function clearUserEmail(): void {
+  window.localStorage.removeItem(USER_EMAIL_KEY);
 }

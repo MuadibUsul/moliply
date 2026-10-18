@@ -10,6 +10,7 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  LogIn,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -18,33 +19,51 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { formatCountdown, formatDateTime, formatMoney, formatTime } from "@/lib/format";
-import type { Order, PaymentIntent } from "@/lib/types";
+import type { BrandInfo, Order, PaymentIntent } from "@/lib/types";
 
 type OrderResponse = { order: Order };
 
-const PROVIDERS = [
+type PaymentProviderKey = "wechat" | "alipay" | "crypto";
+
+const BASE_PROVIDERS: { key: PaymentProviderKey; label: string }[] = [
   { key: "wechat", label: "微信支付" },
   { key: "alipay", label: "支付宝支付" },
-] as const;
+];
 
 function PayContent() {
   const params = useParams<{ orderNo: string }>();
   const searchParams = useSearchParams();
   const orderNo = params?.orderNo || "";
-  const initialProvider = (searchParams.get("provider") === "alipay" ? "alipay" : "wechat") as "wechat" | "alipay";
+  const requestedProvider = searchParams.get("provider");
+  const initialProvider: PaymentProviderKey =
+    requestedProvider === "alipay" || requestedProvider === "crypto" ? requestedProvider : "wechat";
 
-  const [channel, setChannel] = useState<"wechat" | "alipay">(initialProvider);
+  const [channel, setChannel] = useState<PaymentProviderKey>(initialProvider);
+  const [cryptoEnabled, setCryptoEnabled] = useState(false);
+  const [cryptoCoins, setCryptoCoins] = useState<string[]>([]);
   const [order, setOrder] = useState<Order | null>(null);
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
   const [loading, setLoading] = useState(true);
   const [intentLoading, setIntentLoading] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [remaining, setRemaining] = useState(0);
   const [settling, setSettling] = useState(false);
   const pollRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    api<BrandInfo>("/api/v1/brand")
+      .then((data) => {
+        setCryptoEnabled(data.crypto_enabled);
+        setCryptoCoins(data.crypto_coins || []);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const providers = cryptoEnabled ? [...BASE_PROVIDERS, { key: "crypto" as const, label: "加密货币" }] : BASE_PROVIDERS;
 
   const loadOrder = useCallback(async () => {
     const data = await api<OrderResponse>(`/api/v1/store/orders/${orderNo}`);
@@ -53,7 +72,7 @@ function PayContent() {
   }, [orderNo]);
 
   const startPayment = useCallback(
-    async (provider: "wechat" | "alipay") => {
+    async (provider: PaymentProviderKey) => {
       setIntentLoading(true);
       setPayError(null);
       try {
@@ -63,7 +82,11 @@ function PayContent() {
         });
         setIntent(data);
       } catch (err) {
-        setPayError((err as Error).message);
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthRequired(true);
+        } else {
+          setPayError((err as Error).message);
+        }
       } finally {
         setIntentLoading(false);
       }
@@ -84,7 +107,12 @@ function PayContent() {
         }
       })
       .catch((err: Error) => {
-        if (active) setPageError(err.message);
+        if (!active) return;
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthRequired(true);
+        } else {
+          setPageError(err.message);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -128,7 +156,7 @@ function PayContent() {
   const paid = order?.status === "PAID" || order?.status === "DELIVERED";
   const delivered = order?.status === "DELIVERED";
 
-  async function switchChannel(next: "wechat" | "alipay") {
+  async function switchChannel(next: PaymentProviderKey) {
     setChannel(next);
     if (order?.status === "PENDING") {
       await startPayment(next);
@@ -165,12 +193,33 @@ function PayContent() {
     );
   }
 
+  if (authRequired) {
+    return (
+      <div className="container-page flex flex-col items-center py-24 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-brand-400/20 bg-brand-500/10 text-brand-300">
+          <LogIn size={24} />
+        </div>
+        <h1 className="mt-5 text-xl font-semibold text-slate-100">请先登录订单账户</h1>
+        <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+          使用下单时填写的邮箱和密码登录后，即可继续支付并查看交付内容。
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link href={`/orders?order_no=${encodeURIComponent(orderNo)}`} className="btn-primary">
+            登录我的订单
+            <ArrowRight size={15} />
+          </Link>
+          <Link href="/products" className="btn-secondary">返回商城</Link>
+        </div>
+      </div>
+    );
+  }
+
   if (pageError || !order) {
     return (
       <div className="container-page flex flex-col items-center py-24 text-center">
         <p className="text-sm text-slate-400">{pageError || "订单不存在"}</p>
         <div className="mt-5 flex gap-3">
-          <Link href="/orders" className="btn-soft">订单查询</Link>
+          <Link href="/orders" className="btn-soft">我的订单</Link>
           <Link href="/products" className="btn-secondary">返回商城</Link>
         </div>
       </div>
@@ -339,8 +388,8 @@ function PayContent() {
         <section className="surface relative overflow-hidden p-5 sm:p-7">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(ellipse_at_top,rgba(37,99,235,0.14),transparent)]" />
           <div className="relative">
-            <div className="mx-auto flex w-full max-w-[280px] gap-2 rounded-xl border border-white/10 bg-white/[0.025] p-1">
-              {PROVIDERS.map((item) => (
+            <div className="mx-auto flex w-full max-w-[360px] gap-2 rounded-xl border border-white/10 bg-white/[0.025] p-1">
+              {providers.map((item) => (
                 <button
                   key={item.key}
                   type="button"
@@ -396,6 +445,23 @@ function PayContent() {
                     {settling ? "正在确认支付..." : "模拟扫码支付成功"}
                     <Sparkles size={13} />
                   </button>
+                </div>
+              )}
+
+              {channel === "crypto" && intent && !expired && (
+                <div className="mt-5 w-full rounded-xl border border-amber-400/20 bg-amber-400/[0.045] p-3">
+                  <p className="text-center text-[10px] leading-5 text-amber-200/75">
+                    支持 {cryptoCoins.length ? cryptoCoins.join(" · ") : "USDT · USDC · BTC · ETH"}；请在收银台选择币种并完成支付。
+                  </p>
+                  <a
+                    href={intent.pay_url || intent.qr_content}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-soft mt-2 w-full"
+                  >
+                    打开加密货币收银台
+                    <ArrowUpRight size={13} />
+                  </a>
                 </div>
               )}
 
@@ -469,7 +535,7 @@ function PayContent() {
 
           <Link href="/orders" className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300">
             <ArrowLeft size={12} />
-            返回订单查询
+            返回我的订单
           </Link>
         </aside>
       </div>

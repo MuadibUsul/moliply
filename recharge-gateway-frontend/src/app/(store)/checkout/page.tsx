@@ -6,6 +6,9 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Eye,
+  EyeOff,
+  KeyRound,
   Minus,
   Plus,
   ShieldCheck,
@@ -16,16 +19,23 @@ import {
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
 import { useCart, type CartItem } from "@/lib/cart";
-import { api } from "@/lib/api";
+import { api, getUserEmail, setUserEmail, setUserToken } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
-import type { Product } from "@/lib/types";
+import type { BrandInfo, OrderCreateResult, Product } from "@/lib/types";
 
 type CouponResult = { valid: boolean; code: string; discount: number; message: string };
-type OrderResponse = { order: { order_no: string } };
+type PaymentMethod = "wechat" | "alipay" | "crypto";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function PaymentMark({ method }: { method: "wechat" | "alipay" }) {
+function PaymentMark({ method }: { method: PaymentMethod }) {
+  if (method === "crypto") {
+    return (
+      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-300 to-orange-500 text-lg font-bold text-slate-950">
+        ₿
+      </span>
+    );
+  }
   if (method === "wechat") {
     return (
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#07C160] text-sm font-bold text-white">
@@ -47,10 +57,14 @@ function CheckoutContent() {
   const [directItem, setDirectItem] = useState<CartItem | null>(null);
   const [directLoading, setDirectLoading] = useState(false);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
   const [couponLoading, setCouponLoading] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"wechat" | "alipay">("wechat");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wechat");
+  const [cryptoEnabled, setCryptoEnabled] = useState(false);
+  const [cryptoCoins, setCryptoCoins] = useState<string[]>([]);
   const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +72,20 @@ function CheckoutContent() {
   const directProductId = searchParams.get("product");
   const directVariantId = searchParams.get("variant");
   const directQty = Math.min(5, Math.max(1, Number(searchParams.get("qty") || 1)));
+
+  useEffect(() => {
+    api<BrandInfo>("/api/v1/brand")
+      .then((data) => {
+        setCryptoEnabled(data.crypto_enabled);
+        setCryptoCoins(data.crypto_coins || []);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const savedEmail = getUserEmail();
+    if (savedEmail) setEmail(savedEmail);
+  }, []);
 
   useEffect(() => {
     if (!directProductId) {
@@ -140,7 +168,11 @@ function CheckoutContent() {
   async function submit() {
     setError(null);
     if (!EMAIL_RE.test(email.trim())) {
-      setError("请填写正确的接收邮箱，卡密与交付通知将发送至此邮箱");
+      setError("请填写正确的接收邮箱，订单与交付内容将关联到此账号");
+      return;
+    }
+    if (password.length < 8) {
+      setError("订单管理密码至少需要 8 位，用于之后登录查看订单");
       return;
     }
     if (!agreed) {
@@ -153,10 +185,11 @@ function CheckoutContent() {
     }
     setSubmitting(true);
     try {
-      const result = await api<OrderResponse>("/api/v1/store/orders", {
+      const result = await api<OrderCreateResult>("/api/v1/store/orders", {
         method: "POST",
         body: {
           email: email.trim(),
+          password,
           items: displayItems.map((item) => ({
             product_id: item.productId,
             variant_id: item.variantId,
@@ -166,6 +199,8 @@ function CheckoutContent() {
           payment_method: paymentMethod,
         },
       });
+      setUserToken(result.user_token);
+      setUserEmail(result.user_email);
       if (!directItem) clear();
       router.push(`/pay/${result.order.order_no}?provider=${paymentMethod}`);
     } catch (err) {
@@ -284,7 +319,7 @@ function CheckoutContent() {
             <h2 className="text-sm font-semibold text-slate-100">交付信息</h2>
             <div className="mt-5">
               <label htmlFor="email" className="mb-2 block text-[11px] text-slate-400">
-                接收邮箱 <span className="text-slate-600">（用于接收订单、卡密和交付通知）</span>
+                接收邮箱 / 登录账号 <span className="text-slate-600">（用于关联订单与交付内容）</span>
               </label>
               <input
                 id="email"
@@ -295,6 +330,36 @@ function CheckoutContent() {
                 className="field"
                 autoComplete="email"
               />
+            </div>
+            <div className="mt-5">
+              <label htmlFor="order-password" className="mb-2 block text-[11px] text-slate-400">
+                订单管理密码
+              </label>
+              <div className="relative">
+                <KeyRound size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  id="order-password"
+                  name="order_password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="至少 8 位，用于登录查看订单"
+                  className="field pl-10 pr-11"
+                  autoComplete="current-password"
+                  minLength={8}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-slate-500 hover:text-slate-300"
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                >
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              <p className="mt-2 text-[10px] leading-5 text-slate-600">
+                首次下单会自动创建账户；已有账户请填写原密码。之后使用该邮箱和密码登录「我的订单」。
+              </p>
             </div>
             <div className="mt-5">
               <label htmlFor="coupon" className="mb-2 block text-[11px] text-slate-400">优惠码</label>
@@ -329,10 +394,10 @@ function CheckoutContent() {
           <section className="surface p-5 sm:p-6">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-100">支付方式</h2>
-              <span className="text-[10px] text-slate-600">支持微信 / 支付宝</span>
+              <span className="text-[10px] text-slate-600">支持微信 / 支付宝{cryptoEnabled ? " / 加密货币" : ""}</span>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {(["wechat", "alipay"] as const).map((method) => (
+            <div className={`mt-4 grid gap-3 ${cryptoEnabled ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+              {(["wechat", "alipay", ...(cryptoEnabled ? (["crypto"] as const) : [])] as PaymentMethod[]).map((method) => (
                 <button
                   key={method}
                   type="button"
@@ -346,10 +411,10 @@ function CheckoutContent() {
                   <PaymentMark method={method} />
                   <span className="flex-1">
                     <span className="block text-xs font-medium text-slate-200">
-                      {method === "wechat" ? "微信支付" : "支付宝支付"}
+                      {method === "wechat" ? "微信支付" : method === "alipay" ? "支付宝支付" : "加密货币支付"}
                     </span>
                     <span className="mt-1 block text-[10px] text-slate-500">
-                      {method === "wechat" ? "使用微信扫码支付" : "使用支付宝扫码支付"}
+                      {method === "wechat" ? "使用微信扫码支付" : method === "alipay" ? "使用支付宝扫码支付" : (cryptoCoins.length ? cryptoCoins.join(" · ") : "USDT · USDC · BTC · ETH")}
                     </span>
                   </span>
                   <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${paymentMethod === method ? "border-brand-400 bg-brand-500" : "border-slate-600"}`}>
@@ -418,7 +483,7 @@ function CheckoutContent() {
 
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-brand-400/15 bg-brand-500/[0.055] px-4 py-3 text-[10px] leading-5 text-slate-500">
             <ShieldCheck size={14} className="mt-0.5 shrink-0 text-brand-300" />
-            支付成功后，卡密或数字商品将自动发放至订单详情，并同步发送至接收邮箱。
+            支付成功后，卡密或数字商品将自动发放至订单详情；使用下单邮箱和密码即可登录「我的订单」查看。
           </div>
 
           <Link href="/products" className="mt-4 inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300">

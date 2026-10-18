@@ -5,6 +5,8 @@ from app.models import AccountInventory, InventoryStatus, Order, OrderStatus
 from app.services.crypto import encrypt_text
 from app.services.orders import fulfill_order
 
+PASSWORD = "CustomerPass!123"
+
 
 def _product(client, slug):
     return client.get(f"/api/v1/store/products/{slug}").json()["product"]
@@ -17,16 +19,18 @@ def _order(client, slug, email):
         "/api/v1/store/orders",
         json={
             "email": email,
+            "password": PASSWORD,
             "items": [{"product_id": product["id"], "variant_id": variant["id"], "quantity": 1}],
         },
     )
     assert response.status_code == 201, response.text
-    return product, response.json()["order"]
+    data = response.json()
+    return product, data["order"], {"Authorization": f"Bearer {data['user_token']}"}
 
 
 def test_fulfillment_is_idempotent(client, db):
-    _, order = _order(client, "chatgpt-plus-1m-recharge", "idem@example.com")
-    client.post(f"/api/v1/store/orders/{order['order_no']}/mock-settle")
+    _, order, headers = _order(client, "chatgpt-plus-1m-recharge", "idem@example.com")
+    client.post(f"/api/v1/store/orders/{order['order_no']}/mock-settle", headers=headers)
     row = db.query(Order).filter(Order.order_no == order["order_no"]).first()
     assert row.status == OrderStatus.DELIVERED
     first_count = len(row.items[0].deliveries)
@@ -36,7 +40,7 @@ def test_fulfillment_is_idempotent(client, db):
 
 
 def test_paid_order_with_no_stock_waits_for_restock(client, db, monkeypatch):
-    product, order = _order(client, "notion-plus", "stock@example.com")
+    product, order, headers = _order(client, "notion-plus", "stock@example.com")
     accounts = (
         db.query(AccountInventory)
         .filter(
@@ -51,7 +55,7 @@ def test_paid_order_with_no_stock_waits_for_restock(client, db, monkeypatch):
     db.commit()
 
     monkeypatch.setattr(settings, "enforce_stock", False)
-    settled = client.post(f"/api/v1/store/orders/{order['order_no']}/mock-settle")
+    settled = client.post(f"/api/v1/store/orders/{order['order_no']}/mock-settle", headers=headers)
     assert settled.status_code == 200
     body = settled.json()["order"]
     assert body["status"] == "PAID"

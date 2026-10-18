@@ -20,7 +20,7 @@ export function SiteFooter() {
             <div className="mt-4 grid gap-2.5 text-xs">
               <Link href="/products" className="text-slate-400 hover:text-white">全部商品</Link>
               <Link href="/redeem" className="text-slate-400 hover:text-white">自助充能中心</Link>
-              <Link href="/orders" className="text-slate-400 hover:text-white">订单查询</Link>
+              <Link href="/orders" className="text-slate-400 hover:text-white">我的订单</Link>
               <Link href="/help" className="text-slate-400 hover:text-white">帮助中心</Link>
             </div>
           </div>

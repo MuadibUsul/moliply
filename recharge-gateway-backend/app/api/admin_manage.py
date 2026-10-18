@@ -22,6 +22,7 @@ from app.models import (
     RechargeTask,
     SKU_LABELS,
     SkuType,
+    User,
     VccCard,
     VccStatus,
     utcnow,
@@ -29,6 +30,7 @@ from app.models import (
 from app.schemas import (
     AccountImportRequest,
     AdminLoginRequest,
+    AdminResetPasswordRequest,
     CodeGenerateRequest,
     CodeImportRequest,
     CodeStatusRequest,
@@ -36,6 +38,7 @@ from app.schemas import (
     VccCardCreateRequest,
     VccCardUpdateRequest,
 )
+from app.services.accounts import hash_password
 from app.security import client_ip, create_admin_token, limiter, require_admin, verify_admin_password
 from app.services import orders as order_service
 from app.services import redeem as redeem_service
@@ -283,6 +286,35 @@ def admin_mark_paid(order_no: str, db: Session = Depends(get_db), admin: dict = 
     )
     db.commit()
     return {"order": order_service.serialize_order(db, order, reveal=True, reveal_email=True)}
+
+
+@protected.post("/users/reset-password")
+def admin_reset_user_password(
+    payload: AdminResetPasswordRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == str(payload.email).strip().lower())
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="该邮箱没有对应的订单账户")
+    user.password_hash = hash_password(payload.new_password)
+    user.token_version += 1
+    db.add(user)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="user.reset_password",
+            entity_type="user",
+            entity_id=str(user.id),
+            detail=user.email,
+        )
+    )
+    db.commit()
+    return {"ok": True, "email": user.email, "message": "密码已重置，旧登录凭证已失效"}
 
 
 @protected.get("/codes")

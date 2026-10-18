@@ -408,10 +408,22 @@ export default function ProductDetailPage() {
                 <h3 className="text-sm font-semibold text-slate-200">售后保障说明</h3>
                 <p className="mt-3 text-xs leading-7 text-slate-500">{product.warranty}</p>
                 <p className="mt-2 text-xs leading-7 text-slate-500">
-                  如遇交付异常，请保留订单编号并在帮助中心提交售后。客服会依据订单状态、交付记录与商品说明核实处理。
-                  因用户自行修改账号设置、共享账号或违反服务商条款导致的封禁，不在质保范围内。
+                  {product.delivery_type === "ACTIVATION_CODE"
+                    ? "本商品为 MOLI 代充激活码，保障充值到账；封号、自行修改账号安全设置或共享账号不在质保范围。"
+                    : "本商品为独立成品号，不是代充；交付后请先登录确认。30 天内非买家原因出现掉订阅或封号，可按未使用天数补发或折算退款。"}
                 </p>
-                <Link href="/help#contact" className="btn-soft mt-5">
+                <p className="mt-2 text-xs leading-7 text-slate-500">
+                  以下情况不在售后范围：自行修改密码、2FA、换绑邮箱/辅助邮箱、共享账号或频繁切换地区/网络；
+                  官方服务器容量波动、模型暂不可用、地区限制、手机验证等非本站交付问题；违反服务商条款或法律法规导致的限制。
+                </p>
+                <p className="mt-2 text-xs leading-7 text-slate-500">
+                  售后请提供订单编号、问题描述与截图。按剩余天数折算示例：30 天质保、使用 8 天，剩余价值 = 订单金额 × (30-8)/30，支付通道已产生费用不退。
+                </p>
+                <Link href="/help#warranty" className="btn-soft mt-5">
+                  查看完整售后政策
+                  <ArrowUpRight size={13} />
+                </Link>
+                <Link href="/help#contact" className="btn-soft mt-2">
                   联系售后
                   <ArrowUpRight size={13} />
                 </Link>

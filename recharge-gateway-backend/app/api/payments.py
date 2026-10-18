@@ -63,3 +63,24 @@ async def xunhupay_notify(request: Request):
         return PlainTextResponse("fail", status_code=400)
     finally:
         db.close()
+
+
+@router.post("/nowpayments/ipn", response_class=PlainTextResponse)
+async def nowpayments_ipn(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return PlainTextResponse("FAIL", status_code=400)
+    if not isinstance(payload, dict):
+        return PlainTextResponse("FAIL", status_code=400)
+    signature = request.headers.get("x-nowpayments-sig", "")
+    db: Session = SessionLocal()
+    try:
+        body = order_service.process_payment_notify(db, "nowpayments", payload, signature)
+        logger.info("NOWPayments callback processed for order %s", payload.get("order_id", ""))
+        return PlainTextResponse(body)
+    except order_service.OrderError as exc:
+        logger.warning("NOWPayments callback rejected: %s", exc.code)
+        return PlainTextResponse("FAIL", status_code=400)
+    finally:
+        db.close()

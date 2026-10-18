@@ -35,6 +35,7 @@ def test_stock_is_enforced_per_variant_sku(client, db):
             "/api/v1/store/orders",
             json={
                 "email": "stock@example.com",
+                "password": "CustomerPass!123",
                 "items": [{"product_id": product.id, "variant_id": variant.id, "quantity": 1}],
             },
         )

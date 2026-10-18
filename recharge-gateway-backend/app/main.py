@@ -115,12 +115,15 @@ def brand() -> dict:
         "redeem_url": settings.public_redeem_url,
         "payment_mode": settings.payment_mode,
         "mock_payment_enabled": settings.mock_payment_enabled,
+        "crypto_enabled": settings.crypto_enabled,
+        "crypto_coins": settings.crypto_coin_list,
         "catalog_seeded": settings.seed_demo_data,
     }
 
 
-from app.api import admin_manage, payments, public_redeem, store  # noqa: E402
+from app.api import admin_manage, auth, payments, public_redeem, store  # noqa: E402
 
+app.include_router(auth.router)
 app.include_router(store.router)
 app.include_router(public_redeem.router)
 app.include_router(payments.router)

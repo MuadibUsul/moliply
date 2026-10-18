@@ -6,7 +6,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 > 商业计划、成本资料与设计源文件保留在私有环境，不纳入公开仓库；线上服务器地址与凭据同样不在仓库中。
 
-当前状态：**前后端构建通过、53 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
+当前状态：**前后端构建通过、59 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
 
 ---
 
@@ -15,16 +15,18 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
 | 品牌化商城 | ✅ | 首页、分类、搜索/排序、商品详情、规格、购物车、结算、扫码支付、支付成功交付 |
-| 订单体系 | ✅ | 服务端计价、优惠码、订单号、模拟/真实支付回调、幂等发货、订单查询、时间线 |
+| 订单体系 | ✅ | 服务端计价、优惠码、模拟/真实支付回调、幂等发货、订单时间线 |
+| 订单账户 | ✅ | 下单邮箱+密码自动建账户，登录后查看订单/卡密；密码 scrypt 加盐哈希，订单按账户隔离 |
 | MOLI 激活码 | ✅ | `MOLI-XXXX-XXXX-XXXX` 生成（排除 0/O/1/I）、批量生成/导入、上游卡密加密映射、绑定账号、状态机 |
 | 免密充能中心 | ✅ | 四步向导、自动验证、ChatGPT Session / Claude Session Key、账号状态预检、实时进度轮询、失败重试 |
+| 加密货币收款 | ✅ | NOWPayments 收银台，支持 USDT / USDC / BTC / ETH；默认关闭，配置商户密钥后开启 |
 | 双通道充值 | ✅ | 通道 1 上游 API（模拟/HTTP）；通道 2 自营 VCC（Playwright + 美国代理 + IMAP 3DS），默认关闭+演练 |
 | 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、余额与绑定上限、拒付自动挂起、失败计数、`SKIP LOCKED` 选卡 |
 | Redis/Celery | ✅ | 分布式锁、Celery Worker、Beat 清理 Session 凭证；本地可切换 inline 线程模式 |
 | 运营后台 | ✅ | 登录、概览、订单、商品、卡密、充值任务、VCC 卡池、渠道状态 |
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
 | 独角数卡适配 | ✅（可选） | 品牌主题 Blade + 蓝兔/虎皮椒框架无关 PHP 插件 |
-| 自动化测试 | ✅ | 53 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP |
+| 自动化测试 | ✅ | 59 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -68,7 +70,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   ├── services/             加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
-│   └── tests/                    53 项 pytest
+│   └── tests/                    59 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
 ├── storefront-theme-moliply/     独角数卡主题 + 蓝兔/虎皮椒脱敏插件（可选）
 ├── nginx/                        双域名反代、限流、安全头
@@ -180,7 +182,7 @@ cd recharge-gateway-frontend && npm run build
 ## 5. 演示流程
 
 1. 打开商城 → 选择「ChatGPT Plus 1个月代充」→ 立即购买。
-2. 填写接收邮箱 → 勾选协议 → 立即支付。
+2. 填写接收邮箱并设置订单密码（至少 8 位）→ 勾选协议 → 立即支付。
 3. 支付页会显示二维码；演示环境点击「模拟扫码支付成功」。
 4. 支付成功页出现 `MOLI-XXXX-XXXX-XXXX` 激活码，点击「立即前往自助充能中心」。
 5. 激活码自动验证 → 粘贴 ChatGPT Session JSON：
@@ -194,8 +196,9 @@ cd recharge-gateway-frontend && npm run build
    ```
    （`expires` 必须是未来时间；真实场景请按页面指引从 `https://chatgpt.com/api/auth/session` 复制。）
 6. 提交后任务经历 `PENDING → CHECKING_ACCOUNT → PAYING → SUCCESS`，进度实时更新。
-7. 打开 `/orders` 用订单号或邮箱查询，可看到卡密与核销完成时间。
-8. 打开 `/admin/login` 登录后台，查看概览、订单、卡密、任务、卡池与渠道状态。
+7. 打开 `/orders`，用下单邮箱和密码登录，可看到卡密与核销完成时间。
+8. 忘记订单密码时，由后台在订单详情中「重置客户密码」。
+9. 打开 `/admin/login` 登录后台，查看概览、订单、卡密、任务、卡池与渠道状态。
 
 演示优惠码：`MOLI10`（满 100 减 10）、`WELCOME5`（满 50 减 5）。
 
@@ -214,6 +217,7 @@ cd recharge-gateway-frontend && npm run build
 | `TASK_MODE` | `celery` / `inline` / `manual` | 生产必须 `celery` |
 | `MASTER_AES_KEY` | 卡号/CVV/Session 加密 | 32 字节 base64，妥善备份 |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_JWT_SECRET` | 后台登录 | 全部更换 |
+| `USER_JWT_SECRET` / `USER_TOKEN_TTL_DAYS` | 客户订单账户令牌 | 独立随机密钥，默认 30 天 |
 | `PAYMENT_MODE` | `mock` / `live` | 配好商户密钥后切 `live` |
 | `LTZF_*` / `XUNHUPAY_*` | 蓝兔/虎皮椒 | 按签约文档填写 |
 | `UPSTREAM_MODE` | `mock` / `http` | 有供应商 API 后切 `http` |
@@ -223,7 +227,7 @@ cd recharge-gateway-frontend && npm run build
 | `US_BIN_ALLOWLIST` | 可选：强制校验卡 BIN 前 6 位 | 建议配置为 RDVCC 美国卡段 |
 | `RDVCC_IMAP_*` | 3DS 验证码邮箱 | 自营通道必需 |
 | `OPENAI_ACCOUNT_CHECK_ENABLED` | OpenAI 账号状态预检 | 配好美国代理后开启 |
-| `SMTP_*` | 发货邮件 | 可选；不配则只在订单页展示 |
+| `SMTP_*` | 发货邮件 | 可选；本系统不依赖邮件，订单通过邮箱+密码登录查看 |
 | `SEED_DEMO_DATA` / `SEED_DEMO_INVENTORY` | 演示数据 | 上线必须关闭演示库存 |
 
 ---
@@ -254,6 +258,29 @@ cd recharge-gateway-frontend && npm run build
 > 商品名脱敏仅用于支付通道展示，**不得用于向用户隐瞒真实收费金额或商品性质**。请自行确认支付平台条款与当地监管要求。
 
 ---
+
+### 7.3 加密货币（NOWPayments）
+
+代码已接入 NOWPayments 托管收银台，支持 USDT / USDC / BTC / ETH：
+
+1. 在 NOWPayments 商户后台创建 API Key 与 IPN Secret；
+2. 开启上述四个币种；
+3. 配置 IPN 回调：`https://moliply.shop/api/v1/payments/nowpayments/ipn`；
+4. 在 `.env` 设置：
+
+```dotenv
+CRYPTO_ENABLED=true
+CRYPTO_PROVIDER=nowpayments
+NOWPAYMENTS_API_KEY=...
+NOWPAYMENTS_IPN_SECRET=...
+CRYPTO_CNY_PER_USD=7.20
+CRYPTO_SUPPORTED_COINS=USDT,USDC,BTC,ETH
+```
+
+5. 重启 API，前台结算页会自动出现「加密货币支付」；首笔请用最小金额真实支付验证 IPN。
+6. 结算金额按 `CRYPTO_CNY_PER_USD` 从人民币折算为美元，请在汇率变化时更新该值。
+
+> 未配置密钥时 `CRYPTO_ENABLED=false`，前台不展示加密货币选项。
 
 ## 8. 上游代充通道
 
@@ -321,7 +348,7 @@ UPSTREAM_API_SECRET=...
 
 ### 已知取舍
 
-- 订单查询支持“订单号或邮箱”，没有登录账号体系；订单号包含随机后缀并有限流。若面向高敏感客户，建议增加邮箱验证码或用户账号；
+- 订单中心使用下单邮箱+密码登录，交付内容只对订单账户可见；忘记密码需要后台重置（无 SMTP 自助找回）。
 - 没有 Alembic 迁移，当前使用 `Base.metadata.create_all`。长期迭代建议引入 Alembic；
 - 独角数卡主题/插件是参考实现，具体落盘路径与网关基类需按你安装的 Dujiaoka 版本映射；
 - 自营通道的浏览器自动化需要持续维护。
