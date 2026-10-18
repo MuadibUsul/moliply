@@ -137,3 +137,7 @@ class ProductUpdateRequest(StrictModel):
 class AccountImportRequest(StrictModel):
     product_id: int
     text: str = Field(min_length=3, max_length=200_000)
+
+class SettingsUpdateRequest(StrictModel):
+    values: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    clear_secrets: list[str] = Field(default_factory=list, max_length=20)

@@ -117,6 +117,8 @@ export type BrandInfo = {
   crypto_coins: string[];
   payment_mode: string;
   mock_payment_enabled: boolean;
+  support_wechat: string;
+  support_hours: string;
 };
 
 export type OrderCreateResult = {
@@ -312,4 +314,33 @@ export type AdminProduct = Product & {
 
 export type AdminProductList = {
   items: AdminProduct[];
+};
+
+export type FeishuEventOption = {
+  key: string;
+  label: string;
+  description: string;
+  severity: "info" | "success" | "warning" | "error";
+};
+
+export type NotificationLogItem = {
+  id: number;
+  event: string;
+  title: string;
+  status: string;
+  error: string;
+  created_at: string;
+};
+
+export type AdminSettings = {
+  values: Record<string, string | number | boolean>;
+  secret_configured: Record<string, boolean>;
+  payment_ready: boolean;
+  crypto_ready: boolean;
+  upstream_ready: boolean;
+  support_ready: boolean;
+  feishu_ready: boolean;
+  callbacks: { ltzf: string; xunhupay: string; nowpayments: string };
+  feishu_event_options: FeishuEventOption[];
+  recent_notifications: NotificationLogItem[];
 };

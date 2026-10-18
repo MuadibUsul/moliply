@@ -26,6 +26,10 @@ celery_app.conf.update(
         "cleanup-sensitive-tokens": {
             "task": "app.tasks.celery_worker.cleanup_tokens_task",
             "schedule": crontab(minute="*"),
+        },
+        "feishu-daily-summary": {
+            "task": "app.tasks.celery_worker.feishu_daily_summary_task",
+            "schedule": crontab(hour=9, minute=0),
         }
     },
 )

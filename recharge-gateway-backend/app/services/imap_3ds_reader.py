@@ -22,6 +22,7 @@ from email.utils import parsedate_to_datetime
 from typing import Callable
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +134,12 @@ class Imap3dsReader:
         sender: str | None = None,
         code_regex: str | None = None,
     ) -> None:
-        self.host = host or settings.rdvcc_imap_host
-        self.port = int(port or settings.rdvcc_imap_port)
-        self.user = user or settings.rdvcc_imap_user
-        self.password = password or settings.rdvcc_imap_password
-        self.sender = sender or settings.rdvcc_3ds_sender
-        self.code_regex = code_regex or settings.rdvcc_3ds_code_regex
+        self.host = host or runtime.get("rdvcc_imap_host", settings.rdvcc_imap_host)
+        self.port = int(port or runtime.get_int("rdvcc_imap_port", settings.rdvcc_imap_port))
+        self.user = user or runtime.get("rdvcc_imap_user", settings.rdvcc_imap_user)
+        self.password = password or runtime.get("rdvcc_imap_password", settings.rdvcc_imap_password)
+        self.sender = sender or runtime.get("rdvcc_3ds_sender", settings.rdvcc_3ds_sender)
+        self.code_regex = code_regex or runtime.get("rdvcc_3ds_code_regex", settings.rdvcc_3ds_code_regex)
 
     def fetch_latest_code(self, since: datetime) -> VerificationCode | None:
         if not (self.host and self.user and self.password):

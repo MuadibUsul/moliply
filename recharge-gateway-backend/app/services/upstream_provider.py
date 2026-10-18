@@ -21,6 +21,7 @@ from datetime import datetime
 import httpx
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.services.errors import RechargeError
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,16 @@ class UpstreamResult:
 
 
 class UpstreamProvider:
+    def __init__(self) -> None:
+        self.mode = runtime.get("upstream_mode", settings.upstream_mode).lower()
+        self.base = runtime.get("upstream_api_base", settings.upstream_api_base)
+        self.merchant_key = runtime.get("upstream_api_key", settings.upstream_api_key)
+        self.secret = runtime.get("upstream_api_secret", settings.upstream_api_secret)
+        self.max_wait = runtime.get_int("upstream_max_wait_seconds", settings.upstream_max_wait_seconds)
+        self.poll_interval = runtime.get_float("upstream_poll_interval_seconds", settings.upstream_poll_interval_seconds)
+
     def create_recharge(self, session_raw: str, sku_type: str, upstream_code: str | None) -> UpstreamResult:
-        if settings.upstream_mode.lower() == "mock":
+        if self.mode == "mock":
             return self._mock_recharge(sku_type)
         return self._http_recharge(session_raw, sku_type, upstream_code)
 
@@ -60,21 +69,21 @@ class UpstreamProvider:
     def _headers(self, body: str) -> dict[str, str]:
         timestamp = str(int(time.time()))
         signature = hmac.new(
-            settings.upstream_api_secret.encode("utf-8"),
+            self.secret.encode("utf-8"),
             f"{timestamp}.{body}".encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
         return {
             "Content-Type": "application/json",
-            "X-Merchant-Key": settings.upstream_api_key,
+            "X-Merchant-Key": self.merchant_key,
             "X-Timestamp": timestamp,
             "X-Signature": signature,
         }
 
     def _http_recharge(self, session_raw: str, sku_type: str, upstream_code: str | None) -> UpstreamResult:
-        if not settings.upstream_api_base or not settings.upstream_api_key:
+        if not self.base or not self.merchant_key:
             raise RechargeError("UPSTREAM_NOT_CONFIGURED", "上游充值通道尚未配置，请联系客服")
-        base = settings.upstream_api_base.rstrip("/")
+        base = self.base.rstrip("/")
         payload = {
             "session_raw": session_raw,
             "sku_type": sku_type,
@@ -114,9 +123,9 @@ class UpstreamProvider:
         return self._poll(order_no, message)
 
     def _poll(self, order_no: str, initial_message: str = "") -> UpstreamResult:
-        base = settings.upstream_api_base.rstrip("/")
-        deadline = time.monotonic() + settings.upstream_max_wait_seconds
-        delay = max(1.0, settings.upstream_poll_interval_seconds)
+        base = self.base.rstrip("/")
+        deadline = time.monotonic() + self.max_wait
+        delay = max(1.0, self.poll_interval)
         while time.monotonic() < deadline:
             time.sleep(delay)
             delay = min(delay * 1.5, 30.0)
@@ -146,8 +155,8 @@ class UpstreamProvider:
         )
 
     def channel_status(self) -> dict:
-        mode = settings.upstream_mode.lower()
-        configured = mode == "mock" or bool(settings.upstream_api_base and settings.upstream_api_key)
+        mode = self.mode
+        configured = mode == "mock" or bool(self.base and self.merchant_key)
         return {
             "name": "上游 API 通道",
             "mode": mode,

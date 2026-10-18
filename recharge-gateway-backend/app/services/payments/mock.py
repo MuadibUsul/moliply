@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
 
@@ -16,7 +17,7 @@ class MockPaymentProvider(PaymentProvider):
         self.channel = channel
 
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
-        if not settings.mock_payment_enabled:
+        if not runtime.get_bool("mock_payment_enabled", settings.mock_payment_enabled):
             raise PaymentProviderError("PAYMENT_NOT_CONFIGURED", "支付通道尚未配置，请联系客服")
         pay_url = f"{settings.public_store_url.rstrip('/')}/pay/{order_no}?mock=1&channel={self.channel}"
         return PaymentIntent(
@@ -25,7 +26,7 @@ class MockPaymentProvider(PaymentProvider):
             pay_url=pay_url,
             trade_no=f"MOCK-{order_no}",
             mock=True,
-            expires_in=settings.order_expire_minutes * 60,
+            expires_in=runtime.get_int("order_expire_minutes", settings.order_expire_minutes) * 60,
         )
 
     def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:

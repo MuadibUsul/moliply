@@ -31,6 +31,8 @@ from app.models import (
     Product,
     utcnow,
 )
+from app.services import feishu
+from app.services import runtime_settings as runtime
 from app.services.catalog import available_sku_stock, available_stock, money
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.mailer import send_delivery_email
@@ -110,7 +112,7 @@ def create_order(
         amount=Decimal("0"),
         status=OrderStatus.PENDING,
         client_ip=client_ip,
-        expires_at=utcnow() + timedelta(minutes=settings.order_expire_minutes),
+        expires_at=utcnow() + timedelta(minutes=runtime.get_int("order_expire_minutes", settings.order_expire_minutes)),
     )
     db.add(order)
     db.flush()
@@ -135,7 +137,7 @@ def create_order(
         if product.delivery_type == DeliveryType.ACTIVATION_CODE and not sku_type:
             raise OrderError("SKU_NOT_CONFIGURED", "该商品暂未配置激活码规格，请联系客服", 409)
 
-        if settings.enforce_stock:
+        if runtime.get_bool("enforce_stock", settings.enforce_stock):
             stock = (
                 available_sku_stock(db, sku_type, channel_mode)
                 if product.delivery_type == DeliveryType.ACTIVATION_CODE
@@ -180,6 +182,18 @@ def create_order(
     )
     db.commit()
     db.refresh(order)
+    feishu.dispatch_event(
+        "order.created",
+        "MOLIPLY 新订单",
+        {
+            "订单号": order.order_no,
+            "金额": f"¥{order.amount:.2f}",
+            "邮箱": mask_email(order.email),
+            "商品": "、".join(item.product_name for item in order.items),
+        },
+        severity="info",
+        link_path=f"/admin/orders?q={order.order_no}",
+    )
     return order
 
 
@@ -366,6 +380,18 @@ def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> 
     db.commit()
     db.refresh(order)
     fulfill_order(db, order)
+    feishu.dispatch_event(
+        "order.paid",
+        "MOLIPLY 支付成功",
+        {
+            "订单号": order.order_no,
+            "金额": f"¥{order.amount:.2f}",
+            "支付通道": PAYMENT_LABELS.get(provider, provider),
+            "邮箱": mask_email(order.email),
+        },
+        severity="success",
+        link_path=f"/admin/orders?q={order.order_no}",
+    )
     _send_delivery_notification_async(db, order)
     return True
 
@@ -396,6 +422,8 @@ def fulfill_order(db: Session, order: Order) -> Order:
     if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
         raise OrderError("ORDER_NOT_FULFILLABLE", "当前订单状态不可发货")
 
+    was_delivered = order.status == OrderStatus.DELIVERED
+    was_stock_pending = order.stock_pending
     pending = False
     for item in order.items:
         missing = item.quantity - len(item.deliveries)
@@ -469,6 +497,56 @@ def fulfill_order(db: Session, order: Order) -> Order:
     db.add(order)
     db.commit()
     db.refresh(order)
+
+    if order.status == OrderStatus.DELIVERED and not was_delivered:
+        delivered_count = sum(len(item.deliveries) for item in order.items)
+        feishu.dispatch_event(
+            "order.delivered",
+            "MOLIPLY 自动交付完成",
+            {
+                "订单号": order.order_no,
+                "商品": "、".join(item.product_name for item in order.items),
+                "交付数量": delivered_count,
+                "金额": f"¥{order.amount:.2f}",
+            },
+            severity="success",
+            link_path=f"/admin/orders?q={order.order_no}",
+        )
+        threshold = runtime.get_int("feishu_low_stock_threshold", 5)
+        if threshold > 0:
+            checked: set[int] = set()
+            for item in order.items:
+                if item.product_id in checked:
+                    continue
+                checked.add(item.product_id)
+                product = db.get(Product, item.product_id)
+                if product is None:
+                    continue
+                remaining = available_stock(db, product)
+                if remaining <= threshold:
+                    feishu.dispatch_event(
+                        "stock.low",
+                        "MOLIPLY 库存不足预警",
+                        {
+                            "商品": product.name,
+                            "剩余库存": remaining,
+                            "预警阈值": threshold,
+                        },
+                        severity="warning",
+                        link_path="/admin/products",
+                    )
+    elif order.stock_pending and not was_stock_pending:
+        feishu.dispatch_event(
+            "order.stock_pending",
+            "MOLIPLY 订单已支付但缺货",
+            {
+                "订单号": order.order_no,
+                "金额": f"¥{order.amount:.2f}",
+                "商品": "、".join(item.product_name for item in order.items),
+            },
+            severity="warning",
+            link_path=f"/admin/orders?q={order.order_no}",
+        )
     return order
 
 

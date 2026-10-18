@@ -180,6 +180,16 @@ class ProductVariant(Base):
     product: Mapped[Product] = relationship(back_populates="variants")
 
 
+class PlatformSetting(Base):
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -363,6 +373,18 @@ class PaymentEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
 
+class NotificationLog(Base):
+    __tablename__ = "notification_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="feishu")
+    event: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="sent", index=True)
+    error: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, index=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -391,7 +413,9 @@ __all__ = [
     "OrderDelivery",
     "OrderItem",
     "OrderStatus",
+    "NotificationLog",
     "PaymentEvent",
+    "PlatformSetting",
     "Product",
     "ProductCategory",
     "ProductVariant",

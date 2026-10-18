@@ -35,6 +35,7 @@ from app.schemas import (
     CodeImportRequest,
     CodeStatusRequest,
     ProductUpdateRequest,
+    SettingsUpdateRequest,
     VccCardCreateRequest,
     VccCardUpdateRequest,
 )
@@ -42,6 +43,8 @@ from app.services.accounts import hash_password
 from app.security import client_ip, create_admin_token, limiter, require_admin, verify_admin_password
 from app.services import orders as order_service
 from app.services import redeem as redeem_service
+from app.services import feishu
+from app.services import runtime_settings
 from app.services.catalog import available_stock, money, serialize_product
 from app.services.code_generator import generate_code, is_valid_code_format, normalize_code
 from app.services.crypto import decrypt_text, encrypt_text, luhn_valid, mask_card_number, mask_email
@@ -170,9 +173,9 @@ def overview(days: int = Query(default=12, ge=7, le=30), db: Session = Depends(g
     upstream = UpstreamProvider().channel_status()
     self_vcc = {
         "name": "自营 VCC 通道",
-        "status": "online" if settings.self_vcc_enabled else "disabled",
-        "label": "已启用" if settings.self_vcc_enabled else "未启用",
-        "detail": "演练模式" if settings.self_vcc_dry_run else "实盘模式",
+        "status": "online" if runtime_settings.get_bool("self_vcc_enabled", settings.self_vcc_enabled) else "disabled",
+        "label": "已启用" if runtime_settings.get_bool("self_vcc_enabled", settings.self_vcc_enabled) else "未启用",
+        "detail": "演练模式" if runtime_settings.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run) else "实盘模式",
     }
     return {
         "stats": {
@@ -315,6 +318,73 @@ def admin_reset_user_password(
     )
     db.commit()
     return {"ok": True, "email": user.email, "message": "密码已重置，旧登录凭证已失效"}
+
+
+@protected.get("/settings")
+def admin_get_settings(db: Session = Depends(get_db)) -> dict:
+    data = runtime_settings.public_settings()
+    data["callbacks"] = {
+        "ltzf": runtime_settings.get("ltzf_notify_url"),
+        "xunhupay": runtime_settings.get("xunhupay_notify_url"),
+        "nowpayments": runtime_settings.get("nowpayments_ipn_url"),
+    }
+    data["feishu_event_options"] = feishu.event_options()
+    data["recent_notifications"] = feishu.recent_logs(db)
+    return data
+
+
+@protected.post("/feishu/test")
+def admin_test_feishu(
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    result = feishu.send_test_message(admin.get("sub", "admin"))
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="feishu.test",
+            entity_type="notification",
+            entity_id="feishu",
+            detail=result.get("status", ""),
+        )
+    )
+    db.commit()
+    return {"result": result, "recent_notifications": feishu.recent_logs(db)}
+
+
+@protected.patch("/settings")
+def admin_update_settings(
+    payload: SettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    try:
+        result = runtime_settings.update_settings(
+            db,
+            payload.values,
+            payload.clear_secrets,
+            actor=admin.get("sub", "admin"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="settings.update",
+            entity_type="platform_setting",
+            entity_id="runtime",
+            detail=f"keys={','.join(sorted(payload.values.keys()))[:450]}",
+        )
+    )
+    db.commit()
+    result["callbacks"] = {
+        "ltzf": runtime_settings.get("ltzf_notify_url"),
+        "xunhupay": runtime_settings.get("xunhupay_notify_url"),
+        "nowpayments": runtime_settings.get("nowpayments_ipn_url"),
+    }
+    result["feishu_event_options"] = feishu.event_options()
+    result["recent_notifications"] = feishu.recent_logs(db)
+    return result
 
 
 @protected.get("/codes")
@@ -582,7 +652,7 @@ def admin_add_card(
         raise HTTPException(status_code=400, detail="卡号未通过 Luhn 校验")
     if payload.billing_address.country != "US":
         raise HTTPException(status_code=400, detail="账单地址必须为美国地址")
-    allowed_bins = {value.strip() for value in settings.us_bin_allowlist.split(",") if value.strip()}
+    allowed_bins = {value.strip() for value in runtime_settings.get("us_bin_allowlist", settings.us_bin_allowlist).split(",") if value.strip()}
     if allowed_bins and digits[:6] not in allowed_bins:
         raise HTTPException(status_code=400, detail="卡 BIN 不在已配置的美国 BIN 白名单中")
     card = VccCard(
@@ -743,8 +813,8 @@ def admin_channels(db: Session = Depends(get_db)) -> dict:
     return {
         "upstream": UpstreamProvider().channel_status(),
         "self_vcc": {
-            "enabled": settings.self_vcc_enabled,
-            "dry_run": settings.self_vcc_dry_run,
+            "enabled": runtime_settings.get_bool("self_vcc_enabled", settings.self_vcc_enabled),
+            "dry_run": runtime_settings.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run),
             "available_card_id": card.id if card else None,
         },
         "manual_review": manual_review,

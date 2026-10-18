@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     brand_theme_bg: str = "#0B0F19"
     brand_theme_primary: str = "#2563EB"
     brand_theme_accent: str = "#06B6D4"
+    support_wechat: str = "MOLIPLY-SUPPORT"
+    support_hours: str = "每日 09:00–24:00"
+
+    # Feishu custom-bot management notifications
+    feishu_enabled: bool = False
+    feishu_webhook_url: str = ""
+    feishu_secret: str = ""
+    feishu_low_stock_threshold: int = 5
+    feishu_mention_all: bool = False
 
     # ------------------------------------------------------------------
     # Persistence / queue

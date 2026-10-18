@@ -86,3 +86,20 @@ def pytest_sessionfinish(session, exitstatus):
         TEST_DB.unlink()
     except OSError:
         pass
+
+@pytest.fixture(autouse=True)
+def _reset_runtime_settings():
+    """Keep tests isolated from DB-backed admin settings and the 2s cache."""
+    from app.database import SessionLocal
+    from app.models import PlatformSetting
+    from app.services import runtime_settings
+
+    with SessionLocal() as db:
+        db.query(PlatformSetting).delete()
+        db.commit()
+    runtime_settings.refresh()
+    yield
+    with SessionLocal() as db:
+        db.query(PlatformSetting).delete()
+        db.commit()
+    runtime_settings.refresh()

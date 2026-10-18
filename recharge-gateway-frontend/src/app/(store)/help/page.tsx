@@ -14,10 +14,12 @@ import {
   Search,
   ShieldCheck,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { Modal } from "@/components/Modal";
 import { BRAND } from "@/config/brand";
+import { api } from "@/lib/api";
+import type { BrandInfo } from "@/lib/types";
 
 const ICONS = {
   receipt: ReceiptText,
@@ -173,6 +175,17 @@ export default function HelpPage() {
   const [openTopic, setOpenTopic] = useState<string | null>("orders");
   const [openPolicy, setOpenPolicy] = useState<string | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
+  const [contactWechat, setContactWechat] = useState(BRAND.contactWechat);
+  const [supportHours, setSupportHours] = useState("每日 09:00–24:00");
+
+  useEffect(() => {
+    api<BrandInfo>("/api/v1/brand")
+      .then((data) => {
+        if (data.support_wechat) setContactWechat(data.support_wechat);
+        if (data.support_hours) setSupportHours(data.support_hours);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const filteredTopics = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -342,7 +355,7 @@ export default function HelpPage() {
               <MessageCircle size={26} className="relative text-brand-300" />
               <h2 className="relative mt-4 text-lg font-semibold text-white">没有找到答案？</h2>
               <p className="relative mt-2 text-[11px] leading-6 text-slate-500">
-                联系 MOLIPLY 客服，我们将协助处理订单问题。服务时间 09:00–24:00。
+                联系 MOLIPLY 客服，我们将协助处理订单问题。客服在线时间：{supportHours}。
               </p>
               <button type="button" onClick={() => setContactOpen(true)} className="btn-primary relative mt-5 w-full">
                 联系在线客服
@@ -383,13 +396,13 @@ export default function HelpPage() {
           <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-4">
             <p className="text-[10px] uppercase tracking-[0.16em] text-slate-600">企业微信 / 客服微信</p>
             <div className="mt-2 flex items-center gap-3">
-              <code className="flex-1 font-mono text-sm text-slate-200">{BRAND.contactWechat}</code>
-              <CopyButton value={BRAND.contactWechat} label="复制" />
+              <code className="flex-1 font-mono text-sm text-slate-200">{contactWechat}</code>
+              <CopyButton value={contactWechat} label="复制" />
             </div>
           </div>
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-[11px] leading-6 text-slate-500">
             添加时请备注「订单咨询」，并准备好订单编号或 MOLI 激活码，方便客服快速定位。
-            服务时间为每日 09:00–24:00；自助充能中心 24 小时可用。
+            服务时间：{supportHours}；自助充能中心 24 小时可用。
           </div>
           <div className="flex justify-end">
             <button type="button" onClick={() => setContactOpen(false)} className="btn-secondary">知道了</button>

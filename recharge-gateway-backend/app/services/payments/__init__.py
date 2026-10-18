@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 from app.services.payments.ltzf import LtzfProvider
 from app.services.payments.mock import MockPaymentProvider
@@ -61,22 +62,28 @@ def get_callback_provider(name: str) -> PaymentProvider:
 
 def get_provider(name: str) -> PaymentProvider:
     provider = (name or "").lower()
+    payment_mode = runtime.get("payment_mode", "mock").lower()
+    gateway = runtime.get("payment_gateway", "ltzf").lower()
     if provider in {"crypto", "nowpayments"}:
-        if not settings.crypto_enabled:
+        if not runtime.get_bool("crypto_enabled"):
             raise PaymentProviderError("CRYPTO_DISABLED", "加密货币支付暂未启用")
-        if settings.crypto_provider.lower() == "mock":
+        if runtime.get("crypto_provider", "nowpayments").lower() == "mock":
             return MockPaymentProvider("crypto")
         return NowPaymentsProvider()
     if provider in {"wechat", "wxpay", "ltzf", "lanttu"}:
-        if settings.payment_mode != "live":
+        if payment_mode != "live":
             return MockPaymentProvider("wechat")
+        if gateway == "xunhupay":
+            return XunhupayProvider()
         return LtzfProvider(channel="wechat")
     if provider in {"alipay", "ltzf_alipay"}:
-        if settings.payment_mode != "live":
+        if payment_mode != "live":
             return MockPaymentProvider("alipay")
+        if gateway == "xunhupay":
+            return XunhupayProvider()
         return LtzfProvider(channel="alipay")
     if provider == "xunhupay":
-        if settings.payment_mode != "live":
+        if payment_mode != "live":
             return MockPaymentProvider("xunhupay")
         return XunhupayProvider()
     if provider == "mock":

@@ -9,12 +9,13 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 
 logger = logging.getLogger(__name__)
 
 
 def smtp_configured() -> bool:
-    return bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+    return bool(runtime.get("smtp_host", settings.smtp_host) and runtime.get("smtp_user", settings.smtp_user) and runtime.get("smtp_password", settings.smtp_password))
 
 
 def send_delivery_email(email: str, order_payload: dict) -> bool:
@@ -43,19 +44,24 @@ def send_delivery_email(email: str, order_payload: dict) -> bool:
     )
     message = MIMEText("\n".join(lines), "plain", "utf-8")
     message["Subject"] = f"【{settings.brand_name_cn}】订单 {order_payload.get('order_no')} 已自动交付"
-    message["From"] = formataddr((settings.brand_name_cn, settings.smtp_from))
+    smtp_from = runtime.get("smtp_from", settings.smtp_from)
+    message["From"] = formataddr((settings.brand_name_cn, smtp_from))
     message["To"] = email
     try:
-        if settings.smtp_use_ssl:
+        host = runtime.get("smtp_host", settings.smtp_host)
+        port = runtime.get_int("smtp_port", settings.smtp_port)
+        user = runtime.get("smtp_user", settings.smtp_user)
+        password = runtime.get("smtp_password", settings.smtp_password)
+        if runtime.get_bool("smtp_use_ssl", settings.smtp_use_ssl):
             context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=15) as server:
-                server.login(settings.smtp_user, settings.smtp_password)
-                server.sendmail(settings.smtp_from, [email], message.as_string())
+            with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+                server.login(user, password)
+                server.sendmail(smtp_from, [email], message.as_string())
         else:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+            with smtplib.SMTP(host, port, timeout=15) as server:
                 server.starttls(context=ssl.create_default_context())
-                server.login(settings.smtp_user, settings.smtp_password)
-                server.sendmail(settings.smtp_from, [email], message.as_string())
+                server.login(user, password)
+                server.sendmail(smtp_from, [email], message.as_string())
         logger.info("Delivery email sent for order %s", order_payload.get("order_no"))
         return True
     except Exception as exc:  # noqa: BLE001

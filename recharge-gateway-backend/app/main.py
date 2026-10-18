@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import SessionLocal, init_db
 from app.security import limiter
 from app.services import redeem as redeem_service
+from app.services import runtime_settings as runtime
 from app.services.orders import OrderError
 from app.services.redeem import RedeemError
 
@@ -113,10 +114,12 @@ def brand() -> dict:
         },
         "store_url": settings.public_store_url,
         "redeem_url": settings.public_redeem_url,
-        "payment_mode": settings.payment_mode,
-        "mock_payment_enabled": settings.mock_payment_enabled,
-        "crypto_enabled": settings.crypto_enabled,
-        "crypto_coins": settings.crypto_coin_list,
+        "payment_mode": runtime.get("payment_mode", settings.payment_mode),
+        "mock_payment_enabled": runtime.get_bool("mock_payment_enabled", settings.mock_payment_enabled),
+        "crypto_enabled": runtime.get_bool("crypto_enabled", settings.crypto_enabled),
+        "crypto_coins": runtime.get_list("crypto_supported_coins", settings.crypto_coin_list),
+        "support_wechat": runtime.get("support_wechat", settings.support_wechat),
+        "support_hours": runtime.get("support_hours", settings.support_hours),
         "catalog_seeded": settings.seed_demo_data,
     }
 

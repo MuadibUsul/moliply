@@ -78,6 +78,9 @@ PUBLIC_STORE_URL=http://localhost:3000 PUBLIC_REDEEM_URL=http://localhost:3000/r
 | PATCH | `/api/v1/admin/products/{id}` | 上下架/价格/角标 |
 | POST | `/api/v1/admin/accounts/import` | 导入成品号账密 |
 | GET | `/api/v1/admin/channels` | 双通道状态 |
+| GET | `/api/v1/admin/settings` | 运行时配置（密钥只返回已配置标记） |
+| PATCH | `/api/v1/admin/settings` | 保存支付/加密/上游/VCC/客服/SMTP/飞书配置 |
+| POST | `/api/v1/admin/feishu/test` | 发送飞书测试消息 |
 | POST | `/api/v1/admin/users/reset-password` | 后台重置客户密码 |
 
 ## 充值状态机
@@ -101,7 +104,7 @@ PENDING
 ## 目录
 
 - `app/api`：路由；
-- `app/services`：加密、卡密、Session、账户、上游、自营 VCC、IMAP、订单、支付；
+- `app/services`：加密、卡密、Session、账户、运行时配置、飞书通知、上游、自营 VCC、IMAP、订单、支付；
 - `app/tasks`：Celery Worker/Beat；
 - `app/seed.py`：演示目录与库存；
-- `tests/`：59 项 pytest。
+- `tests/`：63 项 pytest。

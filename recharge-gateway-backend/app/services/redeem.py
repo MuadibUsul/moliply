@@ -25,6 +25,7 @@ from app.models import (
 )
 from app.security import failure_tracker
 from app.services.code_generator import is_valid_code_format, normalize_code
+from app.services import feishu
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.errors import RechargeError
 from app.services.locks import redis_lock
@@ -295,6 +296,18 @@ def submit_recharge(db: Session, raw_code: str, session_raw: str, ip: str) -> Re
         db.commit()
         db.refresh(task)
 
+    feishu.dispatch_event(
+        "recharge.submitted",
+        "MOLIPLY 新充能任务",
+        {
+            "任务编号": task.task_id,
+            "商品": _sku_label(db, code),
+            "账号": mask_email(task.target_email),
+            "通道": code.channel_mode.value,
+        },
+        severity="info",
+        link_path="/admin/tasks",
+    )
     dispatch_recharge(task.task_id)
     return task
 
@@ -343,6 +356,18 @@ def _finalize_success(db: Session, task: RechargeTask, code: ActivationCode, mes
         )
     )
     db.commit()
+    feishu.dispatch_event(
+        "recharge.success",
+        "MOLIPLY 充值成功",
+        {
+            "任务编号": task.task_id,
+            "商品": _sku_label(db, code),
+            "账号": mask_email(task.target_email),
+            "上游订单": upstream_order_no or "—",
+        },
+        severity="success",
+        link_path="/admin/tasks",
+    )
 
 
 def _finalize_failure(
@@ -378,6 +403,19 @@ def _finalize_failure(
         )
     )
     db.commit()
+    feishu.dispatch_event(
+        "recharge.manual_review" if not release_code else "recharge.failed",
+        "MOLIPLY 充能任务需人工复核" if not release_code else "MOLIPLY 充能失败",
+        {
+            "任务编号": task.task_id,
+            "商品": _sku_label(db, code) if code else "—",
+            "账号": mask_email(task.target_email),
+            "错误码": error_code,
+            "说明": message,
+        },
+        severity="error" if not release_code else "warning",
+        link_path="/admin/tasks",
+    )
 
 
 def _reconstruct_session(task: RechargeTask) -> SessionInfo:
@@ -511,6 +549,17 @@ def run_recharge_task(task_id: str) -> None:
                         "充能引擎内部异常，已转人工处理，请稍后联系客服",
                         release_code=not risky,
                     )
+                    feishu.dispatch_event(
+                        "system.error",
+                        "MOLIPLY 充值任务异常",
+                        {
+                            "任务编号": task.task_id,
+                            "状态": task.state.value,
+                            "说明": "充值任务出现未处理异常，已转人工复核",
+                        },
+                        severity="error",
+                        link_path="/admin/tasks",
+                    )
             except Exception:
                 db.rollback()
         finally:
@@ -598,6 +647,18 @@ def retry_task(db: Session, task_id: str, ip: str = "") -> RechargeTask:
         )
     )
     db.commit()
+    feishu.dispatch_event(
+        "recharge.submitted",
+        "MOLIPLY 新充能任务",
+        {
+            "任务编号": task.task_id,
+            "商品": _sku_label(db, code),
+            "账号": mask_email(task.target_email),
+            "通道": code.channel_mode.value,
+        },
+        severity="info",
+        link_path="/admin/tasks",
+    )
     dispatch_recharge(task.task_id)
     return task
 

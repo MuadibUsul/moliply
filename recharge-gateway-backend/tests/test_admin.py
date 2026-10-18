@@ -119,6 +119,8 @@ def test_add_and_list_vcc_cards(client, admin_headers, monkeypatch):
     assert all("card_masked" in item for item in listing.json()["items"])
 
     monkeypatch.setattr(settings, "us_bin_allowlist", "999999")
+    from app.services import runtime_settings
+    runtime_settings.refresh()
     rejected_bin = client.post(
         "/api/v1/admin/cards",
         headers=admin_headers,

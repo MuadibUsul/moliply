@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,17 @@ class NowPaymentsProvider(PaymentProvider):
     name = "crypto"
 
     def __init__(self) -> None:
-        if not settings.nowpayments_api_key or not settings.nowpayments_ipn_secret:
+        self.api_key = runtime.get("nowpayments_api_key")
+        self.ipn_secret = runtime.get("nowpayments_ipn_secret")
+        self.api_base = runtime.get("nowpayments_api_base", "https://api.nowpayments.io")
+        self.ipn_url = runtime.get("nowpayments_ipn_url")
+        if not self.api_key or not self.ipn_secret:
             raise PaymentProviderError("CRYPTO_NOT_CONFIGURED", "加密货币支付商户参数尚未配置")
 
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
-        if not settings.crypto_enabled:
+        if not runtime.get_bool("crypto_enabled", settings.crypto_enabled):
             raise PaymentProviderError("CRYPTO_DISABLED", "加密货币支付暂未启用")
-        rate = Decimal(str(settings.crypto_cny_per_usd or 7.2))
+        rate = Decimal(str(runtime.get_float("crypto_cny_per_usd", settings.crypto_cny_per_usd) or 7.2))
         usd_amount = (amount / rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         if usd_amount < Decimal("0.50"):
             usd_amount = Decimal("0.50")
@@ -52,7 +57,7 @@ class NowPaymentsProvider(PaymentProvider):
             "price_currency": "usd",
             "order_id": order_no,
             "order_description": title,
-            "ipn_callback_url": settings.nowpayments_ipn,
+            "ipn_callback_url": self.ipn_url,
             "success_url": f"{settings.public_store_url.rstrip('/')}/pay/{order_no}?provider=crypto",
             "cancel_url": f"{settings.public_store_url.rstrip('/')}/pay/{order_no}?provider=crypto",
             "is_fixed_rate": True,
@@ -61,8 +66,8 @@ class NowPaymentsProvider(PaymentProvider):
         try:
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
-                    f"{settings.nowpayments_api_base.rstrip('/')}/v1/invoice",
-                    headers={"x-api-key": settings.nowpayments_api_key, "Content-Type": "application/json"},
+                    f"{self.api_base.rstrip('/')}/v1/invoice",
+                    headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
                     json=payload,
                 )
             if response.status_code >= 400:
@@ -84,12 +89,12 @@ class NowPaymentsProvider(PaymentProvider):
             pay_url=invoice_url,
             trade_no=str(data.get("id") or data.get("invoice_id") or ""),
             mock=False,
-            expires_in=settings.order_expire_minutes * 60,
+            expires_in=runtime.get_int("order_expire_minutes", settings.order_expire_minutes) * 60,
             raw={"invoice_id": data.get("id"), "price_currency": "usd"},
         )
 
     def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
-        expected = ipn_signature(payload, settings.nowpayments_ipn_secret) if settings.nowpayments_ipn_secret else ""
+        expected = ipn_signature(payload, self.ipn_secret) if self.ipn_secret else ""
         verified = bool(signature) and bool(expected) and hmac.compare_digest(expected, signature)
         status = str(payload.get("payment_status") or "").lower()
         amount = Decimal(str(payload.get("price_amount") or "0"))

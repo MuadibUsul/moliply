@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvider, PaymentProviderError
 
 
@@ -34,28 +35,33 @@ class XunhupayProvider(PaymentProvider):
     name = "xunhupay"
 
     def __init__(self) -> None:
-        if not (settings.xunhupay_app_id and settings.xunhupay_app_secret):
+        self.app_id = runtime.get("xunhupay_app_id")
+        self.app_secret = runtime.get("xunhupay_app_secret")
+        self.api_base = runtime.get("xunhupay_api_base", "https://api.xunhupay.com")
+        self.notify_url = runtime.get("xunhupay_notify_url")
+        self.return_url = runtime.get("xunhupay_return_url")
+        if not (self.app_id and self.app_secret):
             raise PaymentProviderError("PAYMENT_NOT_CONFIGURED", "虎皮椒支付参数尚未配置")
 
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
         params: dict[str, Any] = {
-            "appid": settings.xunhupay_app_id,
+            "appid": self.app_id,
             "trade_order_id": order_no,
             "total_fee": f"{amount:.2f}",
             "title": title,
             "time": str(int(time.time())),
-            "notify_url": settings.xunhupay_notify,
-            "return_url": settings.xunhupay_return,
+            "notify_url": self.notify_url,
+            "return_url": self.return_url,
             "nonce_str": secrets.token_hex(8),
             "type": "WAP",
             "wap_url": settings.public_store_url,
             "wap_name": settings.brand_name_en,
         }
-        params["hash"] = _sign(params, settings.xunhupay_app_secret)
+        params["hash"] = _sign(params, self.app_secret)
         try:
             with httpx.Client(timeout=20.0) as client:
                 response = client.post(
-                    f"{settings.xunhupay_api_base.rstrip('/')}/payment/do.html",
+                    f"{self.api_base.rstrip('/')}/payment/do.html",
                     data=params,
                 )
             response.raise_for_status()
@@ -73,13 +79,13 @@ class XunhupayProvider(PaymentProvider):
             qr_content=qr_content,
             pay_url=str(payload.get("url") or ""),
             trade_no=str(payload.get("order_id") or ""),
-            expires_in=settings.order_expire_minutes * 60,
+            expires_in=runtime.get_int("order_expire_minutes", settings.order_expire_minutes) * 60,
             raw={"errcode": payload.get("errcode")},
         )
 
     def parse_notify(self, payload: dict[str, Any], signature: str | None = None) -> ParsedNotify:
         received_hash = str(payload.get("hash") or "").lower()
-        expected = _sign(payload, settings.xunhupay_app_secret)
+        expected = _sign(payload, self.app_secret)
         verified = bool(received_hash) and received_hash == expected
         amount = Decimal(str(payload.get("total_fee") or "0"))
         status_value = str(payload.get("status") or "").lower()

@@ -23,6 +23,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services import runtime_settings as runtime
 from app.models import SkuType, VccCard, VccStatus
 from app.services.crypto import decrypt_text
 from app.services.errors import RechargeError
@@ -52,14 +53,17 @@ class SelfVccResult:
 
 
 def check_proxy_health() -> dict:
-    if not settings.proxy_url:
+    proxy_url = runtime.get("proxy_url", settings.proxy_url)
+    health_url = runtime.get("proxy_health_url", settings.proxy_health_url)
+    required_country = runtime.get("proxy_required_country", settings.proxy_required_country)
+    if not proxy_url:
         raise SelfVccFailure(
             "PROXY_NOT_CONFIGURED",
             "自营通道未配置美国住宅代理，任务已中止，激活码已释放",
         )
     try:
-        with httpx.Client(timeout=20.0, proxy=settings.proxy_url) as client:
-            response = client.get(settings.proxy_health_url, headers={"Accept": "application/json"})
+        with httpx.Client(timeout=20.0, proxy=proxy_url) as client:
+            response = client.get(health_url, headers={"Accept": "application/json"})
         response.raise_for_status()
         data = response.json()
     except Exception as exc:
@@ -69,7 +73,7 @@ def check_proxy_health() -> dict:
             "美国住宅代理连接异常，任务已中止，激活码已释放",
         ) from exc
     country = str(data.get("country") or data.get("country_code") or data.get("countryCode") or "").upper()
-    if country and country != settings.proxy_required_country.upper():
+    if country and country != required_country.upper():
         raise SelfVccFailure(
             "PROXY_REGION_MISMATCH",
             f"代理出口地区为 {country}，非美国节点，任务已中止",
@@ -78,7 +82,7 @@ def check_proxy_health() -> dict:
 
 
 def select_vcc_card(db: Session) -> VccCard | None:
-    minimum = Decimal(str(settings.self_vcc_min_balance))
+    minimum = Decimal(str(runtime.get_float("self_vcc_min_balance", settings.self_vcc_min_balance)))
     return (
         db.query(VccCard)
         .filter(
@@ -135,7 +139,7 @@ def _create_checkout_url(session: SessionInfo) -> str:
     }
     payload = {"plan_type": "plus", "checkout_ui_mode": "hosted"}
     try:
-        with httpx.Client(timeout=30.0, proxy=settings.proxy_url or None) as client:
+        with httpx.Client(timeout=30.0, proxy=runtime.get("proxy_url", settings.proxy_url) or None) as client:
             response = client.post(
                 f"{settings.openai_api_base.rstrip('/')}/backend-api/payments/checkout",
                 headers=headers,
@@ -306,7 +310,7 @@ class PlaywrightCheckout:
                         on_state("AWAITING_3DS")
                     reader = Imap3dsReader()
                     verification = reader.wait_for_code(
-                        since=datetime.utcnow() - timedelta(seconds=settings.rdvcc_3ds_code_window_seconds),
+                        since=datetime.utcnow() - timedelta(seconds=runtime.get_int("rdvcc_3ds_code_window_seconds", settings.rdvcc_3ds_code_window_seconds)),
                         timeout_seconds=90,
                     )
                     if not verification:
@@ -343,7 +347,7 @@ def run_self_vcc_recharge(
     sku_type: SkuType,
     on_state: Callable[[str], None] | None = None,
 ) -> SelfVccResult:
-    if not settings.self_vcc_enabled:
+    if not runtime.get_bool("self_vcc_enabled", settings.self_vcc_enabled):
         raise SelfVccFailure("SELF_VCC_DISABLED", "自营通道未启用，请使用上游通道")
     if sku_type not in CHATGPT_SKUS:
         raise SelfVccFailure("SELF_VCC_UNSUPPORTED_SKU", "自营通道暂不支持该商品")
@@ -359,7 +363,7 @@ def run_self_vcc_recharge(
         )
     card_id = card.id
     data = _card_data(card)
-    if settings.self_vcc_dry_run:
+    if runtime.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run):
         raise SelfVccFailure(
             "SELF_VCC_DRY_RUN",
             "自营通道处于演练模式，已停止在提交支付之前，激活码已释放",
@@ -368,7 +372,7 @@ def run_self_vcc_recharge(
 
     checkout_url = _create_checkout_url(session)
     try:
-        message = PlaywrightCheckout().run(checkout_url, data, settings.proxy_url, on_state=on_state)
+        message = PlaywrightCheckout().run(checkout_url, data, runtime.get("proxy_url", settings.proxy_url), on_state=on_state)
     except SelfVccFailure as exc:
         if exc.card_id is None:
             exc.card_id = card_id

@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.services import feishu
 from app.services import orders as order_service
 from app.services.payments.base import PaymentProviderError
 
@@ -42,7 +43,19 @@ async def ltzf_notify(request: Request):
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
         logger.warning("Lanttu callback rejected: %s", exc.code)
+        feishu.dispatch_event(
+            "payment.callback_failed",
+            "Lanttu 支付回调异常",
+            {
+                "订单号": payload.get("out_trade_no", ""),
+                "错误码": exc.code,
+                "说明": exc.message,
+            },
+            severity="error",
+            link_path="/admin/orders",
+        )
         return PlainTextResponse("FAIL", status_code=400)
+
     except PaymentProviderError as exc:
         logger.warning("Lanttu callback provider error: %s", exc.code)
         return PlainTextResponse("FAIL", status_code=400)
@@ -60,7 +73,19 @@ async def xunhupay_notify(request: Request):
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
         logger.warning("Xunhupay callback rejected: %s", exc.code)
-        return PlainTextResponse("fail", status_code=400)
+        feishu.dispatch_event(
+            "payment.callback_failed",
+            "Xunhupay 支付回调异常",
+            {
+                "订单号": payload.get("trade_order_id", ""),
+                "错误码": exc.code,
+                "说明": exc.message,
+            },
+            severity="error",
+            link_path="/admin/orders",
+        )
+        return PlainTextResponse("FAIL", status_code=400)
+
     finally:
         db.close()
 
@@ -81,6 +106,18 @@ async def nowpayments_ipn(request: Request):
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
         logger.warning("NOWPayments callback rejected: %s", exc.code)
+        feishu.dispatch_event(
+            "payment.callback_failed",
+            "NOWPayments 支付回调异常",
+            {
+                "订单号": payload.get("order_id", ""),
+                "错误码": exc.code,
+                "说明": exc.message,
+            },
+            severity="error",
+            link_path="/admin/orders",
+        )
         return PlainTextResponse("FAIL", status_code=400)
+
     finally:
         db.close()

@@ -23,20 +23,44 @@ count_db() {
   docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
+# Admin settings saved in the database override .env. Read them through the
+# API container so this check remains accurate for UI-configured keys.
+API_CONTAINER="${MOLIPLY_API_CONTAINER:-moliply-api-1}"
+RUNTIME_JSON=""
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$API_CONTAINER"; then
+  RUNTIME_JSON="$(docker exec "$API_CONTAINER" python -c 'import json; from app.services.runtime_settings import public_settings; print(json.dumps(public_settings()))' 2>/dev/null || true)"
+fi
+runtime_value() {
+  printf '%s' "$RUNTIME_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null || true
+}
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+RUNTIME_PAYMENT_MODE="$(runtime_value 'd["values"].get("payment_mode","")')"
+RUNTIME_MOCK="$(lower "$(runtime_value 'd["values"].get("mock_payment_enabled","")')")"
+RUNTIME_PAYMENT_READY="$(lower "$(runtime_value 'd.get("payment_ready",False)')")"
+RUNTIME_CRYPTO_ENABLED="$(lower "$(runtime_value 'd["values"].get("crypto_enabled","")')")"
+RUNTIME_CRYPTO_READY="$(lower "$(runtime_value 'd.get("crypto_ready",False)')")"
+RUNTIME_UPSTREAM_READY="$(lower "$(runtime_value 'd.get("upstream_ready",False)')")"
+RUNTIME_SUPPORT_READY="$(lower "$(runtime_value 'd.get("support_ready",False)')")"
+RUNTIME_FEISHU_READY="$(lower "$(runtime_value 'd.get("feishu_ready",False)')")"
+RUNTIME_SELF_VCC="$(lower "$(runtime_value 'd["values"].get("self_vcc_enabled","")')")"
+RUNTIME_SELF_DRY="$(lower "$(runtime_value 'd["values"].get("self_vcc_dry_run","")')")"
+RUNTIME_SMTP="$(runtime_value 'd["values"].get("smtp_host","")')"
+
 STORE_URL="$(get PUBLIC_STORE_URL)"
-PAYMENT_MODE="$(get PAYMENT_MODE)"
-MOCK="$(get MOCK_PAYMENT_ENABLED)"
+PAYMENT_MODE="${RUNTIME_PAYMENT_MODE:-$(get PAYMENT_MODE)}"
+MOCK="${RUNTIME_MOCK:-$(get MOCK_PAYMENT_ENABLED)}"
+MOCK="$(lower "$MOCK")"
 UPSTREAM_MODE="$(get UPSTREAM_MODE)"
 UPSTREAM_BASE="$(get UPSTREAM_API_BASE)"
 UPSTREAM_KEY="$(get UPSTREAM_API_KEY)"
-SELF_VCC="$(get SELF_VCC_ENABLED)"
-SELF_DRY="$(get SELF_VCC_DRY_RUN)"
+SELF_VCC="${RUNTIME_SELF_VCC:-$(get SELF_VCC_ENABLED)}"
+SELF_DRY="${RUNTIME_SELF_DRY:-$(get SELF_VCC_DRY_RUN)}"
 SEED_INV="$(get SEED_DEMO_INVENTORY)"
 ADMIN_PASSWORD="$(get ADMIN_PASSWORD)"
 MASTER_KEY="$(get MASTER_AES_KEY)"
-SMTP_HOST="$(get SMTP_HOST)"
+SMTP_HOST="${RUNTIME_SMTP:-$(get SMTP_HOST)}"
 CONTACT="$(get NEXT_PUBLIC_CONTACT_WECHAT)"
-CRYPTO_ENABLED="$(get CRYPTO_ENABLED)"
+CRYPTO_ENABLED="${RUNTIME_CRYPTO_ENABLED:-$(get CRYPTO_ENABLED)}"
 NOWPAYMENTS_API_KEY="$(get NOWPAYMENTS_API_KEY)"
 NOWPAYMENTS_IPN_SECRET="$(get NOWPAYMENTS_IPN_SECRET)"
 LTZF_ID="$(get LTZF_MCH_ID)"
@@ -48,7 +72,7 @@ XH_KEY="$(get XUNHUPAY_APP_SECRET)"
 [[ "$PAYMENT_MODE" == "live" ]] && ok "PAYMENT_MODE=live" || bad "PAYMENT_MODE is not live (currently ${PAYMENT_MODE:-unset})"
 [[ "$MOCK" == "false" ]] && ok "MOCK_PAYMENT_ENABLED=false" || bad "mock payment must be disabled before launch"
 
-if { [ -n "$LTZF_ID" ] && [ -n "$LTZF_KEY" ]; } || { [ -n "$XH_ID" ] && [ -n "$XH_KEY" ]; }; then
+if [ "$RUNTIME_PAYMENT_READY" = "true" ] || { { [ -n "$LTZF_ID" ] && [ -n "$LTZF_KEY" ]; } || { [ -n "$XH_ID" ] && [ -n "$XH_KEY" ]; }; }; then
   ok "payment merchant keys configured"
 else
   bad "no payment merchant keys configured (Lanttu or Xunhupay)"
@@ -86,20 +110,25 @@ fi
 
 if [ -n "$SMTP_HOST" ]; then ok "SMTP delivery email configured"; else warnf "SMTP is not configured (order page delivery still works)"; fi
 
-if [ -n "$CONTACT" ] && [ "$CONTACT" != "MOLIPLY-SUPPORT" ]; then
+if [ "$RUNTIME_SUPPORT_READY" = "true" ] || { [ -n "$CONTACT" ] && [ "$CONTACT" != "MOLIPLY-SUPPORT" ]; }; then
   ok "customer service contact configured"
 else
-  bad "NEXT_PUBLIC_CONTACT_WECHAT is still a placeholder; set a real contact and rebuild web"
+  bad "customer service contact is still a placeholder; set it in the admin settings"
 fi
 
 if [ "$CRYPTO_ENABLED" = "true" ]; then
-  if [ -n "$NOWPAYMENTS_API_KEY" ] && [ -n "$NOWPAYMENTS_IPN_SECRET" ]; then
+  if [ "$RUNTIME_CRYPTO_READY" = "true" ] || { [ -n "$NOWPAYMENTS_API_KEY" ] && [ -n "$NOWPAYMENTS_IPN_SECRET" ]; }; then
     ok "crypto checkout enabled and NOWPayments keys configured"
   else
     bad "CRYPTO_ENABLED=true but NOWPayments API/IPN secrets are missing"
   fi
 else
   warnf "crypto checkout is disabled (USDT/USDC/BTC/ETH not offered)"
+fi
+if [ "$RUNTIME_FEISHU_READY" = "true" ]; then
+  ok "Feishu notifications configured"
+else
+  warnf "Feishu notifications are not configured"
 fi
 
 latest_backup="$(find "$BASE/backups/db" -type f -name '*.dump' -mmin -1440 2>/dev/null | head -n1 || true)"

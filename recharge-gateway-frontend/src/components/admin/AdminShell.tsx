@@ -15,6 +15,7 @@ import {
   ReceiptText,
   Search,
   ServerCog,
+  Settings,
   X,
   Zap,
 } from "lucide-react";
@@ -40,6 +41,12 @@ const NAV_GROUPS = [
       { href: "/admin/channels", label: "渠道状态", icon: ServerCog },
     ],
   },
+  {
+    label: "系统",
+    items: [
+      { href: "/admin/settings", label: "系统设置", icon: Settings },
+    ],
+  },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -50,6 +57,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/tasks": "充值任务",
   "/admin/cards": "VCC 卡池",
   "/admin/channels": "渠道状态",
+  "/admin/settings": "系统设置",
 };
 
 export function AdminShell({ children }: { children: ReactNode }) {
