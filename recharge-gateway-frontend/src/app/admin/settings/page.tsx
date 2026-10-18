@@ -387,7 +387,7 @@ export default function AdminSettingsPage() {
           </div>
         </Section>
 
-        <Section icon={Bitcoin} title="加密货币支付" description="NOWPayments 托管收银台，支持 USDT / USDC / BTC / ETH。商户后台需开启对应币种。">
+        <Section icon={Bitcoin} title="加密货币支付" description="支持自建 USDT-TRC20 直收（资金直达自有钱包）或 NOWPayments 托管收银台。">
           <Toggle
             label="启用加密货币支付"
             description="保存后前台结算页会自动显示该选项"
