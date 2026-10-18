@@ -223,7 +223,10 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
     if intent.provider == "crypto" and raw_amount is not None:
         order.payment_amount = Decimal(str(raw_amount))
         order.payment_currency = str(intent.raw.get("price_currency") or "USD").upper()
-    elif intent.provider != "crypto":
+    elif intent.provider == "crypto":
+        order.payment_amount = None
+        order.payment_currency = None
+    else:
         order.payment_amount = order.amount
         order.payment_currency = "CNY"
     db.add(order)
