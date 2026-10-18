@@ -60,7 +60,7 @@ services:
     build:
       context: ./recharge-gateway-backend
       args:
-        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
+        INSTALL_BROWSER: "true"
     restart: unless-stopped
     env_file: .env
     environment:

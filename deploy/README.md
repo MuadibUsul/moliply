@@ -120,6 +120,14 @@ MOLIPLY_BASE=/opt/moliply /opt/moliply/preflight.sh
 
 全部 PASS 后，再切换 `PAYMENT_MODE=live`、关闭 mock、导入真实库存并对外推广。
 
+## V2 自营通道路由（增量升级）
+
+- 新增列由应用启动时的 `ensure_schema_compatibility()` 自动补齐，只做加法，不删改 V1 数据；
+- Worker 镜像需要内置 Chromium，`docker-compose.server.yml` 已将 worker 的 `INSTALL_BROWSER` 设为 `true`（API/Beat 保持 `false`）；
+- 路由策略、菲/美住宅代理、卡池余额阈值、扣款金额都可在后台「系统设置」或「VCC 卡池」调整；
+- 新增环境变量见 `.env.example` 的 `ROUTING_POLICY` / `PH_RESIDENTIAL_PROXY_URL` / `US_RESIDENTIAL_PROXY_URL` 等；
+- 升级后先跑 `preflight.sh`，再在后台录入测试卡并以演练模式验证，最后才关闭 `SELF_VCC_DRY_RUN`。
+
 ## 发布 / 回滚
 
 ```bash

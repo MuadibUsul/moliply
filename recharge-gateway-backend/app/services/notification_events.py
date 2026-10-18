@@ -58,6 +58,12 @@ FEISHU_EVENTS: list[dict[str, str]] = [
         "severity": "warning",
     },
     {
+        "key": "channel.fallback",
+        "label": "自营通道降级",
+        "description": "自营卡池无卡、代理异常或拒付后自动切上游",
+        "severity": "warning",
+    },
+    {
         "key": "payment.callback_failed",
         "label": "支付回调异常",
         "description": "签名、金额或订单校验失败",

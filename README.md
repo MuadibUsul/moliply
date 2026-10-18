@@ -6,7 +6,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 > 商业计划、成本资料与设计源文件保留在私有环境，不纳入公开仓库；线上服务器地址与凭据同样不在仓库中。
 
-当前状态：**前后端构建通过、63 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
+当前状态：**前后端构建通过、76 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
 
 ---
 
@@ -20,15 +20,16 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | MOLI 激活码 | ✅ | `MOLI-XXXX-XXXX-XXXX` 生成（排除 0/O/1/I）、批量生成/导入、上游卡密加密映射、绑定账号、状态机 |
 | 免密充能中心 | ✅ | 四步向导、自动验证、ChatGPT Session / Claude Session Key、账号状态预检、实时进度轮询、失败重试 |
 | 加密货币收款 | ✅ | NOWPayments 收银台，支持 USDT / USDC / BTC / ETH；默认关闭，配置商户密钥后开启 |
-| 双通道充值 | ✅ | 通道 1 上游 API（模拟/HTTP）；通道 2 自营 VCC（Playwright + 美国代理 + IMAP 3DS），默认关闭+演练 |
-| 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、余额与绑定上限、拒付自动挂起、失败计数、`SKIP LOCKED` 选卡 |
+| 双通道充值 | ✅ | 混合路由：自营卡池优先（菲区 ₱999 → 美区 $20），失败/无卡自动回退上游 API；也可切换仅自营或仅上游 |
+| 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、菲/美双区账单、3DS IMAP 取码、余额与绑定上限、拒付自动挂起、销卡回血、`SKIP LOCKED` 选卡 |
+| 渠道路由 | ✅ | 全局策略（混合/仅自营/仅上游）+ 单个激活码通道与区域偏好；失败原因、执行区域、计费币种写回任务 |
 | Redis/Celery | ✅ | 分布式锁、Celery Worker、Beat 清理 Session 凭证；本地可切换 inline 线程模式 |
 | 运营后台 | ✅ | 登录、概览、订单、商品、卡密、充值任务、VCC 卡池、渠道状态、系统设置 |
 | 系统设置 | ✅ | 支付/加密支付/上游/VCC/客服/SMTP/订单配置可在后台保存，密钥加密存储并即时生效 |
 | 飞书管理通知 | ✅ | 可勾选新订单、支付、交付、充值失败、人工复核、库存预警、回调异常、系统异常、每日日报 |
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
 | 独角数卡适配 | ✅（可选） | 品牌主题 Blade + 蓝兔/虎皮椒框架无关 PHP 插件 |
-| 自动化测试 | ✅ | 63 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP |
+| 自动化测试 | ✅ | 76 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -46,10 +47,11 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
                                                  ├── PostgreSQL（订单/卡密/任务/卡池）
                                                  ├── Redis（限流/锁/Celery）
                                                  ├── Celery Worker
-                                                 │    ├─ 通道 1：上游代充 API
-                                                 │    └─ 通道 2：Playwright + 美国代理
-                                                 │         └─ IMAP 3DS 验证码
-                                                 └── 支付回调：蓝兔 / 虎皮椒
+                                                 │    ├─ 渠道调度：自营优先 / 仅自营 / 仅上游
+                                                 │    ├─ 自营：PH ₱999 → US $20（Playwright）
+                                                 │    │    └─ IMAP 3DS 验证码
+                                                 │    └─ 兜底：上游代充 API
+                                                 └── 支付回调：蓝兔 / 虎皮椒 / NOWPayments
 ```
 
 商城与充能中心共用同一个 Next.js 应用（通过 Nginx 双域名暴露）；充能系统与订单/卡密共用一个 FastAPI 服务，避免两套数据源不一致。
@@ -72,7 +74,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   ├── services/             加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
-│   └── tests/                    63 项 pytest
+│   └── tests/                    76 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
 ├── storefront-theme-moliply/     独角数卡主题 + 蓝兔/虎皮椒脱敏插件（可选）
 ├── nginx/                        双域名反代、限流、安全头
@@ -225,7 +227,11 @@ cd recharge-gateway-frontend && npm run build
 | `UPSTREAM_MODE` | `mock` / `http` | 有供应商 API 后切 `http` |
 | `SELF_VCC_ENABLED` | 自营通道开关 | 默认 `false` |
 | `SELF_VCC_DRY_RUN` | 自营通道演练 | 首次必须 `true`，验证后再关闭 |
-| `PROXY_URL` | 美国住宅代理 | 自营通道必需 |
+| `ROUTING_POLICY` | `HYBRID_SELF_FIRST` / `SELF_VCC_ONLY` / `UPSTREAM_ONLY` | 默认混合；后台可随时切换 |
+| `PH_RESIDENTIAL_PROXY_URL` / `US_RESIDENTIAL_PROXY_URL` | 菲区/美区住宅代理 | 自营通道必需；美区可回退 `PROXY_URL` |
+| `SELF_VCC_PH_MIN_BALANCE` / `SELF_VCC_US_MIN_BALANCE` | 卡池调度余额阈值 | 默认 `18.5` / `22` 美元 |
+| `PH_PLUS_AMOUNT_PHP` / `US_PLUS_AMOUNT_USD` | 自营扣款金额 | 默认 ₱999 / $20 |
+| `PROXY_URL` | 通用住宅代理 | 自营通道兜底代理 |
 | `US_BIN_ALLOWLIST` | 可选：强制校验卡 BIN 前 6 位 | 建议配置为 RDVCC 美国卡段 |
 | `RDVCC_IMAP_*` | 3DS 验证码邮箱 | 自营通道必需 |
 | `OPENAI_ACCOUNT_CHECK_ENABLED` | OpenAI 账号状态预检 | 配好美国代理后开启 |
@@ -324,26 +330,42 @@ UPSTREAM_API_SECRET=...
 
 ## 9. 自营 VCC 通道（默认关闭）
 
+V2 的增量能力：订单不再只有上游 API 一条路，而是按下述顺序执行：
+
+```text
+全局策略 HYBRID_SELF_FIRST（默认）
+  └─ 激活码区域偏好 PH_FIRST
+       ├─ 自营菲律宾：₱999，PHP 卡，菲律宾账单地址 + PH 住宅代理
+       ├─ 自营美区：$20，美国账单地址 + US 住宅代理（PH 无卡/失败时）
+       └─ 上游 API（自营失败且允许回退时）
+  └─ 区域偏好 US_ONLY：直接美区 $20 → 上游
+```
+
+后台「VCC 卡池」可切换 `HYBRID_SELF_FIRST` / `SELF_VCC_ONLY` / `UPSTREAM_ONLY`。单个激活码还可以指定通道（混合/仅自营/仅上游）和区域（菲区优先/仅美区），用于分层测试或特殊批次。
+
 启用顺序：
 
-1. 在后台「VCC 卡池」录入 RDVCC 卡片（美国 BIN + 美国账单地址 + 余额 ≥ $25）；
-2. 配置美国静态住宅代理 `PROXY_URL`，并验证 `PROXY_HEALTH_URL` 返回 `country=US`；
-3. 配置 RDVCC 注册邮箱的 IMAP 参数（`RDVCC_IMAP_*`），确认能收到 3DS 邮件；
+1. 在后台「VCC 卡池」录入卡片：美国账单地址必填，菲律宾地址可选（填写后才参与 ₱999 调度），可填 3DS 收码邮箱；
+2. 在「系统设置 → VCC」或环境变量配置菲区/美区住宅代理，填 `PH_RESIDENTIAL_PROXY_URL`、`US_RESIDENTIAL_PROXY_URL`（美区留空回退 `PROXY_URL`）；
+3. 配置 3DS 收码邮箱 IMAP（`RDVCC_IMAP_*`），确认能收到验证码邮件；
 4. 保持 `SELF_VCC_ENABLED=true` + `SELF_VCC_DRY_RUN=true`，用测试卡跑一次，确认流程停在提交支付前；
-5. 确认无误后设置 `SELF_VCC_DRY_RUN=false`。
+5. 确认无误后设置 `SELF_VCC_DRY_RUN=false`，并先用单卡上限 1 跑小额实盘；
+6. 观察后台「今日自营/回退上游/卡池余额/待销卡」，按需补充卡片或切换策略。
 
-安全约束：
+安全与调度约束：
 
-- 单卡最多绑定 2 个账号（默认 1）；
-- 余额低于 `$22` 不调度；
-- 任一拒付立即 `SUSPENDED`，不允许盲目重试；
-- 代理国家不是 `US` 时直接中止任务；
-- 支付中途异常不会自动释放卡密，任务进入人工复核。
+- 单卡最多绑定 2 个账号（后台默认 2，可录入为 1）；
+- 菲区余额阈值默认 $18.5，美区默认 $22；低于阈值不调度；
+- 任一拒付立即 `SUSPENDED`，不允许盲目重试；达到绑定上限变为 `EXHAUSTED`，后台提示销卡回血；
+- PH 卡池只选择有菲律宾账单地址的卡；没有 PH 卡时自动尝试美区；
+- 支付中途异常不会自动释放卡密，任务进入人工复核；
+- 自营失败会写入 `fallback_reason`，并可按飞书事件 `channel.fallback` 发送降级提醒。
 
 已知限制：
 
-- OpenAI/Stripe 的结账页是外部 UI，`self_vcc_worker.py` 中的选择器与结账创建方式是**尽力而为**实现，可能需要随官方页面更新；
+- OpenAI/Stripe 的结账页是外部 UI，`stripe_playwright.py` / `self_vcc_worker.py` 中的选择器与结账创建方式是**尽力而为**实现，可能需要随官方页面更新；
 - 没有真实卡与真实账号时无法完整验证实盘路径，因此默认关闭并演练；
+- Worker 镜像已内置 Chromium（`INSTALL_BROWSER=true`），镜像体积较大；API/Beat 镜像不装浏览器；
 - 如供应商/官方提供正式 API，优先替换浏览器自动化，稳定性会高很多。
 
 ---
@@ -377,7 +399,8 @@ UPSTREAM_API_SECRET=...
 - **商品管理**：库存（卡密/账密）、上下架、批量导入成品号；
 - **卡密管理**：统计、筛选、批量生成、批量导入上游卡密、作废/恢复；
 - **充值任务**：状态筛选、错误码、重试（Session 已清除时会拒绝）；
-- **VCC 卡池**：录入、掩码展示、恢复并重置失败计数、手动挂起；
+- **VCC 卡池**：录入/批量导入卡片、美国+菲律宾账单地址、3DS 邮箱掩码、路由策略切换、今日自营/上游/兜底统计、待销卡提示、标记已销卡、恢复并重置失败计数、手动挂起；
+- **激活码**：生成/导入时可选混合、仅自营、仅上游通道与菲区/仅美区偏好；
 - **渠道状态**：上游/自营开关与配置检查清单。
 
 ---
@@ -398,6 +421,8 @@ cd recharge-gateway-backend
 - 核销提交、绑定账号、重复提交、成功、临时失败释放、需人工复核保持锁定、暴力破解封禁；
 - 支付商品名脱敏、蓝兔/虎皮椒签名与回调结算；
 - VCC 选卡约束、拒付挂起、绑定次数耗尽；
+- V2 路由：V1 上游码兼容、混合策略 PH→US、仅美区、无 PH 卡降级、自营失败回上游、仅自营不回退、拒付挂起、全局策略覆盖；
+- 卡池区域选择（PH 卡必须有菲律宾地址）、后台卡池批量导入/销卡/策略切换；
 - IMAP 3DS 验证码解析（当前邮件/过期邮件/其他发件人/HTML）。
 
 前端：

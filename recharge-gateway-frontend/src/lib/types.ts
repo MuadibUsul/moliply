@@ -242,6 +242,7 @@ export type AdminCode = {
   sku_type: string;
   sku_label: string;
   channel_mode: string;
+  preferred_region: string;
   status: string;
   status_label: string;
   bound_email_masked: string | null;
@@ -289,6 +290,8 @@ export type AdminCard = {
   exp_month: string;
   exp_year: string;
   holder_name: string;
+  has_ph_billing: boolean;
+  three_ds_email_masked: string | null;
   available_balance: number;
   max_bind_count: number;
   current_bind_count: number;
@@ -305,7 +308,24 @@ export type AdminCardList = {
     active: number;
     suspended: number;
     available: number;
+    exhausted: number;
+    closed: number;
   };
+};
+
+export type AdminCardPoolSummary = {
+  total: number;
+  active: number;
+  available: number;
+  exhausted: number[];
+  suspended: number[];
+  closed: number;
+  available_balance_usd: number;
+  today_self: number;
+  today_upstream: number;
+  today_fallback: number;
+  routing_policy: string;
+  pending_close: { id: number; card_masked: string; balance: number; binds: string }[];
 };
 
 export type AdminProduct = Product & {

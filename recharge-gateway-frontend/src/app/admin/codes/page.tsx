@@ -26,9 +26,24 @@ const STATUS_OPTIONS = [
 ];
 
 const CHANNELS = [
-  { key: "UPSTREAM", label: "上游 API" },
-  { key: "SELF_VCC", label: "自营 VCC" },
+  { key: "HYBRID_SELF_FIRST", label: "混合：自营优先，失败回上游" },
+  { key: "SELF_VCC_ONLY", label: "仅自营 VCC（不回退）" },
+  { key: "UPSTREAM_ONLY", label: "仅上游 API" },
 ];
+
+const REGIONS = [
+  { key: "PH_FIRST", label: "菲律宾优先（₱999 → 美区 $20）" },
+  { key: "US_ONLY", label: "仅美区 $20" },
+];
+
+const CHANNEL_LABELS: Record<string, string> = {
+  UPSTREAM: "上游 API",
+  UPSTREAM_ONLY: "仅上游 API",
+  SELF_VCC: "自营 VCC",
+  SELF_VCC_ONLY: "仅自营 VCC",
+  HYBRID_SELF_FIRST: "混合（自营优先）",
+  HYBRID: "混合（自营优先）",
+};
 
 type GenerateResult = { created: number; codes: string[]; sku_type: string };
 type ImportResult = { created: number; skipped: number; codes: string[] };
@@ -51,12 +66,14 @@ export default function AdminCodesPage() {
 
   const [genCount, setGenCount] = useState(10);
   const [genSku, setGenSku] = useState("CHATGPT_PLUS_1M");
-  const [genChannel, setGenChannel] = useState("UPSTREAM");
+  const [genChannel, setGenChannel] = useState("HYBRID_SELF_FIRST");
+  const [genRegion, setGenRegion] = useState("PH_FIRST");
   const [genNote, setGenNote] = useState("");
 
   const [importText, setImportText] = useState("");
   const [importSku, setImportSku] = useState("CHATGPT_PLUS_1M");
-  const [importChannel, setImportChannel] = useState("UPSTREAM");
+  const [importChannel, setImportChannel] = useState("HYBRID_SELF_FIRST");
+  const [importRegion, setImportRegion] = useState("PH_FIRST");
   const [importNote, setImportNote] = useState("");
 
   const load = useCallback(async () => {
@@ -90,7 +107,7 @@ export default function AdminCodesPage() {
     try {
       const result = await api<GenerateResult>("/api/v1/admin/codes/generate", {
         method: "POST",
-        body: { count: genCount, sku_type: genSku, channel_mode: genChannel, note: genNote },
+        body: { count: genCount, sku_type: genSku, channel_mode: genChannel, preferred_region: genRegion, note: genNote },
       });
       setGenerateResult(result);
       await load();
@@ -111,6 +128,7 @@ export default function AdminCodesPage() {
           text: importText,
           sku_type: importSku,
           channel_mode: importChannel,
+          preferred_region: importRegion,
           note: importNote,
         },
       });
@@ -265,7 +283,12 @@ export default function AdminCodesPage() {
                   <tr key={code.id}>
                     <td className="font-mono text-[10px] tracking-wider text-slate-300">{code.code}</td>
                     <td className="text-[11px] text-slate-400">{code.product_name || code.sku_label}</td>
-                    <td className="text-[10px] text-slate-500">{code.channel_mode === "SELF_VCC" ? "自营 VCC" : "上游 API"}</td>
+                    <td className="text-[10px] text-slate-500">
+                      <div>{CHANNEL_LABELS[code.channel_mode] || code.channel_mode}</div>
+                      <div className="mt-0.5 text-[9px] text-slate-600">
+                        {code.preferred_region === "US_ONLY" ? "仅美区 $20" : "菲区优先"}
+                      </div>
+                    </td>
                     <td>
                       <span
                         className={`rounded-full border px-2 py-0.5 text-[9px] ${
@@ -367,6 +390,17 @@ export default function AdminCodesPage() {
               </div>
             </div>
             <div>
+              <label className="admin-label">区域偏好（仅自营通道生效）</label>
+              <select
+                value={genRegion}
+                onChange={(event) => setGenRegion(event.target.value)}
+                disabled={genChannel === "UPSTREAM_ONLY"}
+                className="admin-input w-full py-2.5 disabled:opacity-40"
+              >
+                {REGIONS.map((region) => <option key={region.key} value={region.key}>{region.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="admin-label">SKU</label>
               <select value={genSku} onChange={(event) => setGenSku(event.target.value)} className="admin-input w-full py-2.5">
                 {data?.sku_options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
@@ -377,7 +411,7 @@ export default function AdminCodesPage() {
               <input value={genNote} onChange={(event) => setGenNote(event.target.value)} className="admin-input w-full py-2.5" placeholder="例如：8 月补货" />
             </div>
             <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-[10px] leading-5 text-slate-600">
-              激活码格式为 MOLI-XXXX-XXXX-XXXX，自动排除易混淆字符 0/O/1/I。生成后即可导入商城库存。
+              激活码格式为 MOLI-XXXX-XXXX-XXXX，自动排除易混淆字符 0/O/1/I。混合通道会先尝试自营卡池（菲区 ₱999 → 美区 $20），失败后自动回退上游 API；仅自营通道失败则转人工。
             </div>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setGenerateOpen(false)} className="btn-secondary py-2.5">取消</button>
@@ -390,7 +424,7 @@ export default function AdminCodesPage() {
         )}
       </Modal>
 
-      <Modal open={importOpen} onClose={() => setImportOpen(false)} title="批量导入上游卡密" maxWidth="max-w-2xl">
+      <Modal open={importOpen} onClose={() => setImportOpen(false)} title="批量导入卡密" maxWidth="max-w-2xl">
         {importResult ? (
           <div>
             <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4 text-[11px] text-emerald-200">
@@ -417,6 +451,17 @@ export default function AdminCodesPage() {
               </div>
             </div>
             <div>
+              <label className="admin-label">区域偏好（仅自营通道生效）</label>
+              <select
+                value={importRegion}
+                onChange={(event) => setImportRegion(event.target.value)}
+                disabled={importChannel === "UPSTREAM_ONLY"}
+                className="admin-input w-full py-2.5 disabled:opacity-40"
+              >
+                {REGIONS.map((region) => <option key={region.key} value={region.key}>{region.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="admin-label">卡密内容（每行一条）</label>
               <textarea
                 value={importText}
@@ -431,6 +476,7 @@ export default function AdminCodesPage() {
             </div>
             <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.05] p-3 text-[10px] leading-5 text-amber-200/70">
               上游卡密将使用 AES-256-GCM 加密保存，仅在核销时解密转发。请勿在公共设备操作。
+              选择混合/自营通道后，实际执行由后台「VCC 卡池」的路由策略与卡池库存共同决定。
             </div>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setImportOpen(false)} className="btn-secondary py-2.5">取消</button>

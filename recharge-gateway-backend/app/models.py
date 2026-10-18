@@ -73,8 +73,17 @@ class CodeStatus(str, enum.Enum):
 
 
 class ChannelMode(str, enum.Enum):
+    # Legacy V1 values are retained for existing codes and API compatibility.
     UPSTREAM = "UPSTREAM"
     SELF_VCC = "SELF_VCC"
+    UPSTREAM_ONLY = "UPSTREAM_ONLY"
+    SELF_VCC_ONLY = "SELF_VCC_ONLY"
+    HYBRID_SELF_FIRST = "HYBRID_SELF_FIRST"
+
+
+class RegionPreference(str, enum.Enum):
+    PH_FIRST = "PH_FIRST"
+    US_ONLY = "US_ONLY"
 
 
 class SkuType(str, enum.Enum):
@@ -83,6 +92,7 @@ class SkuType(str, enum.Enum):
     CHATGPT_PLUS_12M = "CHATGPT_PLUS_12M"
     CLAUDE_PRO_1M = "CLAUDE_PRO_1M"
     CHATGPT_PRO_200 = "CHATGPT_PRO_200"
+    CHATGPT_PRO_20X_1M = "CHATGPT_PRO_20X_1M"
     API_CREDIT_100 = "API_CREDIT_100"
     GENERIC_DIGITAL = "GENERIC_DIGITAL"
 
@@ -93,6 +103,7 @@ SKU_LABELS: dict[str, str] = {
     "CHATGPT_PLUS_12M": "ChatGPT Plus · 12 个月",
     "CLAUDE_PRO_1M": "Claude Pro · 1 个月",
     "CHATGPT_PRO_200": "ChatGPT Pro · 1 个月",
+    "CHATGPT_PRO_20X_1M": "ChatGPT Pro 20x · 1 个月",
     "API_CREDIT_100": "API 额度 · 100",
     "GENERIC_DIGITAL": "通用数字权益",
 }
@@ -127,6 +138,7 @@ class VccStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
     EXHAUSTED = "EXHAUSTED"
     SUSPENDED = "SUSPENDED"
+    CLOSED = "CLOSED"
 
 
 class Product(Base):
@@ -266,6 +278,9 @@ class ActivationCode(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     sku_type: Mapped[SkuType] = mapped_column(enum_column(SkuType, 32), nullable=False, index=True)
     channel_mode: Mapped[ChannelMode] = mapped_column(enum_column(ChannelMode), nullable=False, default=ChannelMode.UPSTREAM)
+    preferred_region: Mapped[RegionPreference] = mapped_column(
+        enum_column(RegionPreference, 16), nullable=False, default=RegionPreference.PH_FIRST
+    )
     status: Mapped[CodeStatus] = mapped_column(enum_column(CodeStatus), nullable=False, default=CodeStatus.UNUSED, index=True)
     bound_account_email: Mapped[str | None] = mapped_column(String(160), nullable=True)
     order_item_id: Mapped[int | None] = mapped_column(ForeignKey("order_items.id"), nullable=True, index=True)
@@ -325,6 +340,11 @@ class RechargeTask(Base):
     target_user_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_session_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    executed_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    executed_region: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    billed_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    billed_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    fallback_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     session_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="chatgpt")
     state: Mapped[RechargeState] = mapped_column(enum_column(RechargeState), nullable=False, default=RechargeState.PENDING, index=True)
     upstream_order_no: Mapped[str | None] = mapped_column(String(96), nullable=True)
@@ -350,8 +370,10 @@ class VccCard(Base):
     exp_year: Mapped[str] = mapped_column(String(4), nullable=False)
     holder_name: Mapped[str] = mapped_column(String(64), nullable=False)
     billing_address_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    ph_billing_address_json: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    three_ds_email_account: Mapped[str | None] = mapped_column(String(128), nullable=True)
     available_balance: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    max_bind_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    max_bind_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     current_bind_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[VccStatus] = mapped_column(enum_column(VccStatus), nullable=False, default=VccStatus.ACTIVE, index=True)
@@ -421,6 +443,7 @@ __all__ = [
     "ProductVariant",
     "RechargeState",
     "RechargeTask",
+    "RegionPreference",
     "SKU_LABELS",
     "SkuType",
     "User",

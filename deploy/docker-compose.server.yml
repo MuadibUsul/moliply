@@ -90,7 +90,7 @@ services:
       context: ./current/recharge-gateway-backend
       dockerfile: Dockerfile
       args:
-        INSTALL_BROWSER: "false"
+        INSTALL_BROWSER: "true"
     restart: unless-stopped
     env_file: .env
     environment:

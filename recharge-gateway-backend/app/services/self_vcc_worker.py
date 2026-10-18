@@ -207,6 +207,25 @@ class PlaywrightCheckout:
                     continue
         return None
 
+    def _cancel_autorenew(self, page) -> bool:
+        """Best-effort cancellation of the next billing cycle after success."""
+        if not runtime.get_bool("self_vcc_cancel_autorenew", settings.self_vcc_cancel_autorenew):
+            return False
+        try:
+            page.goto("https://chatgpt.com/#settings/Subscription", wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(2500)
+            return self._click_first(
+                page,
+                [
+                    "button:has-text('Cancel plan')",
+                    "button:has-text('Cancel subscription')",
+                    "button:has-text('Cancel')",
+                ],
+            )
+        except Exception:
+            logger.warning("Auto-renew cancellation could not be completed; manual review recommended")
+            return False
+
     def run(
         self,
         checkout_url: str,
@@ -228,7 +247,7 @@ class PlaywrightCheckout:
             )
             context = browser.new_context(
                 locale="en-US",
-                timezone_id="America/New_York",
+                timezone_id=str(card.get("timezone") or "America/New_York"),
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -275,6 +294,11 @@ class PlaywrightCheckout:
                     "state": ["input[name='state']", "input[autocomplete='address-level1']", "select[name='state']"],
                 }.items():
                     self._fill_first(page, selectors, str(card["billing"].get(field, "")))
+                self._fill_first(
+                    page,
+                    ["select[name='country']", "input[name='country']", "input[autocomplete='country']"],
+                    str(card["billing"].get("country", "")),
+                )
 
                 if not filled:
                     body = page.locator("body").inner_text(timeout=5000).lower()
@@ -308,7 +332,7 @@ class PlaywrightCheckout:
                 if code_input:
                     if on_state:
                         on_state("AWAITING_3DS")
-                    reader = Imap3dsReader()
+                    reader = Imap3dsReader(user=card.get("three_ds_email") or None)
                     verification = reader.wait_for_code(
                         since=datetime.utcnow() - timedelta(seconds=runtime.get_int("rdvcc_3ds_code_window_seconds", settings.rdvcc_3ds_code_window_seconds)),
                         timeout_seconds=90,
@@ -330,7 +354,11 @@ class PlaywrightCheckout:
                 if "declined" in body or "card was declined" in body:
                     raise SelfVccFailure("CARD_DECLINED", "支付卡被拒绝，卡片已挂起", card_id=None)
                 if "success" in body or "thanks" in body or "you're now" in body:
-                    return "自营卡池扣款成功，会员已升级"
+                    cancelled = self._cancel_autorenew(page)
+                    return (
+                        "自营卡池扣款成功，会员已升级"
+                        + ("，已取消次月自动续订" if cancelled else "；次月自动续订需人工确认")
+                    )
                 raise SelfVccFailure(
                     "AWAITING_MANUAL_REVIEW",
                     "支付已提交但未能确认升级结果，任务已转人工处理",

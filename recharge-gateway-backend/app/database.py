@@ -46,12 +46,42 @@ def ensure_schema_compatibility() -> None:
     if "orders" not in inspector.get_table_names():
         return
     columns = {column["name"] for column in inspector.get_columns("orders")}
-    if "user_id" in columns:
-        return
-    with engine.begin() as connection:
-        connection.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
-    logger.info("Schema compatibility: added orders.user_id for customer accounts")
+    if "user_id" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
+        logger.info("Schema compatibility: added orders.user_id for customer accounts")
+
+    def add_column(table: str, column: str, ddl: str) -> None:
+        if table not in inspector.get_table_names():
+            return
+        existing = {item["name"] for item in inspector.get_columns(table)}
+        if column in existing:
+            return
+        with engine.begin() as connection:
+            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+        logger.info("Schema compatibility: added %s.%s", table, column)
+
+    add_column("activation_codes", "preferred_region", "VARCHAR(16) NOT NULL DEFAULT 'PH_FIRST'")
+    add_column("recharge_tasks", "executed_channel", "VARCHAR(16)")
+    add_column("recharge_tasks", "executed_region", "VARCHAR(4)")
+    add_column("recharge_tasks", "billed_currency", "VARCHAR(8)")
+    add_column("recharge_tasks", "billed_amount", "NUMERIC(10,2)")
+    add_column("recharge_tasks", "fallback_reason", "VARCHAR(256)")
+    add_column("vcc_cards", "ph_billing_address_json", "JSON")
+    add_column("vcc_cards", "three_ds_email_account", "VARCHAR(128)")
+
+    if "vcc_cards" in inspector.get_table_names():
+        # Earlier builds stored Python None as JSON ``null``; normalise it to
+        # SQL NULL so PH card scheduling filters correctly.
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE vcc_cards SET ph_billing_address_json = NULL "
+                    "WHERE ph_billing_address_json IS NOT NULL "
+                    "AND CAST(ph_billing_address_json AS TEXT) = 'null'"
+                )
+            )
 
 
 def init_db() -> None:

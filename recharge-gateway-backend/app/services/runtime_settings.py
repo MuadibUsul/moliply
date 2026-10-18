@@ -33,6 +33,8 @@ SECRET_KEYS = {
     "smtp_password",
     "feishu_webhook_url",
     "feishu_secret",
+    "ph_residential_proxy_url",
+    "us_residential_proxy_url",
 }
 
 BOOL_KEYS = {
@@ -44,6 +46,8 @@ BOOL_KEYS = {
     "enforce_stock",
     "feishu_enabled",
     "feishu_mention_all",
+    "self_vcc_headless",
+    "self_vcc_cancel_autorenew",
 }
 
 INT_KEYS = {
@@ -54,11 +58,20 @@ INT_KEYS = {
     "smtp_port",
     "order_expire_minutes",
     "feishu_low_stock_threshold",
+    "self_vcc_timeout_seconds",
 }
 
 FLOAT_KEYS = {
     "crypto_cny_per_usd",
     "self_vcc_min_balance",
+    "self_vcc_ph_min_balance",
+    "self_vcc_us_min_balance",
+    "ph_plus_amount_php",
+    "ph_pro_20x_amount_php",
+    "us_plus_amount_usd",
+    "us_pro_20x_amount_usd",
+    "ph_plus_cost_usd",
+    "us_plus_cost_usd",
 }
 
 ENV_DEFAULTS = {
@@ -85,7 +98,20 @@ ENV_DEFAULTS = {
     "upstream_poll_interval_seconds": lambda: settings.upstream_poll_interval_seconds,
     "self_vcc_enabled": lambda: settings.self_vcc_enabled,
     "self_vcc_dry_run": lambda: settings.self_vcc_dry_run,
+    "self_vcc_headless": lambda: settings.self_vcc_headless,
+    "self_vcc_cancel_autorenew": lambda: settings.self_vcc_cancel_autorenew,
+    "self_vcc_timeout_seconds": lambda: settings.self_vcc_timeout_seconds,
     "self_vcc_min_balance": lambda: settings.self_vcc_min_balance,
+    "self_vcc_ph_min_balance": lambda: settings.self_vcc_ph_min_balance,
+    "self_vcc_us_min_balance": lambda: settings.self_vcc_us_min_balance,
+    "ph_plus_amount_php": lambda: settings.ph_plus_amount_php,
+    "ph_pro_20x_amount_php": lambda: settings.ph_pro_20x_amount_php,
+    "us_plus_amount_usd": lambda: settings.us_plus_amount_usd,
+    "us_pro_20x_amount_usd": lambda: settings.us_pro_20x_amount_usd,
+    "ph_plus_cost_usd": lambda: settings.ph_plus_cost_usd,
+    "us_plus_cost_usd": lambda: settings.us_plus_cost_usd,
+    "routing_policy": lambda: settings.routing_policy,
+    "rdvcc_checkout_url_template": lambda: settings.rdvcc_checkout_url_template,
     "proxy_url": lambda: settings.proxy_url,
     "proxy_health_url": lambda: settings.proxy_health_url,
     "proxy_required_country": lambda: settings.proxy_required_country,
@@ -123,6 +149,8 @@ SECRET_ENV_DEFAULTS = {
     "smtp_password": lambda: settings.smtp_password,
     "feishu_webhook_url": lambda: settings.feishu_webhook_url,
     "feishu_secret": lambda: settings.feishu_secret,
+    "ph_residential_proxy_url": lambda: settings.ph_residential_proxy_url,
+    "us_residential_proxy_url": lambda: settings.us_residential_proxy_url,
 }
 
 ALLOWED_KEYS = set(ENV_DEFAULTS) | SECRET_KEYS
@@ -131,6 +159,7 @@ _ENUM_VALUES = {
     "payment_gateway": {"ltzf", "xunhupay"},
     "crypto_provider": {"nowpayments", "mock"},
     "upstream_mode": {"mock", "http"},
+    "routing_policy": {"HYBRID_SELF_FIRST", "SELF_VCC_ONLY", "UPSTREAM_ONLY"},
 }
 
 _cache: dict[str, str] | None = None

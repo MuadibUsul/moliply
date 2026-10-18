@@ -28,5 +28,8 @@ htmlcov/
 # Private local material — not included in the public repository.
 # (Commercial plan, cost/margin notes, requirements and design exports.)
 /ai_recharge_business_plan.md
+/ai_recharge_business_planPlus.md
 /codex_engineering_spec.md
+/codex_engineering_specPlus.md
+/codex_engineering_spec (1).md
 /design/

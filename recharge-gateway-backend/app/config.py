@@ -147,7 +147,20 @@ class Settings(BaseSettings):
     self_vcc_headless: bool = True
     self_vcc_min_balance: float = 22.0
     self_vcc_timeout_seconds: int = 150
+    # V2 hybrid routing: PH first, US fallback, upstream last.
+    routing_policy: str = "HYBRID_SELF_FIRST"
+    self_vcc_ph_min_balance: float = 18.50
+    self_vcc_us_min_balance: float = 22.00
+    self_vcc_cancel_autorenew: bool = True
+    ph_plus_amount_php: float = 999.00
+    ph_pro_20x_amount_php: float = 9990.00
+    us_plus_amount_usd: float = 20.00
+    us_pro_20x_amount_usd: float = 200.00
+    ph_plus_cost_usd: float = 16.70
+    us_plus_cost_usd: float = 20.90
     proxy_url: str = ""
+    ph_residential_proxy_url: str = ""
+    us_residential_proxy_url: str = ""
     proxy_health_url: str = "https://ipinfo.io/json"
     proxy_required_country: str = "US"
     # Optional comma-separated BIN allowlist (first 6 digits) for US cards.

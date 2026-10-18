@@ -18,6 +18,7 @@ from app.models import (
     Order,
     OrderStatus,
     Product,
+    RegionPreference,
     RechargeState,
     RechargeTask,
     SKU_LABELS,
@@ -36,7 +37,9 @@ from app.schemas import (
     CodeStatusRequest,
     ProductUpdateRequest,
     SettingsUpdateRequest,
+    VccCardBatchImportRequest,
     VccCardCreateRequest,
+    RoutingPolicyRequest,
     VccCardUpdateRequest,
 )
 from app.services.accounts import hash_password
@@ -48,6 +51,7 @@ from app.services import runtime_settings
 from app.services.catalog import available_stock, money, serialize_product
 from app.services.code_generator import generate_code, is_valid_code_format, normalize_code
 from app.services.crypto import decrypt_text, encrypt_text, luhn_valid, mask_card_number, mask_email
+from app.services import vcc_pool_scheduler
 from app.services.self_vcc_worker import select_vcc_card
 from app.services.upstream_provider import UpstreamProvider
 
@@ -70,7 +74,7 @@ TASK_STATUS_LABELS = {
     "SUCCESS": "充值成功",
     "FAILED": "充值失败",
 }
-VCC_STATUS_LABELS = {"ACTIVE": "可用", "EXHAUSTED": "次数用满", "SUSPENDED": "风控挂起"}
+VCC_STATUS_LABELS = {"ACTIVE": "可用", "EXHAUSTED": "待销卡回血", "SUSPENDED": "风控挂起", "CLOSED": "已销卡"}
 
 
 @router.post("/login")
@@ -99,6 +103,7 @@ def _serialize_code(db: Session, code: ActivationCode) -> dict:
         "sku_type": code.sku_type.value,
         "sku_label": SKU_LABELS.get(code.sku_type.value, code.sku_type.value),
         "channel_mode": code.channel_mode.value,
+        "preferred_region": code.preferred_region.value,
         "status": code.status.value,
         "status_label": CODE_STATUS_LABELS.get(code.status.value, code.status.value),
         "bound_email_masked": mask_email(code.bound_account_email) if code.bound_account_email else None,
@@ -456,6 +461,7 @@ def admin_generate_codes(
                 code=value,
                 sku_type=SkuType(payload.sku_type),
                 channel_mode=ChannelMode(payload.channel_mode),
+                preferred_region=RegionPreference(payload.preferred_region),
                 status=CodeStatus.UNUSED,
                 note=payload.note,
             )
@@ -506,6 +512,7 @@ def admin_import_codes(
                 code=local_code,
                 sku_type=SkuType(payload.sku_type),
                 channel_mode=ChannelMode(payload.channel_mode),
+                preferred_region=RegionPreference(payload.preferred_region),
                 status=CodeStatus.UNUSED,
                 upstream_code_enc=encrypt_text(upstream_code) if upstream_code else None,
                 note=payload.note or "批量导入",
@@ -602,6 +609,56 @@ def admin_cleanup_tokens(db: Session = Depends(get_db)) -> dict:
     return {"cleared": count}
 
 
+def _create_vcc_card(
+    db: Session,
+    payload: VccCardCreateRequest,
+    actor: str,
+    ip: str = "",
+) -> tuple[VccCard, str]:
+    digits = "".join(ch for ch in payload.card_number if ch.isdigit())
+    if not luhn_valid(digits):
+        raise HTTPException(status_code=400, detail="卡号未通过 Luhn 校验")
+    if payload.billing_address.country != "US":
+        raise HTTPException(status_code=400, detail="美国账单地址的 country 必须为 US")
+    if payload.ph_billing_address and payload.ph_billing_address.country != "PH":
+        raise HTTPException(status_code=400, detail="菲律宾账单地址的 country 必须为 PH")
+    allowed_bins = {
+        value.strip()
+        for value in runtime_settings.get("us_bin_allowlist", settings.us_bin_allowlist).split(",")
+        if value.strip()
+    }
+    if allowed_bins and digits[:6] not in allowed_bins:
+        raise HTTPException(status_code=400, detail="卡 BIN 不在已配置的美国 BIN 白名单中")
+    card = VccCard(
+        provider=payload.provider,
+        card_bin=digits[:6],
+        card_number_enc=encrypt_text(digits),
+        cvv_enc=encrypt_text(payload.cvv),
+        exp_month=payload.exp_month.zfill(2),
+        exp_year=payload.exp_year[-2:],
+        holder_name=payload.holder_name,
+        billing_address_json=payload.billing_address.model_dump(),
+        ph_billing_address_json=payload.ph_billing_address.model_dump() if payload.ph_billing_address else None,
+        three_ds_email_account=payload.three_ds_email_account,
+        available_balance=Decimal(str(payload.available_balance)),
+        max_bind_count=payload.max_bind_count,
+        status=VccStatus.ACTIVE,
+    )
+    db.add(card)
+    db.add(
+        AuditLog(
+            actor=actor,
+            action="vcc.add",
+            entity_type="vcc_card",
+            entity_id=digits[-4:],
+            detail=f"bin={card.card_bin} ph={bool(card.ph_billing_address_json)}",
+            ip=ip,
+        )
+    )
+    db.commit()
+    return card, digits
+
+
 @protected.get("/cards")
 def admin_cards(db: Session = Depends(get_db)) -> dict:
     cards = db.query(VccCard).order_by(VccCard.created_at.desc()).all()
@@ -620,6 +677,8 @@ def admin_cards(db: Session = Depends(get_db)) -> dict:
                 "exp_month": card.exp_month,
                 "exp_year": card.exp_year,
                 "holder_name": card.holder_name,
+                "has_ph_billing": bool(card.ph_billing_address_json),
+                "three_ds_email_masked": mask_email(card.three_ds_email_account) if card.three_ds_email_account else None,
                 "available_balance": money(card.available_balance),
                 "max_bind_count": card.max_bind_count,
                 "current_bind_count": card.current_bind_count,
@@ -636,6 +695,8 @@ def admin_cards(db: Session = Depends(get_db)) -> dict:
             "active": sum(1 for item in items if item["status"] == "ACTIVE"),
             "suspended": sum(1 for item in items if item["status"] == "SUSPENDED"),
             "available": sum(1 for item in items if item["status"] == "ACTIVE" and item["current_bind_count"] < item["max_bind_count"]),
+            "exhausted": sum(1 for item in items if item["status"] == "EXHAUSTED"),
+            "closed": sum(1 for item in items if item["status"] == "CLOSED"),
         },
     }
 
@@ -647,40 +708,90 @@ def admin_add_card(
     db: Session = Depends(get_db),
     admin: dict = Depends(require_admin),
 ) -> dict:
-    digits = "".join(ch for ch in payload.card_number if ch.isdigit())
-    if not luhn_valid(digits):
-        raise HTTPException(status_code=400, detail="卡号未通过 Luhn 校验")
-    if payload.billing_address.country != "US":
-        raise HTTPException(status_code=400, detail="账单地址必须为美国地址")
-    allowed_bins = {value.strip() for value in runtime_settings.get("us_bin_allowlist", settings.us_bin_allowlist).split(",") if value.strip()}
-    if allowed_bins and digits[:6] not in allowed_bins:
-        raise HTTPException(status_code=400, detail="卡 BIN 不在已配置的美国 BIN 白名单中")
-    card = VccCard(
-        provider=payload.provider,
-        card_bin=digits[:6],
-        card_number_enc=encrypt_text(digits),
-        cvv_enc=encrypt_text(payload.cvv),
-        exp_month=payload.exp_month.zfill(2),
-        exp_year=payload.exp_year[-2:],
-        holder_name=payload.holder_name,
-        billing_address_json=payload.billing_address.model_dump(),
-        available_balance=Decimal(str(payload.available_balance)),
-        max_bind_count=payload.max_bind_count,
-        status=VccStatus.ACTIVE,
-    )
-    db.add(card)
+    card, digits = _create_vcc_card(db, payload, admin.get("sub", "admin"), client_ip(request))
+    return {"id": card.id, "card_masked": mask_card_number(digits), "status": card.status.value}
+
+
+@protected.post("/cards/batch-import")
+def admin_batch_import_cards(
+    payload: VccCardBatchImportRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    created = 0
+    failed: list[str] = []
+    for item in payload.cards:
+        try:
+            _create_vcc_card(db, item, admin.get("sub", "admin"), client_ip(request))
+            created += 1
+        except HTTPException as exc:
+            db.rollback()
+            failed.append(str(exc.detail))
+    return {"created": created, "failed": failed}
+
+
+@protected.get("/cards/summary")
+def admin_card_summary(db: Session = Depends(get_db)) -> dict:
+    data = vcc_pool_scheduler.summary(db)
+    exhausted = db.query(VccCard).filter(VccCard.status == VccStatus.EXHAUSTED).all()
+    data["pending_close"] = [
+        {
+            "id": card.id,
+            "card_masked": "****" + "".join(ch for ch in decrypt_text(card.card_number_enc) if ch.isdigit())[-4:],
+            "balance": money(card.available_balance),
+            "binds": f"{card.current_bind_count}/{card.max_bind_count}",
+        }
+        for card in exhausted
+    ]
+    return data
+
+
+@protected.post("/cards/{card_id}/mark-closed")
+def admin_mark_card_closed(
+    card_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    card = db.get(VccCard, card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="卡片不存在")
+    vcc_pool_scheduler.mark_closed(db, card)
     db.add(
         AuditLog(
             actor=admin.get("sub", "admin"),
-            action="vcc.add",
+            action="vcc.mark_closed",
             entity_type="vcc_card",
-            entity_id=digits[-4:],
-            detail=f"bin={card.card_bin}",
-            ip=client_ip(request),
+            entity_id=str(card.id),
+            detail="销卡回血标记",
         )
     )
     db.commit()
-    return {"id": card.id, "card_masked": mask_card_number(digits), "status": card.status.value}
+    return {"id": card.id, "status": card.status.value}
+
+
+@protected.patch("/routing-policy")
+def admin_routing_policy(
+    payload: RoutingPolicyRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    runtime_settings.update_settings(
+        db,
+        {"routing_policy": payload.routing_policy},
+        actor=admin.get("sub", "admin"),
+    )
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="routing.policy",
+            entity_type="platform_setting",
+            entity_id="routing_policy",
+            detail=payload.routing_policy,
+        )
+    )
+    db.commit()
+    return {"routing_policy": payload.routing_policy}
 
 
 @protected.patch("/cards/{card_id}")

@@ -61,6 +61,7 @@ class SessionInfo:
     expires_at: datetime
     plan: str = "unknown"
     display_name: str = ""
+    currency_hint: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -217,6 +218,14 @@ def parse_session(raw: str) -> SessionInfo:
         or "free"
     ).lower()
     plan = PLAN_LABELS.get(plan_raw, plan_raw)
+    currency_raw = (
+        account.get("currency")
+        or account.get("billingCurrency")
+        or data.get("currency")
+        or data.get("billing_currency")
+        or user.get("currency")
+    )
+    currency_hint = str(currency_raw).upper() if currency_raw else None
     return SessionInfo(
         kind="chatgpt",
         email=email,
@@ -226,6 +235,7 @@ def parse_session(raw: str) -> SessionInfo:
         expires_at=expires_at,
         plan=plan,
         display_name=str(user.get("name") or ""),
+        currency_hint=currency_hint,
     )
 
 

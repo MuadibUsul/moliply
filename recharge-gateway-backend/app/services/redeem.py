@@ -25,11 +25,11 @@ from app.models import (
 )
 from app.security import failure_tracker
 from app.services.code_generator import is_valid_code_format, normalize_code
+from app.services import channel_dispatcher
 from app.services import feishu
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.errors import RechargeError
 from app.services.locks import redis_lock
-from app.services.self_vcc_worker import SelfVccFailure, run_self_vcc_recharge
 from app.services.session_parser import (
     AccountCheck,
     SessionError,
@@ -37,7 +37,6 @@ from app.services.session_parser import (
     check_account,
     parse_session,
 )
-from app.services.upstream_provider import UpstreamProvider
 
 logger = logging.getLogger(__name__)
 
@@ -486,51 +485,12 @@ def run_recharge_task(task_id: str) -> None:
                 )
                 return
 
-            if code.channel_mode.value == "SELF_VCC":
-                _set_state(db, task, RechargeState.CREATING_CHECKOUT)
-                _set_state(db, task, RechargeState.PAYING)
-
-                def on_state(value: str) -> None:
-                    if value == "AWAITING_3DS":
-                        _set_state(db, task, RechargeState.AWAITING_3DS)
-
-                try:
-                    result = run_self_vcc_recharge(db, session, code.sku_type, on_state=on_state)
-                except SelfVccFailure as exc:
-                    _finalize_failure(
-                        db,
-                        task,
-                        code,
-                        exc.code,
-                        exc.message,
-                        exc.release_code,
-                        vcc_card_id=exc.card_id,
-                    )
-                    return
-                except RechargeError as exc:
-                    _finalize_failure(db, task, code, exc.code, exc.message, exc.release_code)
-                    return
-                _finalize_success(db, task, code, result.message)
-                return
-
-            _set_state(db, task, RechargeState.PAYING)
-            upstream_code = decrypt_text(code.upstream_code_enc) if code.upstream_code_enc else None
             try:
-                result = UpstreamProvider().create_recharge(session.raw, code.sku_type.value, upstream_code)
+                outcome = channel_dispatcher.dispatch(db, task, code, session)
             except RechargeError as exc:
                 _finalize_failure(db, task, code, exc.code, exc.message, exc.release_code)
                 return
-            if result.status != "SUCCESS":
-                _finalize_failure(
-                    db,
-                    task,
-                    code,
-                    "UPSTREAM_PENDING",
-                    result.message or "上游通道仍在处理中，请稍后查看",
-                    False,
-                )
-                return
-            _finalize_success(db, task, code, result.message, result.order_no)
+            _finalize_success(db, task, code, outcome.message, outcome.upstream_order_no)
         except Exception:  # noqa: BLE001
             logger.exception("Recharge task %s crashed", task_id)
             db.rollback()

@@ -68,10 +68,14 @@ class CodeGenerateRequest(StrictModel):
         "CHATGPT_PLUS_12M",
         "CLAUDE_PRO_1M",
         "CHATGPT_PRO_200",
+        "CHATGPT_PRO_20X_1M",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"
-    channel_mode: Literal["UPSTREAM", "SELF_VCC"] = "UPSTREAM"
+    channel_mode: Literal[
+        "UPSTREAM", "SELF_VCC", "UPSTREAM_ONLY", "SELF_VCC_ONLY", "HYBRID_SELF_FIRST"
+    ] = "UPSTREAM"
+    preferred_region: Literal["PH_FIRST", "US_ONLY"] = "PH_FIRST"
     note: str = Field(default="", max_length=200)
 
 
@@ -83,10 +87,14 @@ class CodeImportRequest(StrictModel):
         "CHATGPT_PLUS_12M",
         "CLAUDE_PRO_1M",
         "CHATGPT_PRO_200",
+        "CHATGPT_PRO_20X_1M",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"
-    channel_mode: Literal["UPSTREAM", "SELF_VCC"] = "UPSTREAM"
+    channel_mode: Literal[
+        "UPSTREAM", "SELF_VCC", "UPSTREAM_ONLY", "SELF_VCC_ONLY", "HYBRID_SELF_FIRST"
+    ] = "UPSTREAM"
+    preferred_region: Literal["PH_FIRST", "US_ONLY"] = "PH_FIRST"
     note: str = Field(default="", max_length=200)
 
 
@@ -99,7 +107,7 @@ class BillingAddress(StrictModel):
     city: str = Field(min_length=1, max_length=80)
     state: str = Field(min_length=2, max_length=40)
     postal_code: str = Field(min_length=3, max_length=16)
-    country: Literal["US"] = "US"
+    country: Literal["US", "PH"] = "US"
     line2: str = Field(default="", max_length=120)
 
 
@@ -111,8 +119,10 @@ class VccCardCreateRequest(StrictModel):
     exp_year: str = Field(min_length=2, max_length=4)
     holder_name: str = Field(min_length=1, max_length=64)
     billing_address: BillingAddress
+    ph_billing_address: BillingAddress | None = None
+    three_ds_email_account: str | None = Field(default=None, max_length=128)
     available_balance: float = Field(ge=0, le=100_000)
-    max_bind_count: int = Field(default=1, ge=1, le=2)
+    max_bind_count: int = Field(default=2, ge=1, le=2)
 
     @field_validator("exp_month", "exp_year")
     @classmethod
@@ -122,8 +132,16 @@ class VccCardCreateRequest(StrictModel):
         return value
 
 
+class VccCardBatchImportRequest(StrictModel):
+    cards: list[VccCardCreateRequest] = Field(min_length=1, max_length=200)
+
+
+class RoutingPolicyRequest(StrictModel):
+    routing_policy: Literal["HYBRID_SELF_FIRST", "SELF_VCC_ONLY", "UPSTREAM_ONLY"]
+
+
 class VccCardUpdateRequest(StrictModel):
-    status: Literal["ACTIVE", "SUSPENDED", "EXHAUSTED"] | None = None
+    status: Literal["ACTIVE", "SUSPENDED", "EXHAUSTED", "CLOSED"] | None = None
     available_balance: float | None = Field(default=None, ge=0, le=100_000)
     reset_failed_count: bool = False
 

@@ -441,14 +441,27 @@ export default function AdminSettingsPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <Toggle label="启用自营通道" checked={bool("self_vcc_enabled")} onChange={(checked) => setValue("self_vcc_enabled", checked)} />
             <Toggle label="演练模式" description="开启时停在提交支付前" checked={bool("self_vcc_dry_run", true)} onChange={(checked) => setValue("self_vcc_dry_run", checked)} />
-            <Field label="最低可用余额">
-              <input type="number" step="0.01" value={text("self_vcc_min_balance", "22")} onChange={(event) => setValue("self_vcc_min_balance", event.target.value)} className="admin-input w-full py-2.5" />
+            <Field label="全局路由策略" hint="UPSTREAM_ONLY 可作为维护期总开关">
+              <select value={text("routing_policy", "HYBRID_SELF_FIRST")} onChange={(event) => setValue("routing_policy", event.target.value)} className="admin-input w-full py-2.5">
+                <option value="HYBRID_SELF_FIRST">自营优先，失败降级上游</option>
+                <option value="SELF_VCC_ONLY">仅自营</option>
+                <option value="UPSTREAM_ONLY">仅上游</option>
+              </select>
             </Field>
+            <Toggle label="支付成功后自动取消续订" description="尽力而为；失败会提示人工确认" checked={bool("self_vcc_cancel_autorenew", true)} onChange={(checked) => setValue("self_vcc_cancel_autorenew", checked)} />
+            <Field label="菲律宾区最低余额（USD）">
+              <input type="number" step="0.01" value={text("self_vcc_ph_min_balance", "18.5")} onChange={(event) => setValue("self_vcc_ph_min_balance", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="美区最低余额（USD）">
+              <input type="number" step="0.01" value={text("self_vcc_us_min_balance", "22")} onChange={(event) => setValue("self_vcc_us_min_balance", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            {secretProps("ph_residential_proxy_url", "菲律宾住宅代理 URL", data.secret_configured.ph_residential_proxy_url, "优先用于 ₱999 结账")}
+            {secretProps("us_residential_proxy_url", "美国住宅代理 URL", data.secret_configured.us_residential_proxy_url, "用于美区 $20 兜底")}
             <Field label="美国 BIN 白名单">
               <input value={text("us_bin_allowlist")} onChange={(event) => setValue("us_bin_allowlist", event.target.value)} className="admin-input w-full py-2.5" placeholder="逗号分隔，可留空" />
             </Field>
-            <Field label="住宅代理 URL" hint="包含账号密码时请妥善保护">
-              <input value={text("proxy_url")} onChange={(event) => setValue("proxy_url", event.target.value)} className="admin-input w-full py-2.5" />
+            <Field label="结账 URL 模板（可选）" hint="支持 {access_token} {user_id} {region} {currency} {amount}">
+              <input value={text("rdvcc_checkout_url_template")} onChange={(event) => setValue("rdvcc_checkout_url_template", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
             <Field label="代理健康检查地址">
               <input value={text("proxy_health_url")} onChange={(event) => setValue("proxy_health_url", event.target.value)} className="admin-input w-full py-2.5" />

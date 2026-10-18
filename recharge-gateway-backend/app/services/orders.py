@@ -139,7 +139,7 @@ def create_order(
 
         if runtime.get_bool("enforce_stock", settings.enforce_stock):
             stock = (
-                available_sku_stock(db, sku_type, channel_mode)
+                available_sku_stock(db, sku_type)
                 if product.delivery_type == DeliveryType.ACTIVATION_CODE
                 else available_stock(db, product)
             )
@@ -434,7 +434,6 @@ def fulfill_order(db: Session, order: Order) -> Order:
                 db.query(ActivationCode)
                 .filter(
                     ActivationCode.sku_type == item.sku_type,
-                    ActivationCode.channel_mode == item.channel_mode,
                     ActivationCode.status == CodeStatus.UNUSED,
                     ActivationCode.bound_account_email.is_(None),
                     ActivationCode.order_item_id.is_(None),
