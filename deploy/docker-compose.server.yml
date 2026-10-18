@@ -1,0 +1,184 @@
+# Deployment for a shared host with an existing Caddy front proxy.
+# This stack is intentionally isolated from other projects:
+#   - project name: moliply
+#   - no host port for API/DB/Redis
+#   - web binds only to 127.0.0.1:18088 for local verification
+#   - web joins the existing external "web" Docker network so the host Caddy
+#     can reverse_proxy moliply-web:3000 for the public domain.
+#
+# Usage (from the deployment directory):
+#   docker compose -f docker-compose.server.yml --env-file .env up -d --build
+
+name: moliply
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moliply
+      POSTGRES_USER: moliply
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - moliply_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moliply -d moliply"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging: *logging
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - moliply_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+    networks:
+      - internal
+
+  api:
+    build:
+      context: ./current/recharge-gateway-backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: "false"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      TASK_MODE: celery
+      DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
+      PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
+      API_BASE_URL: ${PUBLIC_STORE_URL}
+      CORS_ORIGINS: ${PUBLIC_STORE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    logging: *logging
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: ./current/recharge-gateway-backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: "false"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      TASK_MODE: celery
+      DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
+      PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
+      API_BASE_URL: ${PUBLIC_STORE_URL}
+      CORS_ORIGINS: ${PUBLIC_STORE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_worker.celery_app inspect ping -t 5 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+    networks:
+      - internal
+
+  beat:
+    build:
+      context: ./current/recharge-gateway-backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: "false"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      TASK_MODE: celery
+      DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "beat", "-l", "INFO"]
+    healthcheck:
+      disable: true
+    logging: *logging
+    networks:
+      - internal
+
+  web:
+    build:
+      context: ./current/recharge-gateway-frontend
+      dockerfile: Dockerfile
+      args:
+        API_PROXY_TARGET: http://api:8000
+        NEXT_PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
+        NEXT_PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
+        NEXT_PUBLIC_CONTACT_WECHAT: ${NEXT_PUBLIC_CONTACT_WECHAT:-MOLIPLY-SUPPORT}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18088:3000"
+    logging: *logging
+    networks:
+      internal:
+      web:
+        aliases:
+          - moliply-web
+
+networks:
+  internal:
+    name: moliply_internal
+  web:
+    external: true
+
+volumes:
+  moliply_db_data:
+    name: moliply_db_data
+  moliply_redis_data:
+    name: moliply_redis_data
