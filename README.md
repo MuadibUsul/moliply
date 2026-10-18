@@ -348,7 +348,7 @@ V2 的增量能力：订单不再只有上游 API 一条路，而是按下述顺
 1. 在后台「VCC 卡池」录入卡片：美国账单地址必填，菲律宾地址可选（填写后才参与 ₱999 调度），可填 3DS 收码邮箱；
 2. 在「系统设置 → VCC」或环境变量配置菲区/美区住宅代理，填 `PH_RESIDENTIAL_PROXY_URL`、`US_RESIDENTIAL_PROXY_URL`（美区留空回退 `PROXY_URL`）；
 3. 配置 3DS 收码邮箱 IMAP（`RDVCC_IMAP_*`），确认能收到验证码邮件；
-4. 保持 `SELF_VCC_ENABLED=true` + `SELF_VCC_DRY_RUN=true`，用测试卡跑一次，确认流程停在提交支付前；
+4. 保持 `SELF_VCC_ENABLED=true` + `SELF_VCC_DRY_RUN=true`：混合策略会跳过自营回退上游、不扣卡；仅自营策略会安全失败并释放卡密；确认代理/卡/IMAP 配置后再关闭；
 5. 确认无误后设置 `SELF_VCC_DRY_RUN=false`，并先用单卡上限 1 跑小额实盘；
 6. 观察后台「今日自营/回退上游/卡池余额/待销卡」，按需补充卡片或切换策略。
 
@@ -471,7 +471,7 @@ npm run build
 - [ ] RDVCC 账户与至少 1 张测试卡（余额 ≥ $25）；
 - [ ] 美国静态住宅代理（需验证出口国家为 US）；
 - [ ] RDVCC 注册邮箱的 IMAP 账号/授权码；
-- [ ] 先用演练模式跑通，再关闭 `SELF_VCC_DRY_RUN`；
+- [ ] 先用演练模式验证混合策略会自动回退上游且不扣卡，再关闭 `SELF_VCC_DRY_RUN`；
 - [ ] 根据官方结账页更新选择器（如页面改版）。
 
 ### 建议
