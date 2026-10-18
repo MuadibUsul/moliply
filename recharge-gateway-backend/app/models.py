@@ -393,7 +393,7 @@ class PaymentEvent(Base):
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     event_id: Mapped[str] = mapped_column(String(120), nullable=False)
     order_no: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
-    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     raw_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)

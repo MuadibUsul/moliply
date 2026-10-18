@@ -69,6 +69,9 @@ def ensure_schema_compatibility() -> None:
     if "orders" in inspector.get_table_names() and engine.dialect.name == "postgresql":
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE orders ALTER COLUMN payment_amount TYPE NUMERIC(24,8)"))
+    if "payment_events" in inspector.get_table_names() and engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE payment_events ALTER COLUMN amount TYPE NUMERIC(24,8)"))
     add_column("activation_codes", "preferred_region", "VARCHAR(16) NOT NULL DEFAULT 'PH_FIRST'")
     add_column("recharge_tasks", "executed_channel", "VARCHAR(16)")
     add_column("recharge_tasks", "executed_region", "VARCHAR(4)")
