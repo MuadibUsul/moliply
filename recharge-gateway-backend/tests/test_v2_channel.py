@@ -350,6 +350,46 @@ def test_v1_upstream_code_still_bypasses_self_pool(db, monkeypatch):
     assert upstream_calls == ["CHATGPT_PLUS_1M"]
 
 
+def test_dry_run_hybrid_falls_back_without_charging_card(db, monkeypatch):
+    runtime_settings.update_settings(
+        db,
+        {"self_vcc_enabled": True, "self_vcc_dry_run": True},
+    )
+    _fake_self_success(monkeypatch)
+    upstream_calls = _fake_upstream(monkeypatch)
+    card = _card(db, 50, ph=True)
+    code = _code(db, ChannelMode.HYBRID_SELF_FIRST)
+    task = _task(db, code)
+
+    outcome = channel_dispatcher.dispatch(db, task, code, _session())
+
+    assert outcome.channel == "UPSTREAM"
+    assert upstream_calls == ["CHATGPT_PLUS_1M"]
+    db.expire_all()
+    task = db.get(RechargeTask, task.task_id)
+    card = db.get(VccCard, card.id)
+    assert task.fallback_reason.startswith("SELF_VCC_DRY_RUN")
+    assert card.current_bind_count == 0
+    assert card.status == VccStatus.ACTIVE
+
+
+def test_self_only_dry_run_releases_code(db, monkeypatch):
+    runtime_settings.update_settings(
+        db,
+        {"self_vcc_enabled": True, "self_vcc_dry_run": True},
+    )
+    upstream_calls = _fake_upstream(monkeypatch)
+    code = _code(db, ChannelMode.SELF_VCC_ONLY)
+    task = _task(db, code)
+
+    with pytest.raises(Exception) as exc:
+        channel_dispatcher.dispatch(db, task, code, _session())
+
+    assert getattr(exc.value, "code", "") == "SELF_VCC_DRY_RUN"
+    assert getattr(exc.value, "release_code", False) is True
+    assert upstream_calls == []
+
+
 def test_acquire_card_requires_ph_address_for_ph_region(db):
     us_only = _card(db, 50, ph=False)
     ph_card = _card(db, 40, ph=True)

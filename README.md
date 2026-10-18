@@ -6,7 +6,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 > 商业计划、成本资料与设计源文件保留在私有环境，不纳入公开仓库；线上服务器地址与凭据同样不在仓库中。
 
-当前状态：**前后端构建通过、76 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
+当前状态：**前后端构建通过、78 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
 
 ---
 
@@ -29,7 +29,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | 飞书管理通知 | ✅ | 可勾选新订单、支付、交付、充值失败、人工复核、库存预警、回调异常、系统异常、每日日报 |
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
 | 独角数卡适配 | ✅（可选） | 品牌主题 Blade + 蓝兔/虎皮椒框架无关 PHP 插件 |
-| 自动化测试 | ✅ | 76 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
+| 自动化测试 | ✅ | 78 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -74,7 +74,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   ├── services/             加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
-│   └── tests/                    76 项 pytest
+│   └── tests/                    78 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
 ├── storefront-theme-moliply/     独角数卡主题 + 蓝兔/虎皮椒脱敏插件（可选）
 ├── nginx/                        双域名反代、限流、安全头

@@ -179,6 +179,30 @@ class PlaywrightCheckout:
                     continue
         return False
 
+    def _select_or_fill_first(self, page, selectors: list[str], value: str) -> bool:
+        """Handle country/state fields that may be <select> or <input>."""
+        if not value:
+            return False
+        for frame in page.frames:
+            for selector in selectors:
+                try:
+                    locator = frame.locator(selector).first
+                    if locator.count() == 0 or not locator.is_visible():
+                        continue
+                    tag = locator.evaluate("el => el.tagName.toLowerCase()")
+                    if tag == "select":
+                        try:
+                            locator.select_option(label=value, timeout=2500)
+                            return True
+                        except Exception:
+                            locator.select_option(value=value, timeout=2500)
+                            return True
+                    locator.fill(value, timeout=2500)
+                    return True
+                except Exception:
+                    continue
+        return False
+
     def _click_first(self, page, selectors: list[str]) -> bool:
         for frame in page.frames:
             for selector in selectors:
@@ -291,14 +315,13 @@ class PlaywrightCheckout:
                 for field, selectors in {
                     "line1": ["input[name='addressLine1']", "input[autocomplete='address-line1']", "input[name*='address1']"],
                     "city": ["input[name='city']", "input[autocomplete='address-level2']"],
-                    "state": ["input[name='state']", "input[autocomplete='address-level1']", "select[name='state']"],
                 }.items():
                     self._fill_first(page, selectors, str(card["billing"].get(field, "")))
-                self._fill_first(
-                    page,
-                    ["select[name='country']", "input[name='country']", "input[autocomplete='country']"],
-                    str(card["billing"].get("country", "")),
-                )
+                for field, selectors in {
+                    "state": ["select[name='state']", "input[name='state']", "input[autocomplete='address-level1']"],
+                    "country": ["select[name='country']", "select[autocomplete='country']", "input[autocomplete='country']"],
+                }.items():
+                    self._select_or_fill_first(page, selectors, str(card["billing"].get(field, "")))
 
                 if not filled:
                     body = page.locator("body").inner_text(timeout=5000).lower()

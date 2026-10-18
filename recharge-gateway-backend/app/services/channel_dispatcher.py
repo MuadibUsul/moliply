@@ -129,8 +129,8 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
     if runtime.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run):
         raise ChannelFallback(
             "SELF_VCC_DRY_RUN",
-            "自营通道处于演练模式，已停止在提交支付之前",
-            can_fallback=False,
+            "自营通道处于演练模式，本次跳过自营",
+            can_fallback=True,
             notify=False,
         )
 
