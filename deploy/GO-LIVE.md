@@ -91,7 +91,7 @@
 
 ### 4. 管理员与客服
 
-- [ ] 后台现在有两层入口：Caddy Basic Auth（网关账号/密码另行交付）+ 管理员账号密码；从服务器读取当前随机密码并登录后台：
+- [ ] 后台现在使用管理员账号密码 + Google Authenticator 动态码；从服务器读取当前随机密码并登录后台：
   ```bash
   grep '^ADMIN_PASSWORD=' /home/deploy/moliply/.env
   ```

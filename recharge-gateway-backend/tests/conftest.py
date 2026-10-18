@@ -45,7 +45,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.security import failure_tracker  # noqa: E402
+from app.security import admin_login_guard, failure_tracker  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -67,6 +67,7 @@ def db():
 def _clear_failures():
     with failure_tracker._lock:
         failure_tracker._failures.clear()
+    admin_login_guard.reset()
     yield
 
 

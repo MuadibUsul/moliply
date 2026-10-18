@@ -37,22 +37,13 @@ marker = "# >>> MOLIPLY DOMAIN (managed by deploy)"
 if marker in text:
     print("Caddyfile already contains moliply.shop; leaving it unchanged")
     raise SystemExit(0)
-gateway_hash = os.environ.get("MOLIPLY_ADMIN_GATEWAY_HASH", "").strip()
-auth_block = ""
-if gateway_hash:
-    auth_block = f"""
-    @admin path /admin /admin/*
-    basic_auth @admin {{
-        moliply {gateway_hash}
-    }}
-"""
 block = f"""
 {marker}
 moliply.shop {{
     encode zstd gzip
     request_body {{
         max_size 2MB
-    }}{auth_block}
+    }}
     header {{
         X-Content-Type-Options nosniff
         X-Frame-Options SAMEORIGIN

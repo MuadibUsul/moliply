@@ -70,6 +70,12 @@ FEISHU_EVENTS: list[dict[str, str]] = [
         "severity": "error",
     },
     {
+        "key": "security.admin_login_failed",
+        "label": "后台登录失败告警",
+        "description": "管理员连续登录失败触发锁定，提醒排查暴力破解",
+        "severity": "error",
+    },
+    {
         "key": "system.error",
         "label": "系统任务异常",
         "description": "充值任务或后台任务出现未处理异常",

@@ -120,16 +120,15 @@ MOLIPLY_BASE=/opt/moliply /opt/moliply/preflight.sh
 
 全部 PASS 后，再切换 `PAYMENT_MODE=live`、关闭 mock、导入真实库存并对外推广。
 
-## 后台双层入口与边缘安全
+## 后台认证与边缘安全
 
-生产 Caddy 站点已启用：
+生产 Caddy 站点已启用 HSTS、CSP、Permissions-Policy、`X-Frame-Options` 和 `request_body max_size 2MB`；后台不再使用 Basic Auth，改为：
 
-- HSTS、CSP、Permissions-Policy、`X-Frame-Options`；
-- `request_body max_size 2MB`；
-- `/admin` 与 `/admin/*` 的 `basic_auth` 网关认证（与后台 JWT 相互独立）；
-- 预览用 `*.sslip.io` 站点应在上线后移除。
+- 管理员密码；
+- Google Authenticator / RFC 6238 动态码（`ADMIN_TOTP_SECRET`）；
+- 连续 5 次失败锁定 15 分钟，并触发飞书安全告警（需先配置飞书机器人）。
 
-网关密码哈希通过 `docker exec caddy-caddy-1 caddy hash-password --plaintext '<password>'` 生成，只把哈希写入 Caddyfile；密码本身交给站主保管，不进入仓库。修改 Caddyfile 前先备份并 `caddy validate`，再 `caddy reload`，不要重启整个 Caddy 项目。
+修改 Caddyfile 前先备份并 `caddy validate`，再 `caddy reload`，不要重启整个 Caddy 项目。
 
 ## V2 自营通道路由（增量升级）
 

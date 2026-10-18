@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     admin_password: str = "change-me"
     admin_jwt_secret: str = "dev-admin-jwt-secret-change-me"
     admin_token_ttl_minutes: int = 720
+    # Google Authenticator / RFC 6238 base32 secret. Empty disables TOTP in dev.
+    admin_totp_secret: str = ""
+    admin_failed_login_limit: int = 5
+    admin_login_lockout_minutes: int = 15
     # Customer order accounts. Falls back to SECRET_KEY when unset in dev.
     user_jwt_secret: str = ""
     user_token_ttl_days: int = 30

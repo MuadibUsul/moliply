@@ -73,6 +73,9 @@ APP_ENV_VALUE="$(get APP_ENV)"
 DEBUG_VALUE="$(get DEBUG)"
 ADMIN_PASSWORD="$(get ADMIN_PASSWORD)"
 ADMIN_JWT_SECRET="$(get ADMIN_JWT_SECRET)"
+ADMIN_TOTP_SECRET="$(get ADMIN_TOTP_SECRET)"
+ADMIN_FAILED_LIMIT="$(get ADMIN_FAILED_LOGIN_LIMIT)"
+ADMIN_LOCKOUT="$(get ADMIN_LOGIN_LOCKOUT_MINUTES)"
 USER_JWT_SECRET="$(get USER_JWT_SECRET)"
 SECRET_KEY_VALUE="$(get SECRET_KEY)"
 POSTGRES_PASSWORD="$(get POSTGRES_PASSWORD)"
@@ -113,6 +116,13 @@ for pair in "ADMIN_JWT_SECRET:$ADMIN_JWT_SECRET" "USER_JWT_SECRET:$USER_JWT_SECR
     bad "$name is missing, default or shorter than 32 chars"
   fi
 done
+if [ ${#ADMIN_TOTP_SECRET} -ge 16 ] && [[ "$(lower "$ADMIN_TOTP_SECRET")" != *change* ]]; then
+  ok "admin TOTP secret configured"
+else
+  bad "ADMIN_TOTP_SECRET is missing/too short; admin MFA is disabled"
+fi
+[[ "${ADMIN_FAILED_LIMIT:-5}" -ge 3 && "${ADMIN_FAILED_LIMIT:-5}" -le 10 ]] && ok "admin failure limit is sane" || bad "ADMIN_FAILED_LOGIN_LIMIT should be 3-10"
+[[ "${ADMIN_LOCKOUT:-15}" -ge 5 ]] && ok "admin lockout duration is sane" || bad "ADMIN_LOGIN_LOCKOUT_MINUTES should be >=5"
 [[ -n "$MASTER_KEY" ]] && ok "MASTER_AES_KEY configured" || bad "MASTER_AES_KEY missing"
 [[ "$SEED_INV" == "false" ]] && ok "SEED_DEMO_INVENTORY=false" || bad "SEED_DEMO_INVENTORY must be false before launch"
 

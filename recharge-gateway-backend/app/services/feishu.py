@@ -184,6 +184,19 @@ def dispatch_event(
     ).start()
 
 
+def dispatch_security_alert(title: str, fields: dict[str, Any], severity: str = "error") -> None:
+    """Force an admin security alert even if the event was not subscribed."""
+    if not runtime.get_bool("feishu_enabled", settings.feishu_enabled):
+        return
+    payload = dict(fields)
+    threading.Thread(
+        target=send_feishu,
+        args=("security.admin_login_failed", title, payload, severity, "/admin"),
+        kwargs={"force": True},
+        daemon=True,
+    ).start()
+
+
 def send_test_message(actor: str = "admin") -> dict:
     result = send_feishu(
         "test",

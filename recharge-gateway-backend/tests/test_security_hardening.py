@@ -8,6 +8,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+import pyotp
 
 from app.config import settings
 from app.models import (
@@ -30,6 +31,7 @@ from app.services.crypto import encrypt_text
 from app.services.payments.base import ParsedNotify
 from app.services.payments.guards import mock_payments_allowed
 from app.services.redeem import retry_task, run_recharge_task
+from app.security import admin_login_guard
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +104,45 @@ def _create_order(client, db):
     order_no = response.json()["order"]["order_no"]
     db.expire_all()
     return db.query(Order).filter(Order.order_no == order_no).one()
+
+
+def _login(client, password, code=""):
+    return client.post(
+        "/api/v1/admin/login",
+        json={"username": "admin", "password": password, "totp_code": code},
+    )
+
+
+def test_admin_login_requires_totp_when_configured(client, monkeypatch):
+    secret = pyotp.random_base32()
+    monkeypatch.setattr(settings, "admin_totp_secret", secret)
+    admin_login_guard.reset()
+
+    without = _login(client, "test-admin-pass")
+    assert without.status_code == 401
+    wrong = _login(client, "test-admin-pass", "000000")
+    assert wrong.status_code == 401
+    valid = _login(client, "test-admin-pass", pyotp.TOTP(secret).now())
+    assert valid.status_code == 200, valid.text
+
+
+def test_admin_login_lockout_and_security_alert(client, monkeypatch):
+    monkeypatch.setattr(settings, "admin_totp_secret", "")
+    monkeypatch.setattr(settings, "admin_failed_login_limit", 3)
+    monkeypatch.setattr(settings, "admin_login_lockout_minutes", 15)
+    admin_login_guard.reset()
+    alerts = []
+    monkeypatch.setattr(
+        "app.api.admin_manage.feishu.dispatch_security_alert",
+        lambda title, fields, severity="error": alerts.append((title, fields)),
+    )
+
+    codes = [_login(client, "wrong-password").status_code for _ in range(3)]
+    assert codes == [401, 401, 429]
+    assert alerts and "来源 IP" in alerts[0][1]
+    blocked = _login(client, "test-admin-pass")
+    assert blocked.status_code == 429
+    admin_login_guard.reset()
 
 
 def test_pending_event_can_be_upgraded_to_success(client, db, monkeypatch):

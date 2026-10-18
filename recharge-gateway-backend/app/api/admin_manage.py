@@ -43,7 +43,15 @@ from app.schemas import (
     VccCardUpdateRequest,
 )
 from app.services.accounts import hash_password
-from app.security import client_ip, create_admin_token, limiter, require_admin, verify_admin_password
+from app.security import (
+    admin_login_guard,
+    client_ip,
+    create_admin_token,
+    limiter,
+    require_admin,
+    verify_admin_password,
+    verify_admin_totp,
+)
 from app.services import orders as order_service
 from app.services import redeem as redeem_service
 from app.services import feishu
@@ -82,10 +90,20 @@ VCC_STATUS_LABELS = {"ACTIVE": "可用", "EXHAUSTED": "待销卡回血", "SUSPEN
 def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     import secrets
 
+    ip = client_ip(request)
+    guard_key = ip or "unknown"
+    if admin_login_guard.is_blocked(guard_key):
+        raise HTTPException(
+            status_code=429,
+            detail=f"登录失败次数过多，请 {settings.admin_login_lockout_minutes} 分钟后再试",
+        )
+
     username_ok = secrets.compare_digest(payload.username, settings.admin_username)
     password_ok = verify_admin_password(payload.password)
-    ip = client_ip(request)
-    if not (username_ok and password_ok):
+    totp_ok = verify_admin_totp(payload.totp_code)
+    if not (username_ok and password_ok and totp_ok):
+        reason = "invalid_credentials" if not (username_ok and password_ok) else "invalid_totp"
+        count = admin_login_guard.register_failure(guard_key)
         try:
             db.add(
                 AuditLog(
@@ -93,14 +111,30 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
                     action="admin.login_failed",
                     entity_type="admin",
                     entity_id=payload.username[:64],
-                    detail="invalid credentials",
+                    detail=reason,
                     ip=ip,
                 )
             )
             db.commit()
         except Exception:
             db.rollback()
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        if count >= settings.admin_failed_login_limit:
+            feishu.dispatch_security_alert(
+                "MOLIPLY 后台登录失败告警",
+                {
+                    "管理员账号": payload.username[:64],
+                    "来源 IP": ip,
+                    "连续失败": count,
+                    "锁定分钟": settings.admin_login_lockout_minutes,
+                    "说明": "已触发后台登录锁定，请排查是否为暴力破解或密码泄露",
+                },
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"登录失败次数过多，已临时锁定 {settings.admin_login_lockout_minutes} 分钟",
+            )
+        raise HTTPException(status_code=401, detail="用户名、密码或动态验证码错误")
+    admin_login_guard.clear(guard_key)
     try:
         db.add(
             AuditLog(

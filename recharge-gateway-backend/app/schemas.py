@@ -58,6 +58,7 @@ class CouponValidateRequest(StrictModel):
 class AdminLoginRequest(StrictModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
+    totp_code: str = Field(default="", max_length=8)
 
 
 class CodeGenerateRequest(StrictModel):

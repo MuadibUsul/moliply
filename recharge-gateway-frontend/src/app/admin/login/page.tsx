@@ -23,6 +23,7 @@ export default function AdminLoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export default function AdminLoginPage() {
       const data = await api<LoginResponse>("/api/v1/admin/login", {
         method: "POST",
         auth: false,
-        body: { username: username.trim(), password },
+        body: { username: username.trim(), password, totp_code: totpCode.trim() },
       });
       setAdminToken(data.token);
       router.replace("/admin");
@@ -147,6 +148,21 @@ export default function AdminLoginPage() {
                   >
                     {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="totp" className="mb-2 block text-[11px] text-slate-400">谷歌验证码</label>
+                <div className="relative">
+                  <ShieldCheck size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    id="totp"
+                    value={totpCode}
+                    onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                    className="field pl-10 tracking-[0.35em]"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="6 位动态码"
+                  />
                 </div>
               </div>
             </div>

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
+import pyotp
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi import Limiter
@@ -88,6 +89,70 @@ class FailureTracker:
 
 
 failure_tracker = FailureTracker()
+
+
+class AdminLoginGuard:
+    """Consecutive-failure lockout for the single admin account.
+
+    State is per API process (the deployment runs one API process), which keeps
+    the guard fast and independent from the general redemption tracker.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: dict[str, dict[str, float]] = {}
+
+    def _window(self) -> float:
+        return max(1, settings.admin_login_lockout_minutes) * 60
+
+    def _entry(self, key: str) -> dict[str, float]:
+        now = time.time()
+        entry = self._state.setdefault(key, {"count": 0.0, "last": 0.0, "blocked_until": 0.0})
+        if entry["blocked_until"] and entry["blocked_until"] <= now:
+            entry["count"] = 0.0
+            entry["blocked_until"] = 0.0
+        elif entry["last"] and now - entry["last"] > self._window():
+            entry["count"] = 0.0
+        return entry
+
+    def is_blocked(self, key: str) -> bool:
+        with self._lock:
+            entry = self._entry(key)
+            return entry["blocked_until"] > time.time()
+
+    def register_failure(self, key: str) -> int:
+        with self._lock:
+            entry = self._entry(key)
+            entry["count"] += 1
+            entry["last"] = time.time()
+            if entry["count"] >= max(1, settings.admin_failed_login_limit):
+                entry["blocked_until"] = time.time() + self._window()
+            return int(entry["count"])
+
+    def clear(self, key: str) -> None:
+        with self._lock:
+            self._state.pop(key, None)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._state.clear()
+
+
+admin_login_guard = AdminLoginGuard()
+
+
+def verify_admin_totp(code: str) -> bool:
+    secret = (settings.admin_totp_secret or "").strip()
+    if not secret:
+        return True
+    normalized = (code or "").strip()
+    if len(normalized) != 6 or not normalized.isdigit():
+        return False
+    try:
+        return pyotp.TOTP(secret).verify(normalized, valid_window=1)
+    except Exception:
+        logger.error("ADMIN_TOTP_SECRET is invalid; admin login is failing closed")
+        return False
 
 
 # ---------------------------------------------------------------------------
