@@ -95,6 +95,31 @@ export MOLIPLY_BASE=$BASE
 nohup bash -c 'for i in $(seq 1 288); do "$BASE/enable-moliply-domain.sh"; rc=$?; if [ $rc -eq 0 ]; then exit 0; fi; sleep 300; done' > "$BASE/domain-watch.log" 2>&1 &
 ```
 
+
+## 运维脚本
+
+| 脚本 | 用途 |
+| --- | --- |
+| `backup-db.sh` | 备份 PostgreSQL 与 `.env` 到 `$BASE/backups/`，保留 14 天 |
+| `preflight.sh` | 只读检查：支付、库存、演示数据、备份、健康检查；未通过则不能收款 |
+| `purge-demo-data.sh` | 清理演示卡密/成品号/优惠码，并关闭演示库存；执行前自动备份 |
+| `enable-moliply-domain.sh` | DNS 生效后追加 Caddy 站点并申请证书 |
+| `GO-LIVE.md` | 站主必须完成的开业清单 |
+
+每日备份 cron 示例（只追加 MOLIPLY 自己的条目，不要覆盖其他项目）：
+
+```cron
+30 3 * * * MOLIPLY_BASE=/opt/moliply /opt/moliply/backup-db.sh >> /opt/moliply/backup.log 2>&1
+```
+
+上线前：
+
+```bash
+MOLIPLY_BASE=/opt/moliply /opt/moliply/preflight.sh
+```
+
+全部 PASS 后，再切换 `PAYMENT_MODE=live`、关闭 mock、导入真实库存并对外推广。
+
 ## 发布 / 回滚
 
 ```bash

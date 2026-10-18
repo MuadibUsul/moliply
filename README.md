@@ -435,6 +435,7 @@ npm run build
 
 - [环境变量模板](.env.example)
 - [共享服务器隔离部署](deploy/README.md)
+- [开业上线清单](deploy/GO-LIVE.md)
 - [独角数卡主题与支付插件](storefront-theme-moliply/README.md)
 - [后端说明](recharge-gateway-backend/README.md)
 - [前端说明](recharge-gateway-frontend/README.md)

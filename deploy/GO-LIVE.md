@@ -1,0 +1,138 @@
+# MOLIPLY 开业上线清单
+
+目标：从“演示站”切换为可接真实客户的站点。
+
+> 当前线上仍是演示支付 + 演示库存。完成本清单中的“必须由站主完成”项后，再运行预检脚本，全部 PASS 才对外收款。
+
+## 一、已经由工程侧完成
+
+- [x] `https://moliply.shop` 部署、HTTPS 证书、Caddy 接入
+- [x] 独立 Compose 项目、Postgres/Redis/Celery/Worker/Beat/Web 全部运行
+- [x] 商城、商品、支付页、订单、充能中心、帮助中心、运营后台
+- [x] 自动发码、充值任务状态机、失败释放、后台重试
+- [x] 数据库每日备份脚本与 cron（本地保留 14 天）
+- [x] 上线前预检脚本 `preflight.sh`
+- [x] 演示数据清理脚本 `purge-demo-data.sh`
+- [x] 真实全链路演示（模拟支付/模拟上游）已跑通
+- [x] 现有服务器其他站点隔离，未改动现有项目
+
+## 二、必须由站主完成（阻塞收款）
+
+### 1. 支付商户
+
+- [ ] 蓝兔支付或虎皮椒完成个人商户签约
+- [ ] 拿到商户号 / AppID / 密钥 / 官方 API 文档
+- [ ] 在支付后台配置异步回调：
+  - `https://moliply.shop/api/v1/payments/ltzf/notify`
+  - `https://moliply.shop/api/v1/payments/xunhupay/notify`
+- [ ] 把密钥和文档交给工程侧配置；签名字段可能因版本不同需要核对
+- [ ] 完成一笔最小金额真实支付 + 回调验证
+
+### 2. 真实货源
+
+二选一：
+
+**A. 成品号模式（最快）**
+
+- [ ] 准备真实的 ChatGPT Plus / Claude Pro 成品号
+- [ ] 在后台「商品管理 → 导入成品号」导入
+- [ ] 只保留能真实交付的 SKU，下架其余商品
+- [ ] 交付格式：`邮箱----邮箱密码----辅助邮箱----质保到期日`
+
+**B. 代充模式**
+
+- [ ] 供应商真实自动代充 API（地址、密钥、字段契约、签名文档）
+- [ ] 或确认可在供应商后台人工核销
+- [ ] 用工程侧的上游适配器联调并真实充值一个自有账号
+- [ ] 没有真实上游 API 时，**不要**用 `UPSTREAM_MODE=mock` 接客户
+
+### 3. 真实库存与商品
+
+- [ ] 导入真实库存
+- [ ] 运行演示数据清理（会先自动备份）：
+  ```bash
+  MOLIPLY_BASE=/home/deploy/moliply /home/deploy/moliply/purge-demo-data.sh --yes
+  ```
+- [ ] 后台确认：真实卡密/成品号数量 > 0，演示 `@moliply.test` 数据为 0
+- [ ] 确定最终售价、质保期、退款规则
+- [ ] 下架暂时无法交付的商品
+
+### 4. 管理员与客服
+
+- [ ] 从服务器读取当前随机密码并登录后台：
+  ```bash
+  grep '^ADMIN_PASSWORD=' /home/deploy/moliply/.env
+  ```
+- [ ] 改成你长期掌握的安全密码（编辑 `.env` 后重启 api）
+- [ ] 把真实客服微信填入 `NEXT_PUBLIC_CONTACT_WECHAT`，重新构建 web
+- [ ] 准备客服话术、售后处理时间和退款流程
+
+### 5. 数据库备份离站
+
+- [ ] 本地每日备份已配置在 `/home/deploy/moliply/backups/`
+- [ ] 将备份目录定期复制到你自己的电脑/对象存储（服务器坏了本地备份也会丢）
+- [ ] 单独离线保存 `MASTER_AES_KEY`（丢失后卡号/CVV/Session 无法解密）
+
+### 6. 真实上线测试
+
+- [ ] 真实支付最小金额
+- [ ] 回调 → 自动交付
+- [ ] 用真实账号完成核销/登录
+- [ ] 订单查询、后台记录、退款/售后流程
+- [ ] 确认没有模拟支付入口残留
+
+## 三、强烈建议在首单前完成
+
+- [ ] SMTP 发货邮件（需要邮箱 SMTP 账号/授权码）
+- [ ] 外部 uptime 监控：`https://moliply.shop/healthz`
+- [ ] `www.moliply.shop`（如需，DNS 加 `CNAME www → moliply.shop`，再让工程侧加 Caddy 站点）
+- [ ] 订单查询隐私：后续可加邮箱验证码/用户账号
+- [ ] 合规审查：支付平台类目、网站文案、OpenAI/Claude 服务条款、退款与消费者权益
+- [ ] 小规模试运营，控制初始库存与广告投放
+
+## 四、开关与命令
+
+支付与货源配置在服务器 `.env`：
+
+```dotenv
+PAYMENT_MODE=live
+MOCK_PAYMENT_ENABLED=false
+LTZF_MCH_ID=...
+LTZF_APP_ID=...
+LTZF_KEY=...
+# 或 XUNHUPAY_APP_ID / XUNHUPAY_APP_SECRET
+
+UPSTREAM_MODE=http
+UPSTREAM_API_BASE=...
+UPSTREAM_API_KEY=...
+UPSTREAM_API_SECRET=...
+```
+
+修改后：
+
+```bash
+cd /home/deploy/moliply
+docker compose -f docker-compose.server.yml --env-file .env up -d api worker beat
+```
+
+客服微信变更需要重新构建前端：
+
+```bash
+docker compose -f docker-compose.server.yml --env-file .env build web
+docker compose -f docker-compose.server.yml --env-file .env up -d web
+```
+
+预检：
+
+```bash
+MOLIPLY_BASE=/home/deploy/moliply /home/deploy/moliply/preflight.sh
+```
+
+全部 PASS 后才可以对外推广。
+
+## 五、安全提醒
+
+- 当前 `PAYMENT_MODE=mock` 时，任何访问者都可以点“模拟支付成功”领取演示激活码；**切换真实支付前不要公开推广网站**。
+- 不要在客服对话中索要用户密码、短信验证码、银行卡 CVV。
+- 退款、质保、封号风险需要在商品页与客服话术中写清楚。
+- 代充/成品号转售可能违反对应服务商条款，请自行评估合规与资金风险。
