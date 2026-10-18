@@ -21,7 +21,7 @@ type LoginResponse = { token: string; expires_in: number; username: string };
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -122,6 +122,7 @@ export default function AdminLoginPage() {
                     onChange={(event) => setUsername(event.target.value)}
                     className="field pl-10"
                     autoComplete="username"
+                    placeholder="管理员邮箱或账号"
                     required
                   />
                 </div>
