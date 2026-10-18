@@ -25,6 +25,19 @@ def cleanup_tokens_task() -> int:
         return cleared
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.scan_trc20_payments_task")
+def scan_trc20_payments_task() -> int:
+    from app.services import trc20_watcher
+
+    db = SessionLocal()
+    try:
+        return trc20_watcher.scan_pending_orders(db)
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.celery_worker.feishu_daily_summary_task")
 def feishu_daily_summary_task() -> dict:
     """09:00 Asia/Shanghai business summary for the Feishu bot."""

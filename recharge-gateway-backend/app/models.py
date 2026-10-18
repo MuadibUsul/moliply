@@ -232,6 +232,7 @@ class Order(Base):
     payment_trade_no: Mapped[str | None] = mapped_column(String(96), nullable=True, index=True)
     payment_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     payment_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    payment_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     client_ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
     stock_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, index=True)

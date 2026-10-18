@@ -39,6 +39,7 @@ from app.services.mailer import send_delivery_email
 from app.services.payments import get_callback_provider, get_provider, masked_order_title
 from app.services.payments.base import PaymentProviderError
 from app.services.payments.guards import mock_payments_allowed
+from app.services.payments.trc20 import DirectTrc20Provider
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ PAYMENT_LABELS = {
     "xunhupay": "虎皮椒",
     "crypto": "加密货币",
     "nowpayments": "加密货币",
+    "usdt_trc20": "USDT-TRC20",
     "mock": "模拟支付",
     "mock_wechat": "微信支付",
     "mock_alipay": "支付宝",
@@ -198,6 +200,27 @@ def create_order(
     return order
 
 
+def _direct_payment_response(order: Order) -> dict[str, Any]:
+    remaining = 0
+    if order.expires_at:
+        remaining = max(0, int((order.expires_at - utcnow()).total_seconds()))
+    return {
+        "provider": "usdt_trc20",
+        "qr_content": order.payment_address or "",
+        "pay_url": "",
+        "trade_no": "",
+        "mock": False,
+        "expires_in": remaining,
+        "order_no": order.order_no,
+        "amount": money(order.amount),
+        "payment_address": order.payment_address or "",
+        "payment_amount": money(order.payment_amount),
+        "payment_currency": order.payment_currency or "USDT",
+        "network": "TRC20",
+        "expires_at": order.expires_at.isoformat() + "Z" if order.expires_at else "",
+    }
+
+
 def create_payment(db: Session, order: Order, provider_name: str, client_ip: str):
     if order.status == OrderStatus.DELIVERED:
         raise OrderError("ORDER_ALREADY_PAID", "订单已支付并交付")
@@ -208,25 +231,51 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
         db.add(order)
         db.commit()
         raise OrderError("ORDER_EXPIRED", "订单已超时，请重新下单")
+    if (
+        order.payment_provider == "usdt_trc20"
+        and order.payment_address
+        and order.payment_amount
+        and order.expires_at
+        and order.expires_at > utcnow()
+    ):
+        return _direct_payment_response(order)
     try:
         provider = get_provider(provider_name)
-        intent = provider.create_native(
-            order.order_no,
-            order.amount,
-            masked_order_title(order.order_no),
-            client_ip,
-        )
+        if isinstance(provider, DirectTrc20Provider):
+            payment_amount = provider.select_unique_amount(db, order.amount)
+            intent = provider.create_native(
+                order.order_no,
+                order.amount,
+                masked_order_title(order.order_no),
+                client_ip,
+                payment_amount=payment_amount,
+            )
+        else:
+            intent = provider.create_native(
+                order.order_no,
+                order.amount,
+                masked_order_title(order.order_no),
+                client_ip,
+            )
     except PaymentProviderError as exc:
         raise OrderError(exc.code, exc.message, 502) from exc
     order.payment_provider = intent.provider
     raw_amount = intent.raw.get("price_amount")
-    if intent.provider == "crypto" and raw_amount is not None:
+    if intent.provider == "usdt_trc20":
+        order.payment_address = intent.payment_address
+        order.payment_amount = intent.payment_amount
+        order.payment_currency = intent.payment_currency or "USDT"
+        order.expires_at = utcnow() + timedelta(seconds=intent.expires_in)
+    elif intent.provider == "crypto" and raw_amount is not None:
+        order.payment_address = None
         order.payment_amount = Decimal(str(raw_amount))
         order.payment_currency = str(intent.raw.get("price_currency") or "USD").upper()
     elif intent.provider == "crypto":
+        order.payment_address = None
         order.payment_amount = None
         order.payment_currency = None
     else:
+        order.payment_address = None
         order.payment_amount = order.amount
         order.payment_currency = "CNY"
     db.add(order)
@@ -240,6 +289,11 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
         "expires_in": intent.expires_in,
         "order_no": order.order_no,
         "amount": money(order.amount),
+        "payment_address": intent.payment_address,
+        "payment_amount": money(intent.payment_amount),
+        "payment_currency": intent.payment_currency,
+        "network": intent.network,
+        "expires_at": intent.expires_at,
     }
 
 
@@ -340,6 +394,10 @@ def serialize_order(
         "status_label": ORDER_STATUS_LABELS.get(order.status.value, order.status.value),
         "payment_provider": order.payment_provider,
         "payment_label": PAYMENT_LABELS.get(order.payment_provider or "", order.payment_provider or ""),
+        "payment_address": order.payment_address,
+        "payment_amount": money(order.payment_amount) if order.payment_amount is not None else None,
+        "payment_currency": order.payment_currency,
+        "payment_network": "TRC20" if order.payment_provider == "usdt_trc20" else None,
         "stock_pending": order.stock_pending,
         "created_at": order.created_at.isoformat() + "Z",
         "expires_at": order.expires_at.isoformat() + "Z" if order.expires_at else None,

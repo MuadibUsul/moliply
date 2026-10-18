@@ -6,7 +6,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 > 商业计划、成本资料与设计源文件保留在私有环境，不纳入公开仓库；线上服务器地址与凭据同样不在仓库中。
 
-当前状态：**前后端构建通过、86 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
+当前状态：**前后端构建通过、90 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
 
 ---
 
@@ -19,7 +19,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | 订单账户 | ✅ | 下单邮箱+密码自动建账户，登录后查看订单/卡密；密码 scrypt 加盐哈希，订单按账户隔离 |
 | MOLI 激活码 | ✅ | `MOLI-XXXX-XXXX-XXXX` 生成（排除 0/O/1/I）、批量生成/导入、上游卡密加密映射、绑定账号、状态机 |
 | 免密充能中心 | ✅ | 四步向导、自动验证、ChatGPT Session / Claude Session Key、账号状态预检、实时进度轮询、失败重试 |
-| 加密货币收款 | ✅ | NOWPayments 收银台，支持 USDT / USDC / BTC / ETH；默认关闭，配置商户密钥后开启 |
+| 加密货币收款 | ✅ | 支持自建 USDT-TRC20 直收（钱包地址 + TronGrid 自动确认）或 NOWPayments 托管收银台；默认关闭 |
 | 双通道充值 | ✅ | 混合路由：自营卡池优先（菲区 ₱999 → 美区 $20），失败/无卡自动回退上游 API；也可切换仅自营或仅上游 |
 | 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、菲/美双区账单、3DS IMAP 取码、余额与绑定上限、拒付自动挂起、销卡回血、`SKIP LOCKED` 选卡 |
 | 渠道路由 | ✅ | 全局策略（混合/仅自营/仅上游）+ 单个激活码通道与区域偏好；失败原因、执行区域、计费币种写回任务 |
@@ -29,7 +29,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | 飞书管理通知 | ✅ | 可勾选新订单、支付、交付、充值失败、人工复核、库存预警、回调异常、系统异常、每日日报 |
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
 | 独角数卡适配 | ✅（可选） | 品牌主题 Blade + 蓝兔/虎皮椒框架无关 PHP 插件 |
-| 自动化测试 | ✅ | 86 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
+| 自动化测试 | ✅ | 90 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -74,7 +74,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   ├── services/             加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
-│   └── tests/                    86 项 pytest
+│   └── tests/                    90 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
 ├── storefront-theme-moliply/     独角数卡主题 + 蓝兔/虎皮椒脱敏插件（可选）
 ├── nginx/                        双域名反代、限流、安全头
@@ -269,12 +269,37 @@ cd recharge-gateway-frontend && npm run build
 
 ---
 
-### 7.3 加密货币（NOWPayments）
+### 7.3 加密货币（自建 USDT-TRC20 / NOWPayments）
 
-代码已接入 NOWPayments 托管收银台，支持 USDT / USDC / BTC / ETH：
+支持两种模式，由 `CRYPTO_PROVIDER` 选择。
+
+**A. 自建 USDT-TRC20 直收（无第三方 KYC，资金直达自己的钱包）**
+
+1. 准备一个 TRON 主网收款地址（只提供地址，**不要在服务器保存私钥/助记词**）；
+2. 在后台「系统设置 → 加密货币」选择「自建 USDT-TRC20 直收」，填写收款地址；
+3. 可选填写 TronGrid API Key（不填走公共节点，生产建议配置）；
+4. 保持 `CRYPTO_ENABLED=true`，设置 `CRYPTO_PROVIDER=usdt_trc20`；
+5. 前台结算会显示收款地址、精确 USDT 金额、二维码和有效期；
+6. Worker 每分钟扫描 TronGrid，匹配到已确认的 TRC20 转账后自动标记支付并发货；
+7. 用户可在支付页点「我已完成转账，立即查询」触发即时检查。
+
+```dotenv
+CRYPTO_ENABLED=true
+CRYPTO_PROVIDER=usdt_trc20
+USDT_TRC20_WALLET_ADDRESS=T...
+USDT_TRC20_CONTRACT=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+TRON_API_BASE=https://api.trongrid.io
+TRON_API_KEY=
+TRON_CONFIRMATIONS=19
+CRYPTO_INVOICE_MINUTES=30
+CRYPTO_PAYMENT_GRACE_MINUTES=15
+CRYPTO_CNY_PER_USD=7.20
+```
+
+**B. NOWPayments 托管收银台**
 
 1. 在 NOWPayments 商户后台创建 API Key 与 IPN Secret；
-2. 开启上述四个币种；
+2. 开启 USDT / USDC / BTC / ETH；
 3. 配置 IPN 回调：`https://moliply.shop/api/v1/payments/nowpayments/ipn`；
 4. 在 `.env` 设置：
 
@@ -287,10 +312,15 @@ CRYPTO_CNY_PER_USD=7.20
 CRYPTO_SUPPORTED_COINS=USDT,USDC,BTC,ETH
 ```
 
-5. 重启 API，前台结算页会自动出现「加密货币支付」；首笔请用最小金额真实支付验证 IPN。
-6. 结算金额按 `CRYPTO_CNY_PER_USD` 从人民币折算为美元，请在汇率变化时更新该值。
+**自建直收的边界**
 
-> 未配置密钥时 `CRYPTO_ENABLED=false`，前台不展示加密货币选项。
+- 只支持 TRON 主网 USDT-TRC20，**转错链无法找回**；
+- 每笔订单使用唯一金额，用户必须转入完全一致的金额；
+- 少付、多付、超时后到账会留在待处理状态，需要后台人工核对；
+- 服务器不保存私钥；收款地址和 TronGrid Key 均可在后台修改；
+- 请自行遵守当地税务、反洗钱和消费者保护要求。
+
+> 未配置钱包地址或 NOWPayments 密钥时，`crypto_ready=false`，前台不展示加密货币选项。
 
 ### 7.4 飞书管理通知
 

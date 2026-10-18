@@ -21,6 +21,7 @@ from app.schemas import CouponValidateRequest, OrderCreateRequest, PaymentCreate
 from app.security import client_ip, create_user_token, limiter
 from app.services import accounts
 from app.services import orders as order_service
+from app.services import trc20_watcher
 from app.services.catalog import list_categories, money, serialize_product
 from app.services.payments import masked_order_title
 
@@ -189,6 +190,26 @@ def pay(
         if order.expires_at < utcnow():
             raise HTTPException(status_code=409, detail="订单已超时，请重新下单")
     return order_service.create_payment(db, order, payload.provider, client_ip(request))
+
+
+@router.post("/orders/{order_no}/crypto-check")
+@limiter.limit("6/minute")
+def crypto_check(
+    order_no: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    order = _get_order(db, order_no, user)
+    if order.payment_provider != "usdt_trc20":
+        raise HTTPException(status_code=409, detail="该订单不是 USDT-TRC20 直收订单")
+    trc20_watcher.scan_pending_orders(db)
+    db.expire_all()
+    order = _get_order(db, order_no, user)
+    return {
+        "matched": order.status in {OrderStatus.PAID, OrderStatus.DELIVERED},
+        "order": order_service.serialize_order(db, order, reveal=True),
+    }
 
 
 @router.post("/orders/{order_no}/mock-settle")

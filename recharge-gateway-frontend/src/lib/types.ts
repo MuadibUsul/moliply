@@ -103,6 +103,10 @@ export type Order = {
   status_label: string;
   payment_provider: string | null;
   payment_label: string;
+  payment_address?: string | null;
+  payment_amount?: number | null;
+  payment_currency?: string | null;
+  payment_network?: string | null;
   stock_pending: boolean;
   created_at: string;
   expires_at: string | null;
@@ -114,6 +118,8 @@ export type Order = {
 
 export type BrandInfo = {
   crypto_enabled: boolean;
+  crypto_ready?: boolean;
+  crypto_provider?: string;
   crypto_coins: string[];
   payment_mode: string;
   mock_payment_enabled: boolean;
@@ -151,6 +157,11 @@ export type PaymentIntent = {
   expires_in: number;
   order_no: string;
   amount: number;
+  payment_address?: string;
+  payment_amount?: number;
+  payment_currency?: string;
+  network?: string;
+  expires_at?: string;
 };
 
 export type RedeemVerify = {

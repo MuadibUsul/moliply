@@ -52,6 +52,7 @@ function PayContent() {
   const [authRequired, setAuthRequired] = useState(false);
   const [remaining, setRemaining] = useState(0);
   const [settling, setSettling] = useState(false);
+  const [checkingCrypto, setCheckingCrypto] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -81,6 +82,9 @@ function PayContent() {
           body: { provider },
         });
         setIntent(data);
+        if (data.expires_at) {
+          setOrder((current) => (current ? { ...current, expires_at: data.expires_at as string } : current));
+        }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           setAuthRequired(true);
@@ -175,6 +179,25 @@ function PayContent() {
       setPayError((err as Error).message);
     } finally {
       setSettling(false);
+    }
+  }
+
+  async function checkCryptoPayment() {
+    setCheckingCrypto(true);
+    setPayError(null);
+    try {
+      const data = await api<{ matched: boolean; order: Order }>(
+        `/api/v1/store/orders/${orderNo}/crypto-check`,
+        { method: "POST" },
+      );
+      setOrder(data.order);
+      if (!data.matched) {
+        setPayError("暂未检测到已确认的 USDT-TRC20 转账，请核对收款地址、金额和网络后再试。");
+      }
+    } catch (err) {
+      setPayError((err as Error).message);
+    } finally {
+      setCheckingCrypto(false);
     }
   }
 
@@ -373,15 +396,21 @@ function PayContent() {
   }
 
   const expired = remaining <= 0 && order.status === "PENDING";
+  const directCrypto = intent?.provider === "usdt_trc20" && Boolean(intent.payment_address);
+  const directAmount = Number(intent?.payment_amount || 0);
 
   return (
     <div className="container-page pb-16 pt-12">
       <div className="text-center">
         <p className="eyebrow justify-center">PAYMENT / PENDING</p>
         <h1 className="mt-3 font-display text-[36px] font-bold tracking-tight text-white sm:text-[46px]">
-          扫码完成支付
+          {directCrypto ? "USDT-TRC20 转账" : "扫码完成支付"}
         </h1>
-        <p className="mt-3 text-sm text-slate-500">请使用微信或支付宝扫描下方二维码，完成后系统将自动更新订单状态。</p>
+        <p className="mt-3 text-sm text-slate-500">
+          {directCrypto
+            ? "请向下方 TRON 地址转入精确金额；到账并确认后系统自动交付。"
+            : "请使用微信或支付宝扫描下方二维码，完成后系统将自动更新订单状态。"}
+        </p>
       </div>
 
       <div className="mx-auto mt-9 grid max-w-4xl gap-4 md:grid-cols-[1.1fr_0.9fr]">
@@ -412,7 +441,7 @@ function PayContent() {
                 ) : expired ? (
                   <div className="flex h-[200px] w-[200px] flex-col items-center justify-center text-center">
                     <Clock3 size={28} className="text-slate-400" />
-                    <p className="mt-3 text-xs text-slate-500">二维码已过期</p>
+                    <p className="mt-3 text-xs text-slate-500">账单已过期</p>
                   </div>
                 ) : (
                   <QRCodeSVG
@@ -426,11 +455,15 @@ function PayContent() {
                 )}
               </div>
 
-              <p className="mt-5 price text-[32px]">{formatMoney(order.amount)}</p>
+              <p className="mt-5 price text-[32px]">
+                {directCrypto ? `${directAmount.toFixed(2)} USDT` : formatMoney(order.amount)}
+              </p>
               <p className="mt-1 text-[11px] text-slate-500">
                 {expired ? "订单已超时，请重新下单" : `请在 ${formatCountdown(remaining)} 内完成支付`}
               </p>
-              <p className="mt-2 text-[10px] text-slate-600">扫码支付后，页面将自动跳转至交付结果。</p>
+              <p className="mt-2 text-[10px] text-slate-600">
+                {directCrypto ? "只支持 TRON（TRC20）网络，转错链无法找回。" : "扫码支付后，页面将自动跳转至交付结果。"}
+              </p>
 
               {payError && (
                 <div className="mt-4 w-full rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2.5 text-center text-[11px] leading-5 text-rose-200">
@@ -448,7 +481,47 @@ function PayContent() {
                 </div>
               )}
 
-              {channel === "crypto" && intent && !expired && (
+              {directCrypto && intent && !expired && (
+                <div className="mt-5 w-full space-y-3 rounded-xl border border-sky-400/20 bg-sky-400/[0.045] p-4 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-full border border-sky-400/25 bg-sky-400/10 px-2 py-0.5 text-[9px] font-medium text-sky-300">
+                      USDT · TRC20
+                    </span>
+                    <span className="text-[9px] text-slate-500">自动确认到账</span>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">收款地址</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 break-all rounded-lg bg-black/25 px-2.5 py-2 font-mono text-[10px] leading-5 text-slate-300">
+                        {intent.payment_address}
+                      </code>
+                      <CopyButton value={intent.payment_address || ""} compact />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">精确金额</p>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="font-mono text-lg font-semibold text-sky-200">{directAmount.toFixed(2)} USDT</span>
+                      <CopyButton value={directAmount.toFixed(2)} label="复制金额" />
+                    </div>
+                    <p className="mt-1 text-[9px] text-slate-600">必须转入与上方完全一致的金额，否则无法自动匹配。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void checkCryptoPayment()}
+                    disabled={checkingCrypto}
+                    className="btn-primary w-full py-2.5"
+                  >
+                    {checkingCrypto ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                    {checkingCrypto ? "正在查询链上记录..." : "我已完成转账，立即查询"}
+                  </button>
+                  <p className="text-center text-[9px] leading-5 text-slate-600">
+                    通常需要 1–2 分钟完成区块确认；到账后本页会自动更新。
+                  </p>
+                </div>
+              )}
+
+              {channel === "crypto" && intent && !expired && !directCrypto && (
                 <div className="mt-5 w-full rounded-xl border border-amber-400/20 bg-amber-400/[0.045] p-3">
                   <p className="text-center text-[10px] leading-5 text-amber-200/75">
                     支持 {cryptoCoins.length ? cryptoCoins.join(" · ") : "USDT · USDC · BTC · ETH"}；请在收银台选择币种并完成支付。

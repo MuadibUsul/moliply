@@ -39,6 +39,8 @@ RUNTIME_MOCK="$(lower "$(runtime_value 'd["values"].get("mock_payment_enabled","
 RUNTIME_PAYMENT_READY="$(lower "$(runtime_value 'd.get("payment_ready",False)')")"
 RUNTIME_CRYPTO_ENABLED="$(lower "$(runtime_value 'd["values"].get("crypto_enabled","")')")"
 RUNTIME_CRYPTO_READY="$(lower "$(runtime_value 'd.get("crypto_ready",False)')")"
+RUNTIME_CRYPTO_PROVIDER="$(runtime_value 'd["values"].get("crypto_provider","")')"
+RUNTIME_TRC20_ADDRESS="$(runtime_value 'd["values"].get("usdt_trc20_wallet_address","")')"
 RUNTIME_UPSTREAM_READY="$(lower "$(runtime_value 'd.get("upstream_ready",False)')")"
 RUNTIME_SUPPORT_READY="$(lower "$(runtime_value 'd.get("support_ready",False)')")"
 RUNTIME_FEISHU_READY="$(lower "$(runtime_value 'd.get("feishu_ready",False)')")"
@@ -210,8 +212,10 @@ else
 fi
 
 if [ "$CRYPTO_ENABLED" = "true" ]; then
-  if [ "$RUNTIME_CRYPTO_READY" = "true" ] || { [ -n "$NOWPAYMENTS_API_KEY" ] && [ -n "$NOWPAYMENTS_IPN_SECRET" ]; }; then
-    ok "crypto checkout enabled and NOWPayments keys configured"
+  if [ "$RUNTIME_CRYPTO_READY" = "true" ]; then
+    ok "crypto checkout enabled and configured (${RUNTIME_CRYPTO_PROVIDER:-nowpayments})"
+  elif [ "${RUNTIME_CRYPTO_PROVIDER:-nowpayments}" = "usdt_trc20" ]; then
+    bad "CRYPTO_ENABLED=true but USDT-TRC20 wallet address is missing"
   else
     bad "CRYPTO_ENABLED=true but NOWPayments API/IPN secrets are missing"
   fi

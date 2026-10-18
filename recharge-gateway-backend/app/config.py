@@ -110,13 +110,21 @@ class Settings(BaseSettings):
     # Crypto checkout (NOWPayments: USDT / USDC / BTC / ETH)
     # ------------------------------------------------------------------
     crypto_enabled: bool = False
-    crypto_provider: str = "nowpayments"  # nowpayments | mock
+    crypto_provider: str = "nowpayments"  # nowpayments | usdt_trc20 | mock
     nowpayments_api_key: str = ""
     nowpayments_ipn_secret: str = ""
     nowpayments_api_base: str = "https://api.nowpayments.io"
     nowpayments_ipn_url: str = ""
     crypto_cny_per_usd: float = 7.20
     crypto_supported_coins: str = "USDT,USDC,BTC,ETH"
+    # Self-hosted USDT-TRC20 direct collection (no third-party gateway).
+    usdt_trc20_wallet_address: str = ""
+    usdt_trc20_contract: str = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    tron_api_base: str = "https://api.trongrid.io"
+    tron_api_key: str = ""
+    tron_confirmations: int = 19
+    crypto_invoice_minutes: int = 30
+    crypto_payment_grace_minutes: int = 15
 
     @property
     def crypto_coin_list(self) -> list[str]:

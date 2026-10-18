@@ -27,6 +27,7 @@ SECRET_KEYS = {
     "xunhupay_app_secret",
     "nowpayments_api_key",
     "nowpayments_ipn_secret",
+    "tron_api_key",
     "upstream_api_key",
     "upstream_api_secret",
     "rdvcc_imap_password",
@@ -59,6 +60,9 @@ INT_KEYS = {
     "order_expire_minutes",
     "feishu_low_stock_threshold",
     "self_vcc_timeout_seconds",
+    "tron_confirmations",
+    "crypto_invoice_minutes",
+    "crypto_payment_grace_minutes",
 }
 
 FLOAT_KEYS = {
@@ -88,6 +92,12 @@ ENV_DEFAULTS = {
     "xunhupay_return_url": lambda: settings.xunhupay_return,
     "crypto_enabled": lambda: settings.crypto_enabled,
     "crypto_provider": lambda: settings.crypto_provider,
+    "usdt_trc20_wallet_address": lambda: settings.usdt_trc20_wallet_address,
+    "usdt_trc20_contract": lambda: settings.usdt_trc20_contract,
+    "tron_api_base": lambda: settings.tron_api_base,
+    "tron_confirmations": lambda: settings.tron_confirmations,
+    "crypto_invoice_minutes": lambda: settings.crypto_invoice_minutes,
+    "crypto_payment_grace_minutes": lambda: settings.crypto_payment_grace_minutes,
     "nowpayments_api_base": lambda: settings.nowpayments_api_base,
     "nowpayments_ipn_url": lambda: settings.nowpayments_ipn,
     "crypto_cny_per_usd": lambda: settings.crypto_cny_per_usd,
@@ -145,6 +155,7 @@ SECRET_ENV_DEFAULTS = {
     "xunhupay_app_secret": lambda: settings.xunhupay_app_secret,
     "nowpayments_api_key": lambda: settings.nowpayments_api_key,
     "nowpayments_ipn_secret": lambda: settings.nowpayments_ipn_secret,
+    "tron_api_key": lambda: settings.tron_api_key,
     "upstream_api_key": lambda: settings.upstream_api_key,
     "upstream_api_secret": lambda: settings.upstream_api_secret,
     "rdvcc_imap_password": lambda: settings.rdvcc_imap_password,
@@ -159,7 +170,7 @@ ALLOWED_KEYS = set(ENV_DEFAULTS) | SECRET_KEYS
 _ENUM_VALUES = {
     "payment_mode": {"mock", "live"},
     "payment_gateway": {"ltzf", "xunhupay"},
-    "crypto_provider": {"nowpayments", "mock"},
+    "crypto_provider": {"nowpayments", "usdt_trc20", "mock"},
     "upstream_mode": {"mock", "http"},
     "routing_policy": {"HYBRID_SELF_FIRST", "SELF_VCC_ONLY", "UPSTREAM_ONLY"},
 }
@@ -352,7 +363,18 @@ def public_settings() -> dict:
             (data.get("payment_gateway") == "xunhupay" and data.get("xunhupay_app_id") and data.get("xunhupay_app_secret"))
             or (data.get("payment_gateway") != "xunhupay" and data.get("ltzf_mch_id") and data.get("ltzf_key"))
         ),
-        "crypto_ready": bool(data.get("nowpayments_api_key") and data.get("nowpayments_ipn_secret")),
+        "crypto_ready": bool(
+            (
+                data.get("crypto_provider") == "usdt_trc20"
+                and data.get("usdt_trc20_wallet_address")
+                and data.get("usdt_trc20_contract")
+            )
+            or (
+                data.get("crypto_provider") != "usdt_trc20"
+                and data.get("nowpayments_api_key")
+                and data.get("nowpayments_ipn_secret")
+            )
+        ),
         "upstream_ready": bool(
             data.get("upstream_mode") == "http" and data.get("upstream_api_base") and data.get("upstream_api_key")
         ),

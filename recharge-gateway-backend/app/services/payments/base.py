@@ -20,6 +20,11 @@ class PaymentIntent:
     trade_no: str = ""
     mock: bool = False
     expires_in: int = 900
+    payment_address: str = ""
+    payment_amount: Decimal | None = None
+    payment_currency: str = ""
+    network: str = ""
+    expires_at: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
 

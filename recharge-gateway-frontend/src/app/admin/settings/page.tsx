@@ -395,15 +395,37 @@ export default function AdminSettingsPage() {
             onChange={(checked) => setValue("crypto_enabled", checked)}
           />
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field label="收款方式" hint="自建直收不经过第三方收银台">
+              <select value={text("crypto_provider", "nowpayments")} onChange={(event) => setValue("crypto_provider", event.target.value)} className="admin-input w-full py-2.5">
+                <option value="usdt_trc20">自建 USDT-TRC20 直收</option>
+                <option value="nowpayments">NOWPayments 托管</option>
+              </select>
+            </Field>
+            <Field label="USDT-TRC20 收款地址" hint="TRON 主网地址，只保存地址，不保存私钥">
+              <input value={text("usdt_trc20_wallet_address")} onChange={(event) => setValue("usdt_trc20_wallet_address", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" placeholder="T..." />
+            </Field>
+            {secretProps("tron_api_key", "TronGrid API Key（可选）", data.secret_configured.tron_api_key, "不填走公共节点，建议生产配置")}
+            <Field label="TronGrid API 地址">
+              <input value={text("tron_api_base", "https://api.trongrid.io")} onChange={(event) => setValue("tron_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="USDT-TRC20 合约">
+              <input value={text("usdt_trc20_contract", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")} onChange={(event) => setValue("usdt_trc20_contract", event.target.value)} className="admin-input w-full py-2.5 font-mono text-[10px]" />
+            </Field>
+            <Field label="账单有效期（分钟）">
+              <input type="number" value={text("crypto_invoice_minutes", "30")} onChange={(event) => setValue("crypto_invoice_minutes", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="到账宽限（分钟）">
+              <input type="number" value={text("crypto_payment_grace_minutes", "15")} onChange={(event) => setValue("crypto_payment_grace_minutes", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
             {secretProps("nowpayments_api_key", "NOWPayments API Key", data.secret_configured.nowpayments_api_key)}
             {secretProps("nowpayments_ipn_secret", "NOWPayments IPN Secret", data.secret_configured.nowpayments_ipn_secret)}
-            <Field label="CNY / USD 汇率" hint="用于把人民币订单金额折算成美元发票">
+            <Field label="CNY / USD 汇率" hint="用于把人民币订单金额折算成美元/USDT">
               <input type="number" step="0.01" value={text("crypto_cny_per_usd", "7.20")} onChange={(event) => setValue("crypto_cny_per_usd", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
-            <Field label="支持的币种">
+            <Field label="NOWPayments 支持币种">
               <input value={text("crypto_supported_coins")} onChange={(event) => setValue("crypto_supported_coins", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
-            <Field label="API 地址">
+            <Field label="NOWPayments API 地址">
               <input value={text("nowpayments_api_base")} onChange={(event) => setValue("nowpayments_api_base", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
             <Field label="IPN 回调地址" hint="填写到 NOWPayments 后台">

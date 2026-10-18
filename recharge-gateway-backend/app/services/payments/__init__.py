@@ -11,6 +11,7 @@ from app.services.payments.guards import mock_payments_allowed
 from app.services.payments.ltzf import LtzfProvider
 from app.services.payments.mock import MockPaymentProvider
 from app.services.payments.nowpayments import NowPaymentsProvider
+from app.services.payments.trc20 import DirectTrc20Provider
 from app.services.payments.xunhupay import XunhupayProvider
 
 MASKED_TITLE_POOL = [
@@ -65,11 +66,14 @@ def get_provider(name: str) -> PaymentProvider:
     provider = (name or "").lower()
     payment_mode = runtime.get("payment_mode", "mock").lower()
     gateway = runtime.get("payment_gateway", "ltzf").lower()
-    if provider in {"crypto", "nowpayments"}:
+    if provider in {"crypto", "nowpayments", "usdt_trc20"}:
         if not runtime.get_bool("crypto_enabled"):
             raise PaymentProviderError("CRYPTO_DISABLED", "加密货币支付暂未启用")
-        if runtime.get("crypto_provider", "nowpayments").lower() == "mock":
+        mode = runtime.get("crypto_provider", "nowpayments").lower()
+        if mode == "mock":
             return MockPaymentProvider("crypto")
+        if mode == "usdt_trc20":
+            return DirectTrc20Provider()
         return NowPaymentsProvider()
     if provider in {"wechat", "wxpay", "ltzf", "lanttu"}:
         if payment_mode != "live":
@@ -102,4 +106,5 @@ __all__ = [
     "get_provider",
     "masked_order_title",
     "mock_payments_allowed",
+    "DirectTrc20Provider",
 ]
