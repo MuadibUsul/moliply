@@ -19,3 +19,4 @@ python-multipart==0.0.32
 aiosqlite==0.21.0
 browserforge>=1.2
 camoufox>=0.4.11
+numpy==1.26.4
