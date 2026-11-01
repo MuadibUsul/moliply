@@ -44,7 +44,19 @@ async def lifespan(_: FastAPI):
         settings.upstream_mode,
         settings.self_vcc_enabled,
     )
+    console = getattr(app.state, "cce_startup", None)
+    if console is not None:
+        try:
+            await console()
+        except Exception:
+            logger.exception("Claude console failed to start")
     yield
+    shutdown = getattr(app.state, "cce_shutdown", None)
+    if shutdown is not None:
+        try:
+            await shutdown()
+        except Exception:
+            logger.exception("Claude console failed to stop")
 
 
 app = FastAPI(
@@ -152,6 +164,18 @@ app.include_router(public_redeem.router)
 app.include_router(payments.router)
 app.include_router(admin_manage.router)
 app.include_router(admin_manage.protected)
+
+# Claude account console (vendored under cce-console/). Mounted in-process so
+# operators manage it from the same admin session instead of a second login.
+try:
+    from cce_console import create_console_app
+
+    console_app = create_console_app()
+    app.mount("/cce", console_app)
+    app.state.cce_startup = console_app.state.cce_startup
+    app.state.cce_shutdown = console_app.state.cce_shutdown
+except Exception:  # noqa: BLE001 - the store must boot without the console
+    logger.exception("Claude console unavailable; /cce will 404")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -26,6 +26,7 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY scripts ./scripts
+COPY cce_console ./cce_console
 
 RUN useradd --create-home --uid 10001 moliply \
     && chown -R moliply:moliply /app

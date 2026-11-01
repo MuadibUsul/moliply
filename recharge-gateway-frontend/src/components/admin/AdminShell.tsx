@@ -39,6 +39,7 @@ const NAV_GROUPS = [
       { href: "/admin/tasks", label: "充值任务", icon: Zap },
       { href: "/admin/cards", label: "VCC 卡池", icon: CreditCard },
       { href: "/admin/channels", label: "渠道状态", icon: ServerCog },
+      { href: "/cce/ui", label: "Claude 账号", icon: KeyRound, external: true },
     ],
   },
   {
@@ -57,6 +58,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/tasks": "充值任务",
   "/admin/cards": "VCC 卡池",
   "/admin/channels": "渠道状态",
+  "/cce/ui": "Claude 账号",
   "/admin/settings": "系统设置",
 };
 
@@ -100,6 +102,21 @@ export function AdminShell({ children }: { children: ReactNode }) {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = item.href === "/admin" ? pathname === "/admin" : pathname.startsWith(item.href);
+                // The console is a separate document; a full navigation keeps its own routing.
+                if ("external" in item && item.external) {
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-xs text-slate-400 transition hover:bg-white/[0.04] hover:text-slate-200"
+                    >
+                      <Icon size={15} strokeWidth={1.8} />
+                      {item.label}
+                    </a>
+                  );
+                }
                 return (
                   <Link
                     key={item.href}
