@@ -31,6 +31,7 @@ from app.services.payments.desensitize import OfficialPaymentGatewayMixin
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_API_BASE = "https://api.mch.weixin.qq.com"
 NATIVE_PATH = "/v3/pay/transactions/native"
 
 # Reserved keys the callback route injects so the signature can be rebuilt.
@@ -53,7 +54,7 @@ class WechatNativeProvider(OfficialPaymentGatewayMixin, PaymentProvider):
         self.app_id = runtime.get("wechat_app_id")
         self.mch_id = runtime.get("wechat_mch_id")
         self.mch_serial_no = runtime.get("wechat_mch_serial_no")
-        self.api_base = runtime.get("wechat_api_base", settings.wechat_api_base) or settings.wechat_api_base
+        self.api_base = runtime.get("wechat_api_base", settings.wechat_api_base) or DEFAULT_API_BASE
         self.notify_url = runtime.get("wechat_notify_url", settings.wechat_notify) or settings.wechat_notify
         self.apiv3_key = runtime.get("wechat_apiv3_key")
         private_key = runtime.get("wechat_mch_private_key")

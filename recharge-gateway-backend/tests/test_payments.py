@@ -60,6 +60,8 @@ def test_gateways_tolerate_blank_api_base(monkeypatch, rsa_pair):
     monkeypatch.setattr(settings, "alipay_app_id", "2021000000000000")
     monkeypatch.setattr(settings, "alipay_app_private_key", private_pem)
     monkeypatch.setattr(settings, "alipay_public_key", public_pem)
+    # Simulate `ALIPAY_API_BASE=` in .env: settings itself is blank.
+    monkeypatch.setattr(settings, "alipay_api_base", "")
     original = runtime_settings.get
     monkeypatch.setattr(
         runtime_settings,

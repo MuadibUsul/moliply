@@ -29,6 +29,7 @@ from app.services.payments.desensitize import OfficialPaymentGatewayMixin
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_API_BASE = "https://openapi.alipay.com"
 SUCCESS_STATES = {"TRADE_SUCCESS", "TRADE_FINISHED"}
 
 
@@ -57,7 +58,7 @@ class AlipayF2FProvider(OfficialPaymentGatewayMixin, PaymentProvider):
 
     def __init__(self) -> None:
         self.app_id = runtime.get("alipay_app_id")
-        self.api_base = runtime.get("alipay_api_base", settings.alipay_api_base) or settings.alipay_api_base
+        self.api_base = runtime.get("alipay_api_base", settings.alipay_api_base) or DEFAULT_API_BASE
         self.notify_url = runtime.get("alipay_notify_url", settings.alipay_notify) or settings.alipay_notify
         private_key = runtime.get("alipay_app_private_key")
         alipay_public_key = runtime.get("alipay_public_key")
