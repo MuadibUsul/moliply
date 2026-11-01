@@ -111,7 +111,13 @@ def _attempt_upstream(db: Session, task: RechargeTask, code: ActivationCode, ses
     db.commit()
     _set_state(db, task, RechargeState.PAYING)
     upstream_code = decrypt_text(code.upstream_code_enc) if code.upstream_code_enc else None
-    result = UpstreamProvider().create_recharge(session.raw, code.sku_type.value, upstream_code)
+    # Redemption channels want the sessionToken (or a JSON carrying it); the
+    # accessToken alone is not accepted. Claude is the opposite: the raw
+    # sessionKey is exactly right, and its raw can be a whole cookie string.
+    credential = (
+        (session.session_token or session.raw) if session.kind == "chatgpt" else session.access_token
+    )
+    result = UpstreamProvider().create_recharge(credential, code.sku_type.value, upstream_code)
     if result.status != "SUCCESS":
         raise RechargeError(
             "UPSTREAM_PENDING",

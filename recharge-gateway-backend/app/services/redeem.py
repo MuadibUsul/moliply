@@ -449,12 +449,14 @@ def _reconstruct_session(task: RechargeTask) -> SessionInfo:
             access_token=token,
             raw=token,
             expires_at=utcnow() + timedelta(hours=1),
+            session_token=token,
         )
     reconstructed = json.dumps(
         {
             "accessToken": token,
             "user": {"id": task.target_user_id, "email": task.target_email},
             "expires": (utcnow() + timedelta(hours=1)).isoformat() + "Z",
+            "sessionToken": token,
         }
     )
     return parse_session(reconstructed)

@@ -95,9 +95,12 @@ class YunshuSupplier:
             raise SupplierRejected("上游报价异常") from exc
 
     def deliver(self, sku: str, session_raw: str, request_no: str, contact: str) -> SupplierResult:
+        code = self._code(sku)
         order = self._post(
             "/order",
-            {**self._common(sku), "num": 1, "contact": contact, "request_no": request_no},
+            # ``shared_code`` is how /order names the product; other calls use ``code``.
+            {**self._common(sku), "shared_code": code, "num": 1,
+             "contact": contact, "request_no": request_no},
         )
         trade_no = str(order.get("tradeNo") or "")
         secret = str(order.get("secret") or "")
@@ -108,12 +111,12 @@ class YunshuSupplier:
         if str(order.get("status") or "").lower() not in SUCCESS_STATES | PENDING_STATES:
             logger.warning("Yunshu order %s status=%s", trade_no, order.get("status"))
 
-        check = self._post("/check", {"tradeNo": trade_no, "code": self._code(sku), "secret": secret,
+        check = self._post("/check", {"tradeNo": trade_no, "code": code, "secret": secret,
                                       "session": session_raw})
         if str(check.get("status") or "").lower() in FAILED_STATES:
             raise SupplierRejected(str(check.get("message") or "上游预检未通过"))
 
-        self._post("/redeem", {"tradeNo": trade_no, "code": self._code(sku), "secret": secret,
+        self._post("/redeem", {"tradeNo": trade_no, "code": code, "secret": secret,
                                "session": session_raw})
         return self.poll(trade_no, secret, sku)
 

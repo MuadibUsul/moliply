@@ -62,6 +62,9 @@ class SessionInfo:
     plan: str = "unknown"
     display_name: str = ""
     currency_hint: str | None = None
+    # Kept verbatim: the upstream redemption channel accepts sessionToken or a
+    # JSON carrying it, and rejects accessToken on its own.
+    session_token: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -179,6 +182,7 @@ def parse_session(raw: str) -> SessionInfo:
             access_token=token,
             raw=text,
             expires_at=datetime.utcnow() + timedelta(hours=12),
+            session_token=token,
             plan="unknown",
         )
 
@@ -233,6 +237,7 @@ def parse_session(raw: str) -> SessionInfo:
         access_token=access_token.strip(),
         raw=text,
         expires_at=expires_at,
+        session_token=str(data.get("sessionToken") or data.get("session_token") or "").strip(),
         plan=plan,
         display_name=str(user.get("name") or ""),
         currency_hint=currency_hint,

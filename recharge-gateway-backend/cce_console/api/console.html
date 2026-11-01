@@ -192,6 +192,7 @@ function toast(msg, err) {
 
 async function api(path, opts = {}) {
   const res = await fetch(B + path, {
+    credentials: "same-origin",
     ...opts,
     headers: {
       ...(TOKEN ? { "x-admin-token": TOKEN } : {}),
@@ -523,7 +524,13 @@ $("#btn-refresh").onclick = () => { loadFleet(); toast("已刷新"); };
 if (TOKEN) {
   api("/admin/profiles").then(enter).catch(() => logout());
 } else {
-  api("/admin/profiles").then(enter).catch(() => {});
+  api("/admin/profiles")
+    .then(enter)
+    .catch((err) => {
+      // Stay on the gate, but say why instead of looking like a password prompt.
+      const hint = $("#gate p");
+      if (hint) hint.textContent = "会话校验失败：" + err.message;
+    });
 }
 </script>
 </body>

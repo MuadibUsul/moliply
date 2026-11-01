@@ -28,6 +28,7 @@ from typing import Any, Iterator
 
 from app.suppliers.base import SupplierRejected, SupplierUncertain, SupplierUnavailable
 from app.suppliers.yunshu import YunshuSupplier
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
@@ -75,6 +76,16 @@ CREATE TABLE IF NOT EXISTS stock (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_stock_sku ON stock(sku, status);
+CREATE TABLE IF NOT EXISTS supplier_config (
+    name TEXT PRIMARY KEY,
+    token TEXT NOT NULL DEFAULT '',
+    api_base TEXT NOT NULL DEFAULT '',
+    sku_map TEXT NOT NULL DEFAULT '',
+    catalog_race TEXT NOT NULL DEFAULT '',
+    sku_options TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -157,24 +168,63 @@ class Claim:
 
 
 def build_supplier():
-    """Construct the configured supplier, or None when running manual/stock."""
+    """Construct the configured supplier, or None when running manual/stock.
+
+    The database row wins over the environment so a key entered in the store
+    admin takes effect without a redeploy; env stays the bootstrap default.
+    """
     if SUPPLIER_NAME != "yunshu":
         return None
-    token = os.environ.get("YUNSHU_TOKEN", "")
+    row = supplier_config(SUPPLIER_NAME)
+    token = (row or {}).get("token") or os.environ.get("YUNSHU_TOKEN", "")
     if not token:
         return None
+    raw_map = (row or {}).get("sku_map") or os.environ.get("YUNSHU_SKU_MAP", "")
     mapping: dict[str, str] = {}
-    for pair in os.environ.get("YUNSHU_SKU_MAP", "").split(","):
+    for pair in raw_map.split(","):
         if "=" in pair:
             local, remote = pair.split("=", 1)
-            mapping[local.strip()] = remote.strip()
+            if local.strip() and remote.strip():
+                mapping[local.strip()] = remote.strip()
     return YunshuSupplier(
-        os.environ.get("YUNSHU_API_BASE", "https://yunshutoken.com/partner/v1"),
+        (row or {}).get("api_base") or os.environ.get("YUNSHU_API_BASE", "https://yunshutoken.com/partner/v1"),
         token,
         mapping,
-        catalog_race=os.environ.get("YUNSHU_RACE", ""),
-        sku_options=os.environ.get("YUNSHU_SKU", ""),
+        catalog_race=(row or {}).get("catalog_race") or os.environ.get("YUNSHU_RACE", ""),
+        sku_options=(row or {}).get("sku_options") or os.environ.get("YUNSHU_SKU", ""),
     )
+
+
+def supplier_config(name: str) -> dict[str, Any] | None:
+    with db() as connection:
+        row = connection.execute(
+            "SELECT token, api_base, sku_map, catalog_race, sku_options, enabled FROM supplier_config WHERE name=?",
+            (name,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_supplier_config(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Upsert one supplier row. Empty token keeps the stored one."""
+    current = supplier_config(name) or {}
+    merged = {
+        "token": values.get("token") or current.get("token", ""),
+        "api_base": values.get("api_base", current.get("api_base", "")),
+        "sku_map": values.get("sku_map", current.get("sku_map", "")),
+        "catalog_race": values.get("catalog_race", current.get("catalog_race", "")),
+        "sku_options": values.get("sku_options", current.get("sku_options", "")),
+        "enabled": int(bool(values.get("enabled", current.get("enabled", 0)))),
+    }
+    with db() as connection:
+        connection.execute(
+            "INSERT INTO supplier_config(name, token, api_base, sku_map, catalog_race, sku_options, enabled, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET token=excluded.token, "
+            "api_base=excluded.api_base, sku_map=excluded.sku_map, catalog_race=excluded.catalog_race, "
+            "sku_options=excluded.sku_options, enabled=excluded.enabled, updated_at=excluded.updated_at",
+            (name, merged["token"], merged["api_base"], merged["sku_map"], merged["catalog_race"],
+             merged["sku_options"], merged["enabled"], time.time()),
+        )
+    return merged
 
 
 def claim_stock(connection: sqlite3.Connection, sku: str, order_no: str) -> Claim:
@@ -334,6 +384,87 @@ async def order_status(order_no: str, request: Request):
         with db() as connection:
             row = connection.execute("SELECT status, message FROM orders WHERE order_no=?", (order_no,)).fetchone()
     return {"order_no": order_no, "status": row["status"], "message": row["message"]}
+
+
+# ---------------------------------------------------------------------------
+# Channel management, called by the store backend over the same HMAC contract
+# as /api/v1 so no second credential is needed.
+# ---------------------------------------------------------------------------
+class SupplierIn(BaseModel):
+    token: str | None = Field(default=None, max_length=200)
+    api_base: str | None = Field(default=None, max_length=300)
+    sku_map: str | None = Field(default=None, max_length=4000)
+    catalog_race: str | None = Field(default=None, max_length=200)
+    sku_options: str | None = Field(default=None, max_length=400)
+    enabled: bool | None = None
+
+
+@app.post("/api/v1/supplier")
+async def set_supplier(request: Request):
+    body = (await request.body()).decode("utf-8")
+    authenticate(request, body)
+    if SUPPLIER_NAME != "yunshu":
+        raise HTTPException(400, f"unsupported supplier: {SUPPLIER_NAME or 'none'}")
+    try:
+        values = SupplierIn(**json.loads(body or "{}")).model_dump(exclude_none=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"invalid payload: {exc}") from exc
+    saved = save_supplier_config(SUPPLIER_NAME, values)
+    return {"supplier": SUPPLIER_NAME, "configured": bool(saved["token"]), "enabled": bool(saved["enabled"])}
+
+
+@app.get("/api/v1/supplier")
+def get_supplier(request: Request):
+    authenticate(request, "")
+    row = supplier_config(SUPPLIER_NAME) or {}
+    env_token = os.environ.get("YUNSHU_TOKEN", "")
+    return {
+        "supplier": SUPPLIER_NAME,
+        "configured": bool(row.get("token") or env_token),
+        "source": "database" if row.get("token") else ("environment" if env_token else "none"),
+        # The secret is only ever returned masked.
+        "token_hint": (row.get("token") or env_token)[:8],
+        "api_base": row.get("api_base") or os.environ.get("YUNSHU_API_BASE", ""),
+        "sku_map": row.get("sku_map") or os.environ.get("YUNSHU_SKU_MAP", ""),
+        "catalog_race": row.get("catalog_race") or os.environ.get("YUNSHU_RACE", ""),
+        "sku_options": row.get("sku_options") or os.environ.get("YUNSHU_SKU", ""),
+        "enabled": bool(row.get("enabled")),
+        "fulfill_mode": FULFILL_MODE,
+    }
+
+
+@app.post("/api/v1/supplier/probe")
+async def probe_supplier(request: Request):
+    """Check the key and pull a live quote, without spending anything."""
+    body = (await request.body()).decode("utf-8")
+    authenticate(request, body)
+    supplier = build_supplier()
+    if supplier is None:
+        raise HTTPException(400, "上游未配置密钥")
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{supplier.base}/connect",
+                headers={"Authorization": f"Bearer {supplier.token}"},
+            )
+        if response.status_code >= 400:
+            raise HTTPException(400, f"密钥校验失败：HTTP {response.status_code} {response.text[:120]}")
+        payload = response.json()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"无法连接上游：{exc}") from exc
+    if str(payload.get("code")) != "200":
+        raise HTTPException(400, str(payload.get("msg") or "上游拒绝该密钥"))
+    data = payload.get("data") or {}
+
+    quotes: list[dict[str, Any]] = []
+    for local, remote in supplier.sku_map.items():
+        try:
+            quotes.append({"sku": local, "code": remote, "price_cents": supplier.quote(local, "MOLIPLY")})
+        except Exception as exc:  # noqa: BLE001
+            quotes.append({"sku": local, "code": remote, "error": str(exc)[:160]})
+    return {"shop": data.get("shopName"), "balance": data.get("balance"), "quotes": quotes}
 
 
 # ---------------------------------------------------------------------------
