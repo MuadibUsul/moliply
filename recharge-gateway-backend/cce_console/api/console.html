@@ -155,7 +155,11 @@
   </section>
 </div>
 
-<div class="gate" id="gate">
+<div class="gate" id="boot">
+  <p>正在进入…</p>
+</div>
+
+<div class="gate" id="gate" hidden>
   <h1>Claude 账号管理台</h1>
   <p>已登录运营后台可直接进入；否则输入管理密码</p>
   <div class="field"><input id="token" type="password" placeholder="管理密码" autocomplete="current-password"></div>
@@ -223,14 +227,17 @@ $("#btn-login").onclick = async () => {
 $("#token").addEventListener("keydown", (e) => e.key === "Enter" && $("#btn-login").click());
 
 function logout() {
+  TOKEN = "";
   localStorage.removeItem("cce_token");
   $("#app").hidden = true;
-  $("#gate").style.display = "";
+  $("#boot").hidden = true;
+  $("#gate").hidden = false;
 }
 $("#btn-logout").onclick = logout;
 
 function enter() {
-  $("#gate").style.display = "none";
+  $("#boot").hidden = true;
+  $("#gate").hidden = true;
   $("#app").hidden = false;
   loadFleet();
   loadClients();
@@ -519,17 +526,18 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 $("#btn-refresh").onclick = () => { loadFleet(); toast("已刷新"); };
 
-if (TOKEN) {
-  api("/admin/profiles").then(enter).catch(() => logout());
-} else {
-  api("/admin/profiles")
-    .then(enter)
-    .catch((err) => {
-      // Stay on the gate, but say why instead of looking like a password prompt.
-      const hint = $("#gate p");
-      if (hint) hint.textContent = "会话校验失败：" + err.message;
-    });
-}
+// Boot straight through: the admin session cookie usually covers us, so the
+// password gate only appears when that fails. Nothing is shown while probing.
+api("/admin/profiles")
+  .then(enter)
+  .catch((err) => {
+    // api() already cleared the token on 401; keep it if the probe failed for
+    // another reason so the operator is not asked to retype it.
+    $("#boot").hidden = true;
+    $("#gate").hidden = false;
+    const hint = $("#gate p");
+    if (hint) hint.textContent = TOKEN ? "会话校验失败：" + err.message : "已登录运营后台可直接进入；否则输入管理密码";
+  });
 </script>
 </body>
 </html>

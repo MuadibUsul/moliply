@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, BadgeCheck, CircleDollarSign, KeyRound, Loader2, PlugZap, RefreshCw } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleDollarSign, KeyRound, Link2, Loader2, PlugZap, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { handleAdminError } from "@/lib/admin";
@@ -17,6 +17,12 @@ type SupplierConfig = {
   sku_options: string;
   enabled: boolean;
   fulfill_mode: string;
+};
+
+/** Store -> upstream-service link, saved in the store, not on the service. */
+type LinkSettings = {
+  values: Record<string, string>;
+  secret_configured: Record<string, boolean>;
 };
 
 type Quote = { sku: string; code: string; price_cents?: number; priceText?: string; error?: string };
@@ -48,8 +54,12 @@ export default function SupplierChannelPage() {
   const [token, setToken] = useState("");
   const [form, setForm] = useState({ api_base: "", sku_map: "", catalog_race: "", sku_options: "", enabled: false });
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [link, setLink] = useState<LinkSettings | null>(null);
+  const [linkValues, setLinkValues] = useState<Record<string, string>>({});
+  const [linkSecrets, setLinkSecrets] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingLink, setSavingLink] = useState(false);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -58,14 +68,25 @@ export default function SupplierChannelPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<SupplierConfig>("/api/v1/admin/channels/supplier");
+      const [data, linkData] = await Promise.all([
+        api<SupplierConfig>("/api/v1/admin/channels/supplier"),
+        api<LinkSettings>("/api/v1/admin/settings"),
+      ]);
       setConfig(data);
+      setLink(linkData);
       setForm({
         api_base: data.api_base || "",
         sku_map: data.sku_map || "",
         catalog_race: data.catalog_race || "",
         sku_options: data.sku_options || "",
         enabled: data.enabled,
+      });
+      setLinkValues({
+        upstream_mode: linkData.values.upstream_mode || "mock",
+        upstream_api_base: linkData.values.upstream_api_base || "",
+        upstream_allowed_hosts: linkData.values.upstream_allowed_hosts || "",
+        upstream_max_wait_seconds: linkData.values.upstream_max_wait_seconds || "180",
+        upstream_poll_interval_seconds: linkData.values.upstream_poll_interval_seconds || "5",
       });
     } catch (err) {
       setError(handleAdminError(err));
@@ -101,6 +122,25 @@ export default function SupplierChannelPage() {
       setError(handleAdminError(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveLink() {
+    setSavingLink(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const values: Record<string, string> = { ...linkValues };
+      if (linkSecrets.upstream_api_key?.trim()) values.upstream_api_key = linkSecrets.upstream_api_key.trim();
+      if (linkSecrets.upstream_api_secret?.trim()) values.upstream_api_secret = linkSecrets.upstream_api_secret.trim();
+      const result = await api<LinkSettings>("/api/v1/admin/settings", { method: "PATCH", body: { values } });
+      setLink(result);
+      setLinkSecrets({});
+      setNotice("通路参数已保存");
+    } catch (err) {
+      setError(handleAdminError(err));
+    } finally {
+      setSavingLink(false);
     }
   }
 
@@ -265,6 +305,92 @@ export default function SupplierChannelPage() {
         <p className="mt-3 text-[10px] leading-5 text-slate-600">
           测试只调用余额与报价接口，不扣款、不下单。
         </p>
+      </section>
+
+      <section className="admin-card mt-4">
+        <div className="flex items-center gap-2.5">
+          <Link2 size={16} className="text-slate-300" />
+          <h2 className="text-base font-semibold text-slate-100">商城 → 上游服务通路</h2>
+        </div>
+        <p className="mt-2 text-[11px] leading-6 text-slate-500">
+          商城调用自建上游服务时使用的地址与签名密钥。服务部署时已自动生成，通常只需确认 API Base。
+        </p>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <Field label="通道模式" hint="mock 只用于演示，接真实客户必须选真实 HTTP。">
+            <select
+              value={linkValues.upstream_mode || "mock"}
+              onChange={(event) => setLinkValues({ ...linkValues, upstream_mode: event.target.value })}
+              className="admin-input w-full py-2.5"
+            >
+              <option value="mock">模拟</option>
+              <option value="http">真实 HTTP</option>
+            </select>
+          </Field>
+          <Field label="API Base" hint="生产环境必须为 HTTPS。">
+            <input
+              value={linkValues.upstream_api_base || ""}
+              onChange={(event) => setLinkValues({ ...linkValues, upstream_api_base: event.target.value })}
+              placeholder="https://moliply.shop/upstream"
+              className="admin-input w-full py-2.5"
+            />
+          </Field>
+          <Field label="允许的上游域名（可选）" hint="逗号分隔；留空表示任意 HTTPS 域名。">
+            <input
+              value={linkValues.upstream_allowed_hosts || ""}
+              onChange={(event) => setLinkValues({ ...linkValues, upstream_allowed_hosts: event.target.value })}
+              placeholder="moliply.shop"
+              className="admin-input w-full py-2.5"
+            />
+          </Field>
+          <Field label="最长等待秒数">
+            <input
+              type="number"
+              value={linkValues.upstream_max_wait_seconds || "180"}
+              onChange={(event) => setLinkValues({ ...linkValues, upstream_max_wait_seconds: event.target.value })}
+              className="admin-input w-full py-2.5"
+            />
+          </Field>
+          <Field label="轮询间隔秒数">
+            <input
+              type="number"
+              step="0.5"
+              value={linkValues.upstream_poll_interval_seconds || "5"}
+              onChange={(event) => setLinkValues({ ...linkValues, upstream_poll_interval_seconds: event.target.value })}
+              className="admin-input w-full py-2.5"
+            />
+          </Field>
+          <Field label="API Key" hint="与上游服务 .env 的 UPSTREAM_KEY 一致。">
+            <input
+              type="password"
+              value={linkSecrets.upstream_api_key || ""}
+              onChange={(event) => setLinkSecrets({ ...linkSecrets, upstream_api_key: event.target.value })}
+              placeholder={link?.secret_configured.upstream_api_key ? "已配置，留空保持不变" : "尚未配置"}
+              className="admin-input w-full py-2.5"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="API Secret" hint="与上游服务 .env 的 UPSTREAM_SECRET 一致。">
+            <input
+              type="password"
+              value={linkSecrets.upstream_api_secret || ""}
+              onChange={(event) => setLinkSecrets({ ...linkSecrets, upstream_api_secret: event.target.value })}
+              placeholder={link?.secret_configured.upstream_api_secret ? "已配置，留空保持不变" : "尚未配置"}
+              className="admin-input w-full py-2.5"
+              autoComplete="off"
+            />
+          </Field>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void saveLink()}
+          disabled={savingLink}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg border border-white/[0.1] px-4 py-2 text-[11px] text-slate-300 disabled:opacity-50"
+        >
+          {savingLink ? <Loader2 size={13} className="animate-spin" /> : <BadgeCheck size={13} />}
+          保存通路参数
+        </button>
       </section>
 
       {probe && (

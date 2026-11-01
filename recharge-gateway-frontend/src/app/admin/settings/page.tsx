@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowUpRight,
   BellRing,
   Bitcoin,
   CheckCircle2,
@@ -25,6 +26,23 @@ import { formatDateTime } from "@/lib/format";
 import type { AdminSettings, FeishuEventOption } from "@/lib/types";
 
 type FormValue = string | number | boolean;
+
+type SettingsTab = "payment" | "crypto" | "fulfillment" | "support" | "operations";
+
+/** Groups the long form so a tab shows a handful of fields instead of all of them. */
+const SETTINGS_TABS: {
+  key: SettingsTab;
+  label: string;
+  icon: typeof CreditCard;
+  hint: string;
+  readyKey: "payment_ready" | "crypto_ready" | "upstream_ready" | "support_ready" | "feishu_ready";
+}[] = [
+  { key: "payment", label: "收款通道", icon: CreditCard, hint: "微信/支付宝官方商户号", readyKey: "payment_ready" },
+  { key: "crypto", label: "加密收款", icon: Bitcoin, hint: "自有钱包或 NOWPayments", readyKey: "crypto_ready" },
+  { key: "fulfillment", label: "履约通道", icon: ServerCog, hint: "上游服务与自营卡池", readyKey: "upstream_ready" },
+  { key: "support", label: "客服与通知", icon: MessageCircle, hint: "客服信息、飞书机器人", readyKey: "feishu_ready" },
+  { key: "operations", label: "订单与邮件", icon: Package, hint: "支付有效期、SMTP", readyKey: "support_ready" },
+];
 
 function Field({
   label,
@@ -89,6 +107,8 @@ function StatusChip({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
+/** Small dot used by the settings sidebar to show configured state at a glance. */
+
 function Section({
   icon: Icon,
   title,
@@ -127,6 +147,7 @@ export default function AdminSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("payment");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,21 +337,45 @@ export default function AdminSettingsPage() {
         </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        <StatusChip ok={data.payment_ready} label={data.payment_ready ? "支付密钥已配置" : "支付密钥待配置"} />
-        <StatusChip ok={data.crypto_ready} label={data.crypto_ready ? "加密支付已配置" : "加密支付待配置"} />
-        <StatusChip ok={data.upstream_ready} label={data.upstream_ready ? "上游通道已配置" : "上游通道待配置"} />
-        <StatusChip ok={data.support_ready} label={data.support_ready ? "客服已配置" : "客服待配置"} />
-        <StatusChip ok={data.feishu_ready} label={data.feishu_ready ? "飞书已配置" : "飞书待配置"} />
-      </div>
-
       {error && (
         <div className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/[0.07] px-4 py-3 text-[11px] text-rose-200">
           {error}
         </div>
       )}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[224px_minmax(0,1fr)]">
+        <nav className="flex gap-1.5 overflow-x-auto lg:sticky lg:top-[80px] lg:h-fit lg:flex-col lg:overflow-visible">
+          {SETTINGS_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.key;
+            const ready = data[tab.readyKey];
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition lg:w-full ${
+                  active
+                    ? "border-brand-400/30 bg-brand-500/[0.12] text-white"
+                    : "border-transparent text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                }`}
+              >
+                <Icon size={15} className={active ? "text-brand-300" : "text-slate-500"} />
+                <span className="flex-1">
+                  <span className="block text-[11px] font-medium">{tab.label}</span>
+                  <span className="mt-0.5 hidden text-[9px] text-slate-600 lg:block">{tab.hint}</span>
+                </span>
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${ready ? "bg-emerald-400" : "bg-slate-700"}`}
+                  title={ready ? "已配置" : "待配置"}
+                />
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="grid gap-4">
+        <div className={activeTab === "payment" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={CreditCard} title="支付通道" description="直接对接个体户官方微信/支付宝商户号。商品名统一脱敏为「前缀-订单号」，可在下方预览。">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="支付模式">
@@ -404,7 +449,9 @@ export default function AdminSettingsPage() {
             </Field>
           </div>
         </Section>
+        </div>
 
+        <div className={activeTab === "crypto" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={Bitcoin} title="加密货币支付" description="支持自建 USDT-TRC20 直收（资金直达自有钱包）或 NOWPayments 托管收银台。">
           <Toggle
             label="启用加密货币支付"
@@ -485,39 +532,30 @@ export default function AdminSettingsPage() {
             </Field>
           </div>
         </Section>
+        </div>
 
-        <Section icon={ServerCog} title="上游代充通道" description="供应商密钥与套餐映射已移到独立的「上游渠道」页；这里只保留本机通路参数。mock 模式只用于演示，不能接真实客户。">
-          <div className="rounded-xl border border-brand-400/15 bg-brand-500/[0.06] px-4 py-3 text-[11px] leading-6 text-slate-400">
-            云枢密钥、套餐映射与取价测试在
-            <Link href="/admin/channels/supplier" className="mx-1 text-brand-300 underline underline-offset-2">
-              上游渠道
-            </Link>
-            页配置。
-          </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Field label="通道模式">
-              <select value={text("upstream_mode", "mock")} onChange={(event) => setValue("upstream_mode", event.target.value)} className="admin-input w-full py-2.5">
-                <option value="mock">模拟</option>
-                <option value="http">真实 HTTP</option>
-              </select>
-            </Field>
-            <Field label="API Base" hint="指向自建上游服务，生产环境必须为 HTTPS">
-              <input value={text("upstream_api_base")} onChange={(event) => setValue("upstream_api_base", event.target.value)} className="admin-input w-full py-2.5" />
-            </Field>
-            <Field label="允许的上游域名（可选）" hint="逗号分隔；留空表示任意 HTTPS 域名">
-              <input value={text("upstream_allowed_hosts")} onChange={(event) => setValue("upstream_allowed_hosts", event.target.value)} className="admin-input w-full py-2.5" placeholder="api.supplier.com,.supplier.net" />
-            </Field>
-            {secretProps("upstream_api_key", "API Key（商城 → 上游服务）", data.secret_configured.upstream_api_key)}
-            {secretProps("upstream_api_secret", "API Secret（商城 → 上游服务）", data.secret_configured.upstream_api_secret)}
-            <Field label="最长等待秒数">
-              <input type="number" value={text("upstream_max_wait_seconds", "180")} onChange={(event) => setValue("upstream_max_wait_seconds", event.target.value)} className="admin-input w-full py-2.5" />
-            </Field>
-            <Field label="轮询间隔秒数">
-              <input type="number" step="0.5" value={text("upstream_poll_interval_seconds", "5")} onChange={(event) => setValue("upstream_poll_interval_seconds", event.target.value)} className="admin-input w-full py-2.5" />
-            </Field>
-          </div>
+        <div className={activeTab === "fulfillment" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
+        <Section icon={ServerCog} title="上游代充通道" description="供应商密钥、套餐映射、取价测试与通路参数都在独立页面集中管理。">
+          <Link
+            href="/admin/channels/supplier"
+            className="flex items-center justify-between rounded-xl border border-brand-400/15 bg-brand-500/[0.06] px-4 py-3 text-[11px] text-slate-300 transition hover:border-brand-400/30 hover:text-white"
+          >
+            <span>
+              <span className="block text-slate-200">前往上游渠道</span>
+              <span className="mt-1 block text-[10px] leading-5 text-slate-500">
+                填写云枢密钥、绑定套餐、测试连接与实时取价
+              </span>
+            </span>
+            <ArrowUpRight size={14} className="shrink-0 text-brand-300" />
+          </Link>
+          <p className="mt-3 text-[10px] leading-5 text-slate-600">
+            通道模式：{text("upstream_mode", "mock") === "http" ? "真实 HTTP" : "模拟（不能接真实客户）"}
+            。切换模式与启停履约开关都在上游渠道页完成。
+          </p>
         </Section>
+        </div>
 
+        <div className={activeTab === "fulfillment" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={WalletCards} title="自营 VCC 通道" description="RDVCC 卡池、美国住宅代理与 IMAP 3DS 邮箱。首次启用请保持演练模式。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Toggle label="启用自营通道" checked={bool("self_vcc_enabled")} onChange={(checked) => setValue("self_vcc_enabled", checked)} />
@@ -580,7 +618,9 @@ export default function AdminSettingsPage() {
             </Field>
           </div>
         </Section>
+        </div>
 
+        <div className={activeTab === "support" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={MessageCircle} title="客服设置" description="客服微信号与在线时间会直接显示在帮助中心，无需重新构建前端。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="客服微信">
@@ -591,7 +631,9 @@ export default function AdminSettingsPage() {
             </Field>
           </div>
         </Section>
+        </div>
 
+        <div className={activeTab === "support" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={BellRing} title="飞书管理通知" description="配置飞书自定义机器人 Webhook，并勾选需要通知的生产事件。">
           <div className="grid gap-3 sm:grid-cols-2">
             {secretProps("feishu_webhook_url", "飞书 Webhook URL", data.secret_configured.feishu_webhook_url, "群机器人 → 添加自定义机器人 → 复制 Webhook")}
@@ -671,7 +713,9 @@ export default function AdminSettingsPage() {
             )}
           </div>
         </Section>
+        </div>
 
+        <div className={activeTab === "operations" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={Package} title="订单与库存" description="控制下单后的支付有效期与库存拦截。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="订单支付有效期（分钟）">
@@ -685,7 +729,9 @@ export default function AdminSettingsPage() {
             />
           </div>
         </Section>
+        </div>
 
+        <div className={activeTab === "operations" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
         <Section icon={MessageCircle} title="SMTP 发货邮件（可选）" description="系统不依赖邮件；配置后支付成功可额外发送交付通知。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="SMTP 主机">
@@ -709,6 +755,8 @@ export default function AdminSettingsPage() {
             </Field>
           </div>
         </Section>
+        </div>
+        </div>
       </div>
 
       <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.015] px-4 py-3">
