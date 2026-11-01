@@ -26,6 +26,7 @@ export default function AdminTasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [resolving, setResolving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,6 +51,21 @@ export default function AdminTasksPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function resolve(taskId: string, success: boolean) {
+    const label = success ? "成功（卡密将被核销）" : "失败（卡密退回可用）";
+    if (!window.confirm(`已到上游/卡台核对过？确认按${label}处理。`)) return;
+    setResolving(taskId);
+    setError(null);
+    try {
+      await api(`/api/v1/admin/tasks/${taskId}/resolve?success=${success}`, { method: "POST" });
+      await load();
+    } catch (err) {
+      setError(handleAdminError(err));
+    } finally {
+      setResolving(null);
+    }
+  }
 
   async function retry(taskId: string) {
     if (!window.confirm("确认重新执行该充值任务？系统将使用已保存的 Session 凭证重试。")) return;
@@ -164,15 +180,33 @@ export default function AdminTasksPage() {
                     <td className="text-[10px] text-slate-600">{formatDateTime(task.created_at)}</td>
                     <td>
                       {task.state === "FAILED" ? (
-                        <button
-                          type="button"
-                          disabled={retrying === task.task_id}
-                          onClick={() => void retry(task.task_id)}
-                          className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200 disabled:opacity-40"
-                        >
-                          {retrying === task.task_id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
-                          重试
-                        </button>
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            disabled={retrying === task.task_id}
+                            onClick={() => void retry(task.task_id)}
+                            className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200 disabled:opacity-40"
+                          >
+                            {retrying === task.task_id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+                            重试
+                          </button>
+                          <button
+                            type="button"
+                            disabled={resolving === task.task_id}
+                            onClick={() => void resolve(task.task_id, true)}
+                            className="text-left text-[10px] text-emerald-300 hover:text-emerald-200 disabled:opacity-40"
+                          >
+                            核对成功
+                          </button>
+                          <button
+                            type="button"
+                            disabled={resolving === task.task_id}
+                            onClick={() => void resolve(task.task_id, false)}
+                            className="text-left text-[10px] text-rose-300 hover:text-rose-200 disabled:opacity-40"
+                          >
+                            核对失败
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-[10px] text-slate-700">—</span>
                       )}
@@ -212,7 +246,7 @@ export default function AdminTasksPage() {
       </div>
 
       <div className="mt-4 rounded-xl border border-white/[0.055] bg-white/[0.015] px-4 py-3 text-[10px] leading-5 text-slate-600">
-        失败任务在可恢复场景下会自动释放激活码；若任务提示「需人工确认」或卡密仍为执行中，请核对上游订单后再决定重试。
+        超时或「需人工确认」的任务不能自动重试（上游可能已扣款）：先到上游核对，再用「核对成功 / 核对失败」收尾。
         Session 凭证在任务结束 5 分钟后自动清除，届时无法重试，需让用户重新提交。
       </div>
     </div>

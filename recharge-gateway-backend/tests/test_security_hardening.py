@@ -278,3 +278,36 @@ def test_redelivery_after_payment_submission_goes_to_manual_review(db):
     with pytest.raises(Exception) as exc:
         retry_task(db, task.task_id)
     assert getattr(exc.value, "code", "") == "MANUAL_REVIEW_REQUIRED"
+
+
+def _resolve_fixture(db, error_code: str):
+    code, task = _code_and_task(db, RechargeState.CHECKING_ACCOUNT)
+    task.state = RechargeState.FAILED
+    task.error_code = error_code
+    db.commit()
+    db.expire_all()
+    assert db.get(RechargeTask, task.task_id).error_code == error_code
+    return code, task.task_id
+
+
+def test_manual_resolution_success_consumes_the_code(client, admin_headers, db):
+    code, task_id = _resolve_fixture(db, "UPSTREAM_TIMEOUT")
+    response = client.post(f"/api/v1/admin/tasks/{task_id}/resolve?success=true", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    assert db.get(RechargeTask, task_id).state == RechargeState.SUCCESS
+    assert db.get(ActivationCode, code.id).status == CodeStatus.USED
+
+
+def test_manual_resolution_failure_releases_the_code(client, admin_headers, db):
+    code, task_id = _resolve_fixture(db, "UPSTREAM_TIMEOUT")
+    response = client.post(f"/api/v1/admin/tasks/{task_id}/resolve?success=false", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    assert db.get(ActivationCode, code.id).status == CodeStatus.UNUSED
+
+
+def test_manual_resolution_rejects_a_plain_retryable_failure(client, admin_headers, db):
+    _, task_id = _resolve_fixture(db, "UPSTREAM_REJECTED")
+    response = client.post(f"/api/v1/admin/tasks/{task_id}/resolve?success=true", headers=admin_headers)
+    assert response.status_code == 409

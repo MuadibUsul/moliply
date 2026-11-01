@@ -677,6 +677,20 @@ def admin_retry_task(
     return {"task": _serialize_task(db, task)}
 
 
+@protected.post("/tasks/{task_id}/resolve")
+def admin_resolve_task(
+    task_id: str,
+    request: Request,
+    success: bool = Query(default=True),
+    note: str = Query(default="", max_length=250),
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Close a manual-review task after the operator checked the upstream."""
+    task = redeem_service.resolve_manually(db, task_id, success, note, client_ip(request))
+    return {"task": _serialize_task(db, task)}
+
+
 @protected.post("/tasks/cleanup")
 def admin_cleanup_tokens(db: Session = Depends(get_db)) -> dict:
     count = redeem_service.cleanup_sensitive_tokens(db)

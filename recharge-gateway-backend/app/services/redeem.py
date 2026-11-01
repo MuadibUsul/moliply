@@ -51,6 +51,7 @@ MANUAL_REVIEW_ERRORS = {
     "CHECKOUT_UI_CHANGED",
     "SELF_VCC_ERROR",
     "UPSTREAM_PENDING",
+    "UPSTREAM_TIMEOUT",
     "CARD_DECLINED",
 }
 REDEEMABLE_SKUS = {
@@ -650,6 +651,61 @@ def retry_task(db: Session, task_id: str, ip: str = "") -> RechargeTask:
         link_path="/admin/tasks",
     )
     dispatch_recharge(task.task_id)
+    return task
+
+
+def resolve_manually(
+    db: Session,
+    task_id: str,
+    success: bool,
+    note: str = "",
+    ip: str = "",
+) -> RechargeTask:
+    """Close a manual-review task after checking the upstream result by hand.
+
+    Timeout/manual-review errors block automatic retry because the upstream may
+    already have charged; this is the escape hatch once that is confirmed.
+    """
+    task = db.get(RechargeTask, task_id)
+    if not task:
+        raise RedeemError("TASK_NOT_FOUND", "充值任务不存在", 404)
+    if task.state != RechargeState.FAILED:
+        raise RedeemError("TASK_NOT_RESOLVABLE", "仅失败任务可以人工确认", 409)
+    if task.error_code not in MANUAL_REVIEW_ERRORS:
+        raise RedeemError(
+            "TASK_NOT_MANUAL",
+            "该任务可直接重试，无需人工确认",
+            409,
+        )
+    code = db.get(ActivationCode, task.code_id)
+    if not code:
+        raise RedeemError("CODE_NOT_FOUND", "激活码不存在", 404)
+    if success and code.status == CodeStatus.USED:
+        raise RedeemError("CODE_ALREADY_USED", "该激活码已完成核销", 409)
+
+    if success:
+        _finalize_success(db, task, code, note or "人工核对上游后确认成功", task.upstream_order_no or "")
+    else:
+        _finalize_failure(
+            db,
+            task,
+            code,
+            "MANUAL_FAILED",
+            note or "人工核对上游后确认失败，激活码已释放",
+            True,
+        )
+    db.add(
+        AuditLog(
+            actor="admin",
+            action="redeem.manual_" + ("success" if success else "failure"),
+            entity_type="recharge_task",
+            entity_id=task.task_id,
+            detail=note[:250],
+            ip=ip,
+        )
+    )
+    db.commit()
+    db.refresh(task)
     return task
 
 
