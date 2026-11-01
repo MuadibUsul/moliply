@@ -31,6 +31,16 @@ type ProbeResult = {
   shop: string | null;
   balance: string | null;
   quotes: Quote[];
+  mapped: number;
+};
+
+/** Our own list prices, for a margin readout next to the supplier quote. */
+const SELL_PRICE: Record<string, number> = {
+  CHATGPT_PLUS_1M: 158,
+  CLAUDE_PRO_1M: 168,
+  GPT_PRO_100: 649,
+  GPT_PRO_200: 1249,
+  GPT_PRO_500: 2999,
 };
 
 const SOURCE_LABEL: Record<SupplierConfig["source"], string> = {
@@ -99,6 +109,12 @@ export default function SupplierChannelPage() {
     void load();
   }, [load]);
 
+  // Prices are the reason this page exists, so fetch them once the key is
+  // known to be configured instead of hiding them behind a button.
+  useEffect(() => {
+    if (config?.configured) void runProbe();
+  }, [config?.configured]);
+
   async function save() {
     setSaving(true);
     setError(null);
@@ -118,6 +134,7 @@ export default function SupplierChannelPage() {
       setToken("");
       setNotice("已保存");
       await load();
+      await runProbe();
     } catch (err) {
       setError(handleAdminError(err));
     } finally {
@@ -147,12 +164,12 @@ export default function SupplierChannelPage() {
   async function runProbe() {
     setProbing(true);
     setError(null);
-    setNotice(null);
     setProbe(null);
     try {
       setProbe(await api<ProbeResult>("/api/v1/admin/channels/supplier/probe", { method: "POST" }));
     } catch (err) {
       setError(handleAdminError(err));
+      setProbe(null);
     } finally {
       setProbing(false);
     }
@@ -213,6 +230,89 @@ export default function SupplierChannelPage() {
           </p>
         </div>
       </div>
+
+      <section className="admin-card mt-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <CircleDollarSign size={16} className="text-emerald-300" />
+            <h2 className="text-base font-semibold text-slate-100">实时报价与库存</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => void runProbe()}
+            disabled={probing || !config?.configured}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/[0.1] px-3 py-1.5 text-[11px] text-slate-300 disabled:opacity-40"
+          >
+            {probing ? <Loader2 size={12} className="animate-spin" /> : <PlugZap size={12} />}
+            刷新
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <p className="text-[9px] text-slate-600">店铺</p>
+            <p className="mt-1 text-[11px] text-slate-300">{probe?.shop || "—"}</p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <p className="text-[9px] text-slate-600">账号余额</p>
+            <p className={`mt-1 text-[11px] ${Number(probe?.balance ?? 0) > 0 ? "text-slate-300" : "text-amber-300"}`}>
+              {probe?.balance ?? "—"}
+              {probe && Number(probe.balance) <= 0 && <span className="ml-1.5 text-[10px]">余额不足，无法下单</span>}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-left text-[9px] uppercase tracking-[0.16em] text-slate-600">
+                <th className="pb-2">本地 SKU</th>
+                <th className="pb-2">上游商品码</th>
+                <th className="pb-2 text-right">进货价</th>
+                <th className="pb-2 text-right">我们售价</th>
+                <th className="pb-2 text-right">毛利</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(probe?.quotes || []).map((quote) => {
+                const cost = quote.price_cents != null ? quote.price_cents / 100 : null;
+                const sell = SELL_PRICE[quote.sku];
+                const margin = cost != null && sell != null ? sell - cost : null;
+                return (
+                  <tr key={quote.sku} className="border-t border-white/[0.05]">
+                    <td className="py-2 text-slate-300">{quote.sku}</td>
+                    <td className="py-2 font-mono text-[10px] text-slate-500">{quote.code}</td>
+                    <td className="py-2 text-right text-slate-200">
+                      {quote.error ? <span className="text-rose-300">{quote.error}</span> : cost != null ? `¥${cost.toFixed(2)}` : "—"}
+                    </td>
+                    <td className="py-2 text-right text-slate-400">{sell != null ? `¥${sell.toFixed(2)}` : "—"}</td>
+                    <td className={`py-2 text-right ${margin == null ? "text-slate-600" : margin >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                      {margin == null ? "—" : `${margin >= 0 ? "+" : ""}${margin.toFixed(2)}`}
+                    </td>
+                  </tr>
+                );
+              })}
+              {probe && probe.quotes.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-3 text-slate-600">
+                    {probe.mapped === 0 ? "还没配置套餐映射，在下方填写后再刷新。" : "上游未返回报价。"}
+                  </td>
+                </tr>
+              )}
+              {!probe && (
+                <tr>
+                  <td colSpan={5} className="py-3 text-slate-600">
+                    {probing ? "正在取价..." : config?.configured ? "—" : "先填写并保存供应商密钥。"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-[10px] leading-5 text-slate-600">
+          进货价实时取自上游，售价为商品当前挂牌价。取价不扣款、不下单。
+        </p>
+      </section>
 
       <section className="admin-card mt-6">
         <div className="flex items-center gap-2.5">
@@ -299,11 +399,11 @@ export default function SupplierChannelPage() {
             className="inline-flex items-center gap-2 rounded-lg border border-white/[0.1] px-4 py-2 text-[11px] text-slate-300 disabled:opacity-40"
           >
             {probing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
-            测试连接与取价
+            刷新报价
           </button>
         </div>
         <p className="mt-3 text-[10px] leading-5 text-slate-600">
-          测试只调用余额与报价接口，不扣款、不下单。
+          保存后上方报价会自动刷新。取价只调余额与报价接口，不扣款、不下单。
         </p>
       </section>
 
@@ -393,59 +493,6 @@ export default function SupplierChannelPage() {
         </button>
       </section>
 
-      {probe && (
-        <section className="admin-card mt-4">
-          <div className="flex items-center gap-2.5">
-            <CircleDollarSign size={16} className="text-emerald-300" />
-            <h2 className="text-base font-semibold text-slate-100">实时取价</h2>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-              <p className="text-[9px] text-slate-600">店铺</p>
-              <p className="mt-1 text-[11px] text-slate-300">{probe.shop || "—"}</p>
-            </div>
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-              <p className="text-[9px] text-slate-600">余额</p>
-              <p className="mt-1 text-[11px] text-slate-300">{probe.balance ?? "—"}</p>
-            </div>
-          </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-[11px]">
-              <thead>
-                <tr className="text-left text-[9px] uppercase tracking-[0.16em] text-slate-600">
-                  <th className="pb-2">本地 SKU</th>
-                  <th className="pb-2">上游商品码</th>
-                  <th className="pb-2 text-right">进货价</th>
-                </tr>
-              </thead>
-              <tbody>
-                {probe.quotes.map((quote) => (
-                  <tr key={quote.sku} className="border-t border-white/[0.05]">
-                    <td className="py-2 text-slate-300">{quote.sku}</td>
-                    <td className="py-2 font-mono text-[10px] text-slate-500">{quote.code}</td>
-                    <td className="py-2 text-right">
-                      {quote.error ? (
-                        <span className="text-rose-300">{quote.error}</span>
-                      ) : (
-                        <span className="text-slate-200">
-                          {quote.price_cents != null ? `¥${(quote.price_cents / 100).toFixed(2)}` : "—"}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {probe.quotes.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="py-3 text-slate-600">
-                      尚未配置套餐映射，先在上面填写后再测试。
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
 
       {loading && (
         <div className="mt-4 flex items-center gap-2 text-[10px] text-slate-600">
