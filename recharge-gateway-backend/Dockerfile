@@ -23,6 +23,8 @@ RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
     fi
 
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
 
 RUN useradd --create-home --uid 10001 moliply \
     && chown -R moliply:moliply /app
