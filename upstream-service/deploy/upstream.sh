@@ -18,8 +18,10 @@ REL="$UP_DIR/releases/$RELEASE"
 mkdir -p "$REL"
 git clone -q --depth 1 "${UPSTREAM_REPO:-https://github.com/MuadibUsul/moliply.git}" "$REL"
 rm -rf "$REL/.git"
-cp -r "$REL/upstream-service/." "$UP_DIR/tmp.$RELEASE"
+# current must point at the service directory, not the repo root.
+mv "$REL/upstream-service" "$UP_DIR/pkg.$RELEASE"
 rm -rf "$REL"
+ln -sfn "pkg.$RELEASE" "$UP_DIR/current"
 echo "staged $UP_DIR/tmp.$RELEASE"
 
 # Preserve keys across deploys.
@@ -35,9 +37,8 @@ if [ ! -f "$UP_DIR/.env" ]; then
   echo "generated new credentials in $UP_DIR/.env"
 fi
 
-ln -sfn "tmp.$RELEASE" "$UP_DIR/current"
 cd "$UP_DIR"
-docker compose -f current/docker-compose.server.yml --env-file .env build upstream >/dev/null
+docker compose -f current/docker-compose.server.yml --env-file .env build --no-cache upstream >/dev/null
 docker compose -f current/docker-compose.server.yml --env-file .env up -d
 echo "upstream container started on 127.0.0.1:18099"
 
