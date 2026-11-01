@@ -164,6 +164,18 @@ MOLIPLY_BASE=/home/deploy/moliply /home/deploy/moliply/preflight.sh
 
 全部 PASS 后才可以对外推广。
 
+## 四之二、上游履约服务（已部署）
+
+上游服务单独跑在 `moliply-upstream` 项目里，公网入口只有 `https://moliply.shop/upstream/*`。
+
+- 部署/升级：`MOLIPLY_BASE=/home/deploy/moliply bash /home/deploy/moliply/upstream-deploy.sh`（幂等，保留旧密钥）
+- 凭证在 `/home/deploy/moliply/upstream/.env`（600），已同步进商城后台「系统设置 → 上游代充通道」
+- 人工兜底控制台：把 `127.0.0.1:18099` 端口转发到本地后打开 `/admin`，粘贴 `UPSTREAM_ADMIN_TOKEN`
+- 模式：`.env` 的 `FULFILL_MODE` = `manual`（人工确认）或 `stock`（自动发码）；改完 `up -d` 生效
+- 切 `stock` 前必须先导入库存，否则下单会挂起等补货
+
+回滚 Caddy：`sudo cp /opt/caddy/Caddyfile.bak.upstream-<时间戳> /opt/caddy/Caddyfile && docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile`
+
 ## 五、安全提醒
 
 - 当前 `PAYMENT_MODE=mock` 时，任何访问者都可以点“模拟支付成功”领取演示激活码；**切换真实支付前不要公开推广网站**。
