@@ -16,7 +16,7 @@ services:
     pids_limit: 128
     security_opt:
       - no-new-privileges:true
-    env_file: .env
+    env_file: /home/deploy/moliply/upstream/.env
     environment:
       DB_PATH: /data/upstream.db
     volumes:
