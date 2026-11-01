@@ -547,3 +547,13 @@ def test_sms_sku_skips_the_session_pre_check(db):
     )
     check = redeem._prepare_session(code, session)
     assert check.eligible is True
+
+
+def test_pro_tiers_charge_and_cost_scale_with_the_tier(db):
+    from app.services import region_router
+
+    assert region_router.amount_for("PH", SkuType.GPT_PRO_100) == ("PHP", Decimal("4995.0"))
+    assert region_router.amount_for("PH", SkuType.GPT_PRO_500) == ("PHP", Decimal("24975.0"))
+    assert region_router.cost_usd_for("PH", SkuType.GPT_PRO_100) < region_router.cost_usd_for("PH", SkuType.GPT_PRO_500)
+    # Plus keeps the historical region cost when no SKU is passed.
+    assert region_router.cost_usd_for("PH") == Decimal("16.7")

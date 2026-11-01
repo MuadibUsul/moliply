@@ -156,7 +156,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
             proxy = region_router.proxy_for(region)
             billing = region_router.billing_for(card, region) if False else None
             currency, amount = region_router.amount_for(region, code.sku_type)
-            card = vcc_pool_scheduler.acquire_card(db, region, amount=region_router.cost_usd_for(region))
+            card = vcc_pool_scheduler.acquire_card(db, region, amount=region_router.cost_usd_for(region, code.sku_type))
             if card is None:
                 raise ChannelFallback("NO_ACTIVE_VCC_IN_POOL", f"{region} 卡池暂无可用卡片")
             reserved = True
@@ -195,7 +195,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 proxy,
                 on_state=on_state,
             )
-            vcc_pool_scheduler.mark_success(db, card, region, charged=region_router.cost_usd_for(region))
+            vcc_pool_scheduler.mark_success(db, card, region, charged=region_router.cost_usd_for(region, code.sku_type))
             reserved = False
             return DispatchOutcome(
                 channel=SELF_VCC,

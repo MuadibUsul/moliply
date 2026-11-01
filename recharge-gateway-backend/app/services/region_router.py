@@ -75,7 +75,19 @@ def min_balance_for(region: str) -> Decimal:
     return Decimal(str(runtime.get_float(spec["min_balance_key"], 22.0)))
 
 
-def cost_usd_for(region: str) -> Decimal:
+COST_KEYS = {
+    SkuType.GPT_PRO_100: ("ph_pro_100_cost_usd", "us_pro_100_cost_usd", 95.0, 100.0),
+    SkuType.GPT_PRO_200: ("ph_pro_200_cost_usd", "us_pro_200_cost_usd", 190.0, 200.0),
+    SkuType.GPT_PRO_500: ("ph_pro_500_cost_usd", "us_pro_500_cost_usd", 475.0, 500.0),
+}
+
+
+def cost_usd_for(region: str, sku_type: SkuType | None = None) -> Decimal:
+    """Card cost for a charge. Pro tiers cost far more than the Plus default."""
+    if sku_type in COST_KEYS:
+        ph_key, us_key, ph_default, us_default = COST_KEYS[sku_type]
+        key = ph_key if region == PH else us_key
+        return Decimal(str(runtime.get_float(key, ph_default if region == PH else us_default)))
     spec = REGIONS.get(region, REGIONS[US])
     return Decimal(str(runtime.get_float(spec["cost_key"], 20.90)))
 

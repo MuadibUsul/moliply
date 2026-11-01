@@ -190,10 +190,24 @@ class Settings(BaseSettings):
     self_vcc_cancel_autorenew: bool = True
     ph_plus_amount_php: float = 999.00
     ph_pro_20x_amount_php: float = 9990.00
+    ph_pro_100_amount_php: float = 4995.00
+    ph_pro_200v2_amount_php: float = 9990.00
+    ph_pro_500_amount_php: float = 24975.00
     us_plus_amount_usd: float = 20.00
     us_pro_20x_amount_usd: float = 200.00
+    us_pro_100_amount_usd: float = 100.00
+    us_pro_200v2_amount_usd: float = 200.00
+    us_pro_500_amount_usd: float = 500.00
     ph_plus_cost_usd: float = 16.70
     us_plus_cost_usd: float = 20.90
+    # Per-SKU card cost overrides (USD). Region defaults above apply to Plus;
+    # Pro tiers consume far more per charge.
+    ph_pro_100_cost_usd: float = 89.20
+    us_pro_100_cost_usd: float = 100.00
+    ph_pro_200_cost_usd: float = 178.40
+    us_pro_200_cost_usd: float = 200.00
+    ph_pro_500_cost_usd: float = 446.00
+    us_pro_500_cost_usd: float = 500.00
     # Pool fuses: pause a declined card, then suspend it, then alert the operator.
     vcc_max_consecutive_failures: int = 3
     vcc_cooldown_minutes: int = 30
