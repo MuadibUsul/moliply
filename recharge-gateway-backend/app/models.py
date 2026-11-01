@@ -93,6 +93,10 @@ class SkuType(str, enum.Enum):
     CLAUDE_PRO_1M = "CLAUDE_PRO_1M"
     CHATGPT_PRO_200 = "CHATGPT_PRO_200"
     CHATGPT_PRO_20X_1M = "CHATGPT_PRO_20X_1M"
+    GPT_PRO_100 = "GPT_PRO_100"
+    GPT_PRO_200 = "GPT_PRO_200"
+    GPT_PRO_500 = "GPT_PRO_500"
+    CODEX_SMS_US = "CODEX_SMS_US"
     API_CREDIT_100 = "API_CREDIT_100"
     GENERIC_DIGITAL = "GENERIC_DIGITAL"
 
@@ -104,6 +108,10 @@ SKU_LABELS: dict[str, str] = {
     "CLAUDE_PRO_1M": "Claude Pro · 1 个月",
     "CHATGPT_PRO_200": "ChatGPT Pro · 1 个月",
     "CHATGPT_PRO_20X_1M": "ChatGPT Pro 20x · 1 个月",
+    "GPT_PRO_100": "GPT Pro · 100",
+    "GPT_PRO_200": "GPT Pro · 200",
+    "GPT_PRO_500": "GPT Pro · 500",
+    "CODEX_SMS_US": "Codex 美区 · 接码",
     "API_CREDIT_100": "API 额度 · 100",
     "GENERIC_DIGITAL": "通用数字权益",
 }

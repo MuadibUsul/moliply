@@ -490,3 +490,91 @@ def seed_demo_data(db: Session) -> None:
         stock_count,
         account_count,
     )
+
+
+GPT_PRO_PRODUCTS = [
+    {
+        "slug": "gpt-pro-100",
+        "name": "GPT Pro 100",
+        "subtitle": "OpenAI Pro 额度 · 100 美元档",
+        "price": "649.00",
+        "sku_type": SkuType.GPT_PRO_100,
+        "sort": 30,
+    },
+    {
+        "slug": "gpt-pro-200",
+        "name": "GPT Pro 200",
+        "subtitle": "OpenAI Pro 额度 · 200 美元档",
+        "price": "1249.00",
+        "sku_type": SkuType.GPT_PRO_200,
+        "sort": 31,
+    },
+    {
+        "slug": "gpt-pro-500",
+        "name": "GPT Pro 500",
+        "subtitle": "OpenAI Pro 额度 · 500 美元档",
+        "price": "2999.00",
+        "sku_type": SkuType.GPT_PRO_500,
+        "sort": 32,
+    },
+    {
+        "slug": "codex-sms-us",
+        "name": "Codex 美区接码",
+        "subtitle": "美区号码代收验证码 · 单次",
+        "price": "5.49",
+        "sku_type": SkuType.CODEX_SMS_US,
+        "sort": 33,
+    },
+]
+
+
+def upsert_gpt_pro_products(db: Session) -> int:
+    """Add the GPT Pro tiers and the Codex SMS item, skipping existing slugs.
+
+    Separate from ``seed_demo_data`` (which only runs on an empty catalogue) so
+    live deployments can pick the new catalogue up without reseeding.
+    """
+    created = 0
+    for spec in GPT_PRO_PRODUCTS:
+        if db.query(Product.id).filter(Product.slug == spec["slug"]).first():
+            continue
+        sms = spec["sku_type"] is SkuType.CODEX_SMS_US
+        product = Product(
+            slug=spec["slug"],
+            name=spec["name"],
+            subtitle=spec["subtitle"],
+            category=ProductCategory.AI_MEMBERSHIP,
+            brand="OpenAI" if not sms else "Codex",
+            logo_key="gpt",
+            delivery_type=DeliveryType.ACTIVATION_CODE,
+            price=Decimal(spec["price"]),
+            badge="上新" if not sms else None,
+            tags=["自动发货", "美区"] if sms else ["自动发货"],
+            warranty="到账保障" if not sms else "单次有效",
+            delivery_note=(
+                "付款后发放激活码，前往充能中心粘贴 Session 完成充值"
+                if not sms
+                else "付款后发放接码卡密，按说明提交即可收码"
+            ),
+            description=(
+                f"{spec['name']} 额度代充，付款后自动发放激活码，凭码在充能中心完成充值。"
+                if not sms
+                else "美区号码代收验证码服务，适合注册/验证 Codex 时使用，单次有效。"
+            ),
+            usage_steps=["下单支付", "复制激活码", "前往充能中心核销"],
+            faq=[{"q": "多久到账？", "a": "通常 1-3 分钟，高峰期顺延，异常会转人工处理。"}],
+            sort_order=spec["sort"],
+        )
+        product.variants = [
+            ProductVariant(
+                label=spec["name"],
+                months=1,
+                price=Decimal(spec["price"]),
+                sku_type=spec["sku_type"],
+                channel_mode=ChannelMode.UPSTREAM,
+            )
+        ]
+        db.add(product)
+        created += 1
+    db.commit()
+    return created

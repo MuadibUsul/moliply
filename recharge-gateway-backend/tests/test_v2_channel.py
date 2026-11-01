@@ -519,3 +519,31 @@ def test_admin_code_generation_accepts_new_channel_and_region(client, admin_head
         and row["preferred_region"] == "US_ONLY"
     )
     assert match["note"] == "v2-test"
+
+
+def test_sms_sku_skips_the_session_pre_check(db):
+    from app.models import ActivationCode, CodeStatus
+    from app.services import redeem
+    from app.services.session_parser import SessionInfo
+    from app.services.code_generator import generate_code
+
+    code = ActivationCode(
+        code=generate_code(),
+        sku_type=SkuType.CODEX_SMS_US,
+        channel_mode=ChannelMode.UPSTREAM,
+        status=CodeStatus.LOCKED,
+    )
+    db.add(code)
+    db.commit()
+
+    session = SessionInfo(
+        kind="none",
+        email="",
+        user_id="",
+        access_token="",
+        raw="",
+        expires_at=datetime.utcnow(),
+        plan="",
+    )
+    check = redeem._prepare_session(code, session)
+    assert check.eligible is True

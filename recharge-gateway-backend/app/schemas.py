@@ -71,6 +71,10 @@ class CodeGenerateRequest(StrictModel):
         "CLAUDE_PRO_1M",
         "CHATGPT_PRO_200",
         "CHATGPT_PRO_20X_1M",
+        "GPT_PRO_100",
+        "GPT_PRO_200",
+        "GPT_PRO_500",
+        "CODEX_SMS_US",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"
@@ -90,6 +94,10 @@ class CodeImportRequest(StrictModel):
         "CLAUDE_PRO_1M",
         "CHATGPT_PRO_200",
         "CHATGPT_PRO_20X_1M",
+        "GPT_PRO_100",
+        "GPT_PRO_200",
+        "GPT_PRO_500",
+        "CODEX_SMS_US",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"

@@ -186,3 +186,21 @@ def test_unknown_order_is_not_revealed(client):
     token = response.json()["user_token"]
     missing = client.get("/api/v1/store/orders/MOL99999999999999", headers=_headers(token))
     assert missing.status_code == 404
+
+
+def test_new_gpt_products_are_visible_and_priced(client, db):
+    from app.seed import upsert_gpt_pro_products
+
+    upsert_gpt_pro_products(db)
+    expected = {"gpt-pro-100": "649.00", "gpt-pro-200": "1249.00", "gpt-pro-500": "2999.00", "codex-sms-us": "5.49"}
+    for slug, price in expected.items():
+        body = client.get(f"/api/v1/store/products/{slug}").json()["product"]
+        assert body["price"] == float(price)
+        assert body["variants"][0]["sku_type"] not in (None, "")
+
+
+def test_gpt_product_seeding_is_idempotent(db):
+    from app.seed import upsert_gpt_pro_products
+
+    upsert_gpt_pro_products(db)
+    assert upsert_gpt_pro_products(db) == 0

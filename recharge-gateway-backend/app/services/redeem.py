@@ -60,8 +60,13 @@ REDEEMABLE_SKUS = {
     SkuType.CHATGPT_PLUS_12M,
     SkuType.CLAUDE_PRO_1M,
     SkuType.CHATGPT_PRO_200,
+    SkuType.GPT_PRO_100,
+    SkuType.GPT_PRO_200,
+    SkuType.GPT_PRO_500,
 }
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
+# SMS reception needs a number, not an account: no Session pre-check at all.
+SMS_SKUS = {SkuType.CODEX_SMS_US}
 
 CODE_STATUS_LABELS = {
     "UNUSED": "未使用",
@@ -177,6 +182,8 @@ def verify_code(db: Session, raw_code: str, ip: str) -> dict:
 
 
 def _prepare_session(code: ActivationCode, session: SessionInfo) -> AccountCheck:
+    if code.sku_type in SMS_SKUS:
+        return AccountCheck(True, session.plan, "接码服务无需账号预检")
     expected_kind = _expected_session_kind(code.sku_type)
     if session.kind != expected_kind:
         raise RedeemError(

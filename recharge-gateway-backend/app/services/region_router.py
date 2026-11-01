@@ -80,8 +80,22 @@ def cost_usd_for(region: str) -> Decimal:
     return Decimal(str(runtime.get_float(spec["cost_key"], 20.90)))
 
 
+# New Pro tiers (own USD list price); the two legacy Pro SKUs keep their
+# historical config keys so existing deployments are unaffected.
+PRO_AMOUNTS = {
+    SkuType.GPT_PRO_100: ("ph_pro_100_amount_php", "us_pro_100_amount_usd", 4995.0, 100.0),
+    SkuType.GPT_PRO_200: ("ph_pro_200v2_amount_php", "us_pro_200v2_amount_usd", 9990.0, 200.0),
+    SkuType.GPT_PRO_500: ("ph_pro_500_amount_php", "us_pro_500_amount_usd", 24975.0, 500.0),
+}
+LEGACY_PRO_SKUS = {SkuType.CHATGPT_PRO_200, SkuType.CHATGPT_PRO_20X_1M}
+
+
 def amount_for(region: str, sku_type: SkuType) -> tuple[str, Decimal]:
-    if sku_type in {SkuType.CHATGPT_PRO_200, SkuType.CHATGPT_PRO_20X_1M}:
+    if sku_type in PRO_AMOUNTS:
+        key, _, ph_default, us_default = PRO_AMOUNTS[sku_type]
+        fallback = ph_default if region == PH else us_default
+        return REGIONS[region]["currency"], Decimal(str(runtime.get_float(key, fallback)))
+    if sku_type in LEGACY_PRO_SKUS:
         key = "ph_pro_20x_amount_php" if region == PH else "us_pro_20x_amount_usd"
         default = 9990.0 if region == PH else 200.0
     elif sku_type == SkuType.CHATGPT_PLUS_1M:
@@ -133,7 +147,7 @@ def create_checkout_url(session: SessionInfo, region: str, sku_type: SkuType) ->
         )
         return _validated_checkout_url(url)
 
-    plan_type = "pro" if sku_type in {SkuType.CHATGPT_PRO_200, SkuType.CHATGPT_PRO_20X_1M} else "plus"
+    plan_type = "pro" if sku_type in PRO_AMOUNTS or sku_type in LEGACY_PRO_SKUS else "plus"
     payload = {
         "plan_type": plan_type,
         "checkout_ui_mode": "hosted",
