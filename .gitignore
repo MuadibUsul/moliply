@@ -33,3 +33,7 @@ htmlcov/
 /codex_engineering_specPlus.md
 /codex_engineering_spec (1).md
 /design/
+
+# Vendored console cache
+recharge-gateway-backend/cce_console/**/__pycache__/
+upstream-service/**/__pycache__/
