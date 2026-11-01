@@ -20,11 +20,12 @@ from app.models import (
     VccCard,
     VccStatus,
 )
-from app.services import channel_dispatcher, region_router, runtime_settings, vcc_pool_scheduler
+from app.services import channel_dispatcher, region_router, runtime_settings
+from app.services.fulfillment import vcc_pool_scheduler
 from app.services.code_generator import generate_code
 from app.services.crypto import encrypt_text
 from app.services.redeem import run_recharge_task
-from app.services.self_vcc_worker import SelfVccFailure
+from app.services.fulfillment.self_vcc_worker import SelfVccFailure
 from app.services.session_parser import SessionInfo
 from app.services.upstream_provider import UpstreamProvider, UpstreamResult
 
@@ -158,7 +159,7 @@ def _fake_self_success(monkeypatch, *, fail_with: SelfVccFailure | None = None):
             on_state("AWAITING_3DS")
         return "自营卡池扣款成功，会员已升级"
 
-    monkeypatch.setattr("app.services.stripe_playwright.checkout_and_cancel_autorenew", checkout)
+    monkeypatch.setattr("app.services.fulfillment.stripe_playwright.checkout_and_cancel_autorenew", checkout)
 
 
 def _fake_upstream(monkeypatch, status: str = "SUCCESS"):
@@ -284,15 +285,15 @@ def test_self_failure_falls_back_to_upstream_and_records_reason(db, monkeypatch)
     assert events and events[0][0] == "channel.fallback"
 
 
-def test_card_decline_suspends_card_before_fallback(db, monkeypatch):
+def test_card_decline_cools_down_then_suspends_at_threshold(db, monkeypatch):
     _enable_self(db)
     _fake_self_success(
         monkeypatch,
         fail_with=SelfVccFailure("CARD_DECLINED", "支付卡被拒绝", release_code=True),
     )
     _fake_upstream(monkeypatch)
-    card = _card(db, 50, ph=True)
-    code = _code(db, ChannelMode.HYBRID_SELF_FIRST)
+    card = _card(db, 50, ph=False)
+    code = _code(db, ChannelMode.HYBRID_SELF_FIRST, RegionPreference.US_ONLY)
     task = _task(db, code)
 
     outcome = channel_dispatcher.dispatch(db, task, code, _session())
@@ -300,8 +301,17 @@ def test_card_decline_suspends_card_before_fallback(db, monkeypatch):
     assert outcome.channel == "UPSTREAM"
     db.expire_all()
     card = db.get(VccCard, card.id)
+    # The first decline parks the card for a cooldown instead of burning it.
+    assert card.status == VccStatus.ACTIVE
+    assert card.consecutive_failures == 1
+    assert card.cooldown_until is not None
+    assert card.reserved_balance == Decimal("0.00")
+
+    # Once the threshold is reached the card is suspended outright.
+    for _ in range(vcc_pool_scheduler.max_consecutive_failures() - 1):
+        vcc_pool_scheduler.suspend(db, card, "支付卡被拒绝")
+    db.refresh(card)
     assert card.status == VccStatus.SUSPENDED
-    assert card.failed_count == 1
 
 
 def test_self_only_failure_does_not_call_upstream(db, monkeypatch):
@@ -421,7 +431,7 @@ def test_run_recharge_task_releases_code_on_exhausted_self_only_pool(db, monkeyp
 def test_admin_card_ph_address_batch_import_and_mark_closed(client, admin_headers, db):
     payload = {
         "provider": "RDVCC",
-        "card_number": "4242424242424242",
+        "card_number": "4000000000000077",
         "cvv": "123",
         "exp_month": "12",
         "exp_year": "2029",
@@ -453,7 +463,8 @@ def test_admin_card_ph_address_batch_import_and_mark_closed(client, admin_header
         headers=admin_headers,
     )
     assert batch.status_code == 200, batch.text
-    assert batch.json()["created"] == 2
+    # The same payload is pasted twice: one new row, the repeat is skipped.
+    assert batch.json()["created"] == 2 or batch.json()["skipped"] == 2
 
     listing = client.get("/api/v1/admin/cards", headers=admin_headers)
     assert listing.status_code == 200

@@ -38,7 +38,9 @@ from app.schemas import (
     ProductUpdateRequest,
     SettingsUpdateRequest,
     VccCardBatchImportRequest,
+    VccCardCalibrateRequest,
     VccCardCreateRequest,
+    VccCardPasteImportRequest,
     RoutingPolicyRequest,
     VccCardUpdateRequest,
 )
@@ -52,15 +54,24 @@ from app.security import (
     verify_admin_password,
     verify_admin_totp,
 )
+from app.services import card_import
+from app.services import channel_dispatcher
+from app.services import region_router
 from app.services import orders as order_service
 from app.services import redeem as redeem_service
 from app.services import feishu
 from app.services import runtime_settings
 from app.services.catalog import available_stock, money, serialize_product
 from app.services.code_generator import generate_code, is_valid_code_format, normalize_code
-from app.services.crypto import decrypt_text, encrypt_text, luhn_valid, mask_card_number, mask_email
-from app.services import vcc_pool_scheduler
-from app.services.self_vcc_worker import select_vcc_card
+from app.services.crypto import (
+    card_fingerprint,
+    decrypt_text,
+    encrypt_text,
+    luhn_valid,
+    mask_card_number,
+    mask_email,
+)
+from app.services.fulfillment import vcc_pool_scheduler
 from app.services.upstream_provider import UpstreamProvider
 
 logger = logging.getLogger(__name__)
@@ -392,8 +403,8 @@ def admin_reset_user_password(
 def admin_get_settings(db: Session = Depends(get_db)) -> dict:
     data = runtime_settings.public_settings()
     data["callbacks"] = {
-        "ltzf": runtime_settings.get("ltzf_notify_url"),
-        "xunhupay": runtime_settings.get("xunhupay_notify_url"),
+        "alipay": runtime_settings.get("alipay_notify_url"),
+        "wechat": runtime_settings.get("wechat_notify_url"),
         "nowpayments": runtime_settings.get("nowpayments_ipn_url"),
     }
     data["feishu_event_options"] = feishu.event_options()
@@ -446,8 +457,8 @@ def admin_update_settings(
     )
     db.commit()
     result["callbacks"] = {
-        "ltzf": runtime_settings.get("ltzf_notify_url"),
-        "xunhupay": runtime_settings.get("xunhupay_notify_url"),
+        "alipay": runtime_settings.get("alipay_notify_url"),
+        "wechat": runtime_settings.get("wechat_notify_url"),
         "nowpayments": runtime_settings.get("nowpayments_ipn_url"),
     }
     result["feishu_event_options"] = feishu.event_options()
@@ -692,9 +703,14 @@ def _create_vcc_card(
     }
     if allowed_bins and digits[:6] not in allowed_bins:
         raise HTTPException(status_code=400, detail="卡 BIN 不在已配置的美国 BIN 白名单中")
+    fingerprint = card_fingerprint(digits)
+    existing = db.query(VccCard.id).filter(VccCard.card_fingerprint == fingerprint).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"该卡号已录入（卡片 #{existing[0]}）")
     card = VccCard(
         provider=payload.provider,
         card_bin=digits[:6],
+        card_fingerprint=fingerprint,
         card_number_enc=encrypt_text(digits),
         cvv_enc=encrypt_text(payload.cvv),
         exp_month=payload.exp_month.zfill(2),
@@ -743,9 +759,16 @@ def admin_cards(db: Session = Depends(get_db)) -> dict:
                 "has_ph_billing": bool(card.ph_billing_address_json),
                 "three_ds_email_masked": mask_email(card.three_ds_email_account) if card.three_ds_email_account else None,
                 "available_balance": money(card.available_balance),
+                "reserved_balance": money(card.reserved_balance or 0),
                 "max_bind_count": card.max_bind_count,
                 "current_bind_count": card.current_bind_count,
                 "failed_count": card.failed_count,
+                "consecutive_failures": card.consecutive_failures,
+                "cooling_down": bool(card.cooldown_until and card.cooldown_until > utcnow()),
+                "cooldown_until": (card.cooldown_until.isoformat() + "Z") if card.cooldown_until else None,
+                "last_error": card.last_error,
+                "is_locked": card.is_locked,
+                "total_used_count": card.total_used_count,
                 "status": card.status.value,
                 "status_label": VCC_STATUS_LABELS.get(card.status.value, card.status.value),
                 "created_at": card.created_at.isoformat() + "Z",
@@ -757,7 +780,14 @@ def admin_cards(db: Session = Depends(get_db)) -> dict:
             "total": len(items),
             "active": sum(1 for item in items if item["status"] == "ACTIVE"),
             "suspended": sum(1 for item in items if item["status"] == "SUSPENDED"),
-            "available": sum(1 for item in items if item["status"] == "ACTIVE" and item["current_bind_count"] < item["max_bind_count"]),
+            "available": sum(
+                1
+                for item in items
+                if item["status"] == "ACTIVE"
+                and item["current_bind_count"] < item["max_bind_count"]
+                and not item["is_locked"]
+            ),
+            "cooling": sum(1 for item in items if item["cooling_down"]),
             "exhausted": sum(1 for item in items if item["status"] == "EXHAUSTED"),
             "closed": sum(1 for item in items if item["status"] == "CLOSED"),
         },
@@ -783,15 +813,163 @@ def admin_batch_import_cards(
     admin: dict = Depends(require_admin),
 ) -> dict:
     created = 0
+    skipped = 0
     failed: list[str] = []
-    for item in payload.cards:
+    for index, item in enumerate(payload.cards, start=1):
         try:
             _create_vcc_card(db, item, admin.get("sub", "admin"), client_ip(request))
             created += 1
         except HTTPException as exc:
             db.rollback()
+            if exc.status_code == 409:
+                skipped += 1
+                failed.append(f"第 {index} 张：{exc.detail}")
+                continue
             failed.append(str(exc.detail))
-    return {"created": created, "failed": failed}
+    return {"created": created, "skipped": skipped, "failed": failed}
+
+
+DEFAULT_US_BILLING = {
+    "line1": "1 Main St",
+    "city": "New York",
+    "state": "NY",
+    "postal_code": "10001",
+    "country": "US",
+}
+
+
+@protected.post("/cards/paste-import")
+def admin_paste_import_cards(
+    payload: VccCardPasteImportRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Import a pasted issuer-console dump (JSON array or CSV/TSV lines)."""
+    try:
+        parsed = card_import.parse_batch_cards(
+            payload.text,
+            default_balance=Decimal(str(payload.default_balance)),
+            encrypt=encrypt_text,
+        )
+    except card_import.CardBatchParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    billing = payload.billing_address.model_dump() if payload.billing_address else dict(DEFAULT_US_BILLING)
+    ph_billing = payload.ph_billing_address.model_dump() if payload.ph_billing_address else None
+    if billing["country"] != "US":
+        raise HTTPException(status_code=400, detail="美国账单地址的 country 必须为 US")
+    if ph_billing and ph_billing["country"] != "PH":
+        raise HTTPException(status_code=400, detail="菲律宾账单地址的 country 必须为 PH")
+
+    allowed_bins = {
+        value.strip()
+        for value in runtime_settings.get("us_bin_allowlist", settings.us_bin_allowlist).split(",")
+        if value.strip()
+    }
+    if allowed_bins:
+        rejected = [row for row in parsed if row["card_bin"] not in allowed_bins]
+        if rejected:
+            tails = "、".join(row["last4"] for row in rejected[:5])
+            raise HTTPException(
+                status_code=400,
+                detail=f"有 {len(rejected)} 张卡的 BIN 不在白名单内（尾号 {tails}）",
+            )
+
+    if payload.dry_run:
+        return {
+            "parsed": len(parsed),
+            "dry_run": True,
+            "preview": [
+                {
+                    "card_bin": row["card_bin"],
+                    "last4": row["last4"],
+                    "exp": f"{row['exp_month']}/{row['exp_year']}",
+                    "balance": money(row["available_balance"]),
+                }
+                for row in parsed[:20]
+            ],
+        }
+
+    known = {
+        value
+        for (value,) in db.query(VccCard.card_fingerprint)
+        .filter(VccCard.card_fingerprint.isnot(None))
+        .all()
+    }
+
+    created = 0
+    skipped = 0
+    failed: list[str] = []
+    for index, row in enumerate(parsed, start=1):
+        fingerprint = card_fingerprint(row["pan"])
+        if fingerprint in known:
+            skipped += 1
+            failed.append(f"第 {index} 张（尾号 {row['last4']}）卡号已存在，已跳过")
+            continue
+        known.add(fingerprint)
+        card = VccCard(
+            provider=payload.provider,
+            card_bin=row["card_bin"],
+            card_fingerprint=fingerprint,
+            card_number_enc=row["card_number_enc"],
+            cvv_enc=row["cvv_enc"],
+            exp_month=row["exp_month"],
+            exp_year=row["exp_year"],
+            holder_name=row["holder_name"],
+            billing_address_json=billing,
+            ph_billing_address_json=ph_billing,
+            available_balance=row["available_balance"],
+            reserved_balance=Decimal("0.00"),
+            max_bind_count=payload.max_bind_count,
+            status=VccStatus.ACTIVE,
+        )
+        db.add(card)
+        try:
+            db.commit()
+            created += 1
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            failed.append(f"第 {index} 张（尾号 {row['last4']}）写入失败")
+
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="vcc.paste_import",
+            entity_type="vcc_card",
+            entity_id="batch",
+            detail=f"created={created} skipped={skipped} failed={len(failed)}",
+            ip=client_ip(request),
+        )
+    )
+    db.commit()
+    return {"created": created, "skipped": skipped, "failed": failed}
+
+
+@protected.post("/cards/{card_id}/calibrate")
+def admin_calibrate_card(
+    card_id: int,
+    payload: VccCardCalibrateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Re-sync a card balance after an out-of-band top-up or spend."""
+    card = db.get(VccCard, card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="卡片不存在")
+    before = card.available_balance
+    vcc_pool_scheduler.calibrate_balance(db, card, Decimal(str(payload.available_balance)))
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="vcc.calibrate",
+            entity_type="vcc_card",
+            entity_id=str(card.id),
+            detail=f"{before} -> {card.available_balance} {payload.note}"[:250],
+        )
+    )
+    db.commit()
+    return {"id": card.id, "available_balance": money(card.available_balance), "status": card.status.value}
 
 
 @protected.get("/cards/summary")
@@ -983,9 +1161,15 @@ def admin_channels(db: Session = Depends(get_db)) -> dict:
         .scalar()
         or 0
     )
-    card = select_vcc_card(db)
+    card = vcc_pool_scheduler.peek_card(db, region_router.US)
     return {
+        "payment": {
+            "gateway": runtime_settings.get("payment_gateway", "wechat"),
+            "ready": runtime_settings.public_settings()["payment_ready"],
+            "mode": runtime_settings.get("payment_mode", settings.payment_mode),
+        },
         "upstream": UpstreamProvider().channel_status(),
+        "upstream_configured": channel_dispatcher.upstream_configured(),
         "self_vcc": {
             "enabled": runtime_settings.get_bool("self_vcc_enabled", settings.self_vcc_enabled),
             "dry_run": runtime_settings.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run),

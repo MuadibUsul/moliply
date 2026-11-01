@@ -18,6 +18,45 @@ def smtp_configured() -> bool:
     return bool(runtime.get("smtp_host", settings.smtp_host) and runtime.get("smtp_user", settings.smtp_user) and runtime.get("smtp_password", settings.smtp_password))
 
 
+def _send_message(message: MIMEText, recipients: list[str]) -> bool:
+    host = runtime.get("smtp_host", settings.smtp_host)
+    port = runtime.get_int("smtp_port", settings.smtp_port)
+    user = runtime.get("smtp_user", settings.smtp_user)
+    password = runtime.get("smtp_password", settings.smtp_password)
+    smtp_from = runtime.get("smtp_from", settings.smtp_from)
+    if runtime.get_bool("smtp_use_ssl", settings.smtp_use_ssl):
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+            server.login(user, password)
+            server.sendmail(smtp_from, recipients, message.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls(context=ssl.create_default_context())
+            server.login(user, password)
+            server.sendmail(smtp_from, recipients, message.as_string())
+    return True
+
+
+def send_operator_email(title: str, fields: dict) -> bool:
+    """Internal alert to the operator mailbox (falls back to ``smtp_from``)."""
+    if not smtp_configured():
+        return False
+    recipient = runtime.get("ops_alert_email", settings.ops_alert_email) or runtime.get("smtp_from", settings.smtp_from)
+    if not recipient:
+        return False
+    lines = [title, ""] + [f"{label}：{value}" for label, value in fields.items()]
+    message = MIMEText("\n".join(lines), "plain", "utf-8")
+    message["Subject"] = f"【{settings.brand_name_cn}】{title}"
+    message["From"] = formataddr((settings.brand_name_cn, runtime.get("smtp_from", settings.smtp_from)))
+    message["To"] = recipient
+    try:
+        _send_message(message, [recipient])
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Operator alert email failed: %s", exc.__class__.__name__)
+        return False
+
+
 def send_delivery_email(email: str, order_payload: dict) -> bool:
     if not smtp_configured():
         return False
@@ -44,24 +83,10 @@ def send_delivery_email(email: str, order_payload: dict) -> bool:
     )
     message = MIMEText("\n".join(lines), "plain", "utf-8")
     message["Subject"] = f"【{settings.brand_name_cn}】订单 {order_payload.get('order_no')} 已自动交付"
-    smtp_from = runtime.get("smtp_from", settings.smtp_from)
-    message["From"] = formataddr((settings.brand_name_cn, smtp_from))
+    message["From"] = formataddr((settings.brand_name_cn, runtime.get("smtp_from", settings.smtp_from)))
     message["To"] = email
     try:
-        host = runtime.get("smtp_host", settings.smtp_host)
-        port = runtime.get_int("smtp_port", settings.smtp_port)
-        user = runtime.get("smtp_user", settings.smtp_user)
-        password = runtime.get("smtp_password", settings.smtp_password)
-        if runtime.get_bool("smtp_use_ssl", settings.smtp_use_ssl):
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
-                server.login(user, password)
-                server.sendmail(smtp_from, [email], message.as_string())
-        else:
-            with smtplib.SMTP(host, port, timeout=15) as server:
-                server.starttls(context=ssl.create_default_context())
-                server.login(user, password)
-                server.sendmail(smtp_from, [email], message.as_string())
+        _send_message(message, [email])
         logger.info("Delivery email sent for order %s", order_payload.get("order_no"))
         return True
     except Exception as exc:  # noqa: BLE001

@@ -25,8 +25,7 @@ from app.models import (
 from app.services import feishu
 from app.services import region_router
 from app.services import runtime_settings as runtime
-from app.services import stripe_playwright
-from app.services import vcc_pool_scheduler
+from app.services.fulfillment import stripe_playwright, vcc_pool_scheduler
 from app.services.crypto import decrypt_text
 from app.services.errors import RechargeError
 from app.services.self_vcc_worker import SelfVccFailure
@@ -89,6 +88,20 @@ def _set_state(db: Session, task: RechargeTask, state: RechargeState) -> None:
     db.commit()
 
 
+def upstream_configured() -> bool:
+    """True only when an upstream API base and merchant key are both present.
+
+    ``mock`` counts as configured because the mock channel always answers.
+    """
+    mode = runtime.get("upstream_mode", settings.upstream_mode).lower()
+    if mode == "mock":
+        return True
+    return bool(
+        runtime.get("upstream_api_base", settings.upstream_api_base)
+        and runtime.get("upstream_api_key", settings.upstream_api_key)
+    )
+
+
 def _attempt_upstream(db: Session, task: RechargeTask, code: ActivationCode, session: SessionInfo) -> DispatchOutcome:
     task.executed_channel = UPSTREAM
     task.executed_region = None
@@ -141,12 +154,13 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
         payment_started = False
         try:
             proxy = region_router.proxy_for(region)
-            card = vcc_pool_scheduler.acquire_card(db, region)
+            billing = region_router.billing_for(card, region) if False else None
+            currency, amount = region_router.amount_for(region, code.sku_type)
+            card = vcc_pool_scheduler.acquire_card(db, region, amount=region_router.cost_usd_for(region))
             if card is None:
                 raise ChannelFallback("NO_ACTIVE_VCC_IN_POOL", f"{region} 卡池暂无可用卡片")
             reserved = True
             billing = region_router.billing_for(card, region)
-            currency, amount = region_router.amount_for(region, code.sku_type)
             card_id = card.id
             task.vcc_card_id = card_id
             task.executed_channel = SELF_VCC
@@ -181,7 +195,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 proxy,
                 on_state=on_state,
             )
-            vcc_pool_scheduler.mark_success(db, card, region)
+            vcc_pool_scheduler.mark_success(db, card, region, charged=region_router.cost_usd_for(region))
             reserved = False
             return DispatchOutcome(
                 channel=SELF_VCC,
@@ -203,12 +217,14 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
             # No card in PH: still try US.
             continue
         except SelfVccFailure as exc:
-            # Only a declined card is a hard card-level signal; suspend it.
-            if exc.code == "CARD_DECLINED" and card is not None:
-                vcc_pool_scheduler.suspend(db, card, exc.message)
-                if reserved:
+            # Only a real decline counts against the card; a broken checkout UI
+            # leaves it healthy, so the other region may reuse it immediately.
+            if reserved and card is not None:
+                if exc.code == "CARD_DECLINED":
+                    vcc_pool_scheduler.record_failure(db, card, exc.message)
+                else:
                     vcc_pool_scheduler.release_reservation(db, card)
-                    reserved = False
+                reserved = False
             elif reserved and not payment_started:
                 vcc_pool_scheduler.release_reservation(db, card)
                 reserved = False
@@ -239,6 +255,12 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
 
 
 def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: SessionInfo) -> DispatchOutcome:
+    """Route a task: the local pool is the default, upstream is the optional net.
+
+    An upstream that is simply not configured is no longer an error. The task
+    runs on the local card pool, and only an exhaustion/failure with a configured
+    upstream falls back; without one the pool error surfaces for manual review.
+    """
     mode = effective_mode(code)
     if mode == UPSTREAM_ONLY:
         return _attempt_upstream(db, task, code, session)
@@ -255,6 +277,14 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
 
     # HYBRID_SELF_FIRST
     if not runtime.get_bool("self_vcc_enabled", settings.self_vcc_enabled):
+        # Self channel switched off at runtime: prefer the pool only if it exists,
+        # otherwise the disabled state already means "go upstream".
+        if not upstream_configured():
+            raise RechargeError(
+                "SELF_VCC_DISABLED",
+                "自营卡池未启用，且未配置上游开卡接口，请联系客服",
+                release_code=True,
+            )
         task.fallback_reason = "SELF_VCC_DISABLED"
         db.add(task)
         db.commit()
@@ -268,6 +298,10 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
         db.commit()
         if not exc.can_fallback:
             raise RechargeError(exc.code, exc.message, release_code=False) from exc
+        if not upstream_configured():
+            # No upstream to land on: report the pool condition directly instead
+            # of surfacing a confusing "upstream unconfigured" error.
+            raise RechargeError(exc.code, exc.message, release_code=exc.can_fallback) from exc
         if exc.notify:
             feishu.dispatch_event(
                 "channel.fallback",
@@ -285,4 +319,6 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
         task.fallback_reason = f"{exc.code}: {exc.message}"[:250]
         db.add(task)
         db.commit()
+        if not upstream_configured():
+            raise RechargeError(exc.code, exc.message, release_code=True) from exc
         return _attempt_upstream(db, task, code, session)

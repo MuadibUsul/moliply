@@ -25,7 +25,8 @@ from app.models import (
     VccStatus,
 )
 from app.services import orders as order_service
-from app.services import runtime_settings, vcc_pool_scheduler
+from app.services import runtime_settings
+from app.services.fulfillment import vcc_pool_scheduler
 from app.services.code_generator import generate_code
 from app.services.crypto import encrypt_text
 from app.services.payments.base import ParsedNotify

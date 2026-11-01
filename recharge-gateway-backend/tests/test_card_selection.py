@@ -6,7 +6,8 @@ import pytest
 
 from app.models import VccCard, VccStatus
 from app.services.crypto import encrypt_text
-from app.services.self_vcc_worker import mark_card_success, select_vcc_card, suspend_card
+from app.services.fulfillment import vcc_pool_scheduler
+from app.services.fulfillment.self_vcc_worker import mark_card_success, select_vcc_card, suspend_card
 
 
 @pytest.fixture(autouse=True)
@@ -58,19 +59,34 @@ def test_select_card_respects_balance_bind_and_failure_constraints(db):
     assert selected.id not in {low.id}
 
 
-def test_decline_suspends_card(db):
+def test_repeated_declines_eventually_suspend_card(db):
     card = _card(db, 50)
-    suspend_card(db, card)
+    for _ in range(vcc_pool_scheduler.max_consecutive_failures()):
+        suspend_card(db, card)
     db.refresh(card)
     assert card.status == VccStatus.SUSPENDED
-    assert card.failed_count == 1
+    assert card.consecutive_failures == vcc_pool_scheduler.max_consecutive_failures()
     assert select_vcc_card(db) is None
 
 
-def test_success_counts_bind_and_exhausts(db):
+def test_hard_decline_suspends_immediately(db):
+    card = _card(db, 50)
+    vcc_pool_scheduler.suspend(db, card, "card_declined: stolen card", hard=True)
+    db.refresh(card)
+    assert card.status == VccStatus.SUSPENDED
+
+
+def test_success_consumes_the_reservation(db):
     card = _card(db, 25, max_binds=1)
-    mark_card_success(db, card)
+    reserved = select_vcc_card(db)
+    assert reserved is not None
+    assert reserved.reserved_balance > Decimal("0")
+    # The reservation makes the card unavailable to a second worker.
+    assert select_vcc_card(db) is None
+
+    mark_card_success(db, reserved)
     db.refresh(card)
     assert card.current_bind_count == 1
+    assert card.reserved_balance == Decimal("0.00")
     assert card.status == VccStatus.EXHAUSTED
-    assert card.available_balance == Decimal("5.00")
+    assert card.available_balance < Decimal("25")

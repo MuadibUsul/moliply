@@ -368,6 +368,9 @@ class VccCard(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="RDVCC")
     card_bin: Mapped[str] = mapped_column(String(8), nullable=False)
+    # SHA-256 of the digits: lets import/UI detect the same physical card
+    # without decrypting every row, and survives re-import.
+    card_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     card_number_enc: Mapped[str] = mapped_column(Text, nullable=False)
     cvv_enc: Mapped[str] = mapped_column(Text, nullable=False)
     exp_month: Mapped[str] = mapped_column(String(4), nullable=False)
@@ -376,10 +379,22 @@ class VccCard(Base):
     billing_address_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     ph_billing_address_json: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     three_ds_email_account: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    available_balance: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    available_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Amount currently promised to in-flight checkouts. ``available_balance``
+    # must drop by the order amount while a charge is running so two workers
+    # cannot both spend the same dollars on one card.
+    reserved_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
+    daily_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_bind_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     current_bind_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    total_used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[VccStatus] = mapped_column(enum_column(VccStatus), nullable=False, default=VccStatus.ACTIVE, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)

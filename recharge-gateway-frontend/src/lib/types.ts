@@ -305,9 +305,16 @@ export type AdminCard = {
   has_ph_billing: boolean;
   three_ds_email_masked: string | null;
   available_balance: number;
+  reserved_balance: number;
   max_bind_count: number;
   current_bind_count: number;
   failed_count: number;
+  consecutive_failures: number;
+  cooling_down: boolean;
+  cooldown_until: string | null;
+  last_error: string | null;
+  is_locked: boolean;
+  total_used_count: number;
   status: string;
   status_label: string;
   created_at: string;
@@ -320,6 +327,7 @@ export type AdminCardList = {
     active: number;
     suspended: number;
     available: number;
+    cooling: number;
     exhausted: number;
     closed: number;
   };
@@ -333,6 +341,10 @@ export type AdminCardPoolSummary = {
   suspended: number[];
   closed: number;
   available_balance_usd: number;
+  reserved_balance_usd: number;
+  watermark: number;
+  locked: number;
+  cooling: number;
   today_self: number;
   today_upstream: number;
   today_fallback: number;
@@ -372,7 +384,7 @@ export type AdminSettings = {
   upstream_ready: boolean;
   support_ready: boolean;
   feishu_ready: boolean;
-  callbacks: { ltzf: string; xunhupay: string; nowpayments: string };
+  callbacks: { alipay: string; wechat: string; nowpayments: string };
   feishu_event_options: FeishuEventOption[];
   recent_notifications: NotificationLogItem[];
 };

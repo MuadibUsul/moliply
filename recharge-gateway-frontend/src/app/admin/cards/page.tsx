@@ -52,25 +52,17 @@ const EMPTY_FORM: CardForm = {
 };
 
 const ROUTING_OPTIONS = [
-  { key: "HYBRID_SELF_FIRST", label: "混合：自营优先，失败回上游", hint: "先尝试自营卡池（菲区₱999 → 美区$20），无卡或失败时自动回退上游 API。" },
-  { key: "SELF_VCC_ONLY", label: "仅自营：不回退", hint: "只走自营卡池，失败后转人工处理，不调用上游 API。" },
+  { key: "HYBRID_SELF_FIRST", label: "混合：自营优先，失败回上游", hint: "先尝试自营卡池（菲区₱999 → 美区$20），无卡或失败且已配置上游时回退。" },
+  { key: "SELF_VCC_ONLY", label: "仅自营：不回退", hint: "只走自营卡池，失败后转人工处理。" },
   { key: "UPSTREAM_ONLY", label: "仅上游：暂停自营", hint: "全部订单走上游 API，自营卡池暂停调度。" },
 ] as const;
 
-const BATCH_EXAMPLE = `[
-  {
-    "provider": "RDVCC",
-    "card_number": "4242424242424242",
-    "cvv": "123",
-    "exp_month": "12",
-    "exp_year": "2029",
-    "holder_name": "DEMO USER",
-    "billing_address": {"line1": "1 Main St", "city": "New York", "state": "NY", "postal_code": "10001", "country": "US"},
-    "ph_billing_address": {"line1": "1 Ayala Ave", "city": "Makati", "state": "Metro Manila", "postal_code": "1200", "country": "PH"},
-    "three_ds_email_account": "3ds@example.com",
-    "available_balance": 25,
-    "max_bind_count": 2
-  }
+const BATCH_EXAMPLE = `# CSV 每行一张：卡号,月,年,CVV[,余额[,账单邮编]]
+4242424242424242,08,2029,123,40,10001
+5555555555554444,11,28,999,30,10002`;
+
+const BATCH_JSON_EXAMPLE = `[
+  {"pan": "4242424242424242", "exp_month": "08", "exp_year": "2029", "cvv": "123", "balance": 40, "billing_zip": "10001"}
 ]`;
 
 export default function AdminCardsPage() {
@@ -84,7 +76,9 @@ export default function AdminCardsPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<CardForm>(EMPTY_FORM);
   const [importText, setImportText] = useState("");
-  const [importResult, setImportResult] = useState<{ created: number; failed: string[] } | null>(null);
+  const [importResult, setImportResult] = useState<{ created: number; skipped?: number; failed: string[] } | null>(null);
+  const [defaultBalance, setDefaultBalance] = useState("25");
+  const [defaultMaxBinds, setDefaultMaxBinds] = useState("2");
   const [actionId, setActionId] = useState<number | null>(null);
   const [policy, setPolicy] = useState("HYBRID_SELF_FIRST");
   const [policySaving, setPolicySaving] = useState(false);
@@ -164,21 +158,13 @@ export default function AdminCardsPage() {
     setError(null);
     setImportResult(null);
     try {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(importText);
-      } catch {
-        throw new Error("JSON 格式有误，请检查括号与引号");
-      }
-      const cards = Array.isArray(parsed)
-        ? parsed
-        : (parsed as { cards?: unknown[] } | null)?.cards;
-      if (!Array.isArray(cards) || !cards.length) {
-        throw new Error("请提供非空的 cards 数组");
-      }
-      const result = await api<{ created: number; failed: string[] }>("/api/v1/admin/cards/batch-import", {
+      const result = await api<{ created: number; skipped?: number; failed: string[] }>("/api/v1/admin/cards/paste-import", {
         method: "POST",
-        body: { cards },
+        body: {
+          text: importText,
+          default_balance: Number(defaultBalance),
+          max_bind_count: Number(defaultMaxBinds),
+        },
       });
       setImportResult(result);
       await load();
@@ -186,6 +172,30 @@ export default function AdminCardsPage() {
       setError(handleAdminError(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function calibrateCard(card: AdminCard) {
+    const raw = window.prompt("输入卡台实际可用余额（USD），用于对账校准：", String(card.available_balance));
+    if (raw === null) return;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      setError("余额必须是非负数字");
+      return;
+    }
+    setActionId(card.id);
+    setError(null);
+    try {
+      await api(`/api/v1/admin/cards/${card.id}/calibrate`, {
+        method: "POST",
+        body: { available_balance: value, note: "后台人工校准" },
+      });
+      setNotice(`已校准卡片 #${card.id} 余额为 $${value.toFixed(2)}`);
+      await load();
+    } catch (err) {
+      setError(handleAdminError(err));
+    } finally {
+      setActionId(null);
     }
   }
 
@@ -254,7 +264,7 @@ export default function AdminCardsPage() {
         <div>
           <p className="eyebrow">SELF-OWNED VCC POOL</p>
           <h1 className="mt-2 font-display text-[28px] font-bold tracking-tight text-white">VCC 卡池</h1>
-          <p className="mt-2 text-[11px] text-slate-500">管理自营虚拟卡：菲区 ₱999 优先，美区 $20 兜底，失败自动回退上游。</p>
+          <p className="mt-2 text-[11px] text-slate-500">管理自营虚拟卡：菲区 ₱999 优先，美区 $20 兜底；无卡或失败仅在配置了上游 API 时回退。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] text-slate-500 hover:text-slate-200" aria-label="刷新">
@@ -383,12 +393,31 @@ export default function AdminCardsPage() {
                     </td>
                     <td className="text-[10px] text-slate-500">{card.three_ds_email_masked || "—"}</td>
                     <td className="text-[10px] text-slate-500">{card.exp_month}/{card.exp_year}</td>
-                    <td className="text-[11px] text-slate-300">{formatMoney(card.available_balance)}</td>
+                    <td className="text-[11px] text-slate-300">
+                      {formatMoney(card.available_balance)}
+                      {card.reserved_balance > 0 && (
+                        <div className="mt-0.5 text-[9px] text-amber-300/80">预占 {formatMoney(card.reserved_balance)}</div>
+                      )}
+                    </td>
                     <td className="text-[10px] text-slate-500">{card.current_bind_count} / {card.max_bind_count}</td>
                     <td className={`text-[10px] ${card.failed_count ? "text-rose-300" : "text-slate-600"}`}>{card.failed_count}</td>
-                    <td><StatusBadge status={card.status} label={card.status_label} /></td>
+                    <td>
+                      <StatusBadge status={card.status} label={card.status_label} />
+                      {card.cooling_down && (
+                        <div className="mt-1 text-[9px] text-amber-300/80" title={card.last_error || ""}>冷却中</div>
+                      )}
+                      {card.is_locked && <div className="mt-1 text-[9px] text-sky-300/80">执行中</div>}
+                    </td>
                     <td>
                       <div className="flex flex-col gap-1.5">
+                        <button
+                          type="button"
+                          disabled={actionId === card.id}
+                          onClick={() => void calibrateCard(card)}
+                          className="text-left text-[10px] text-sky-300 hover:text-sky-200 disabled:opacity-40"
+                        >
+                          校准余额
+                        </button>
                         {card.status === "EXHAUSTED" && (
                           <button
                             type="button"
@@ -436,7 +465,7 @@ export default function AdminCardsPage() {
 
       <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-400/15 bg-amber-400/[0.045] px-4 py-3 text-[10px] leading-5 text-amber-200/65">
         <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-        单卡最多绑定 2 个账号；任一卡出现拒付即自动挂起并停止调度，避免产生失败交易费与账号风控。
+        单卡最多绑定 2 个账号；拒付先冷却，连续失败达阈值才自动挂起并停止调度。
         卡号与 CVV 使用 AES-256-GCM 加密存储，页面仅展示掩码。菲律宾地址仅用于 ₱999 结账，美区 $20 使用美国地址。
       </div>
 
@@ -556,7 +585,7 @@ export default function AdminCardsPage() {
         {importResult ? (
           <div>
             <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4 text-[11px] text-emerald-200">
-              导入完成：新增 {importResult.created} 张，失败 {importResult.failed.length} 张。
+              导入完成：新增 {importResult.created} 张，跳过 {importResult.skipped || 0} 张（卡号已存在），失败 {importResult.failed.length} 张。
             </div>
             {importResult.failed.length > 0 && (
               <div className="mt-3 max-h-40 overflow-y-auto rounded-xl border border-rose-400/20 bg-rose-400/[0.05] p-3 font-mono text-[10px] leading-5 text-rose-200">
@@ -570,8 +599,21 @@ export default function AdminCardsPage() {
         ) : (
           <div className="space-y-4">
             <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[10px] leading-5 text-slate-500">
-              粘贴 JSON 数组（最多 200 张）。字段与单卡录入一致：<span className="font-mono text-slate-400">billing_address</span> 为美国地址，
-              <span className="font-mono text-slate-400">ph_billing_address</span> 可省略。
+              直接从卡台导出结果粘贴：CSV/制表符（每行一张卡）或 JSON 数组均可，最多 200 张。
+              美国账单地址使用下方默认值；需要菲区能力请先用单卡录入。
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-[10px] text-slate-500">
+                缺省余额（USD）
+                <input value={defaultBalance} onChange={(event) => setDefaultBalance(event.target.value)} className="admin-input mt-1 w-full py-2 focus:border-brand-400/40" />
+              </label>
+              <label className="block text-[10px] text-slate-500">
+                单卡绑定上限
+                <select value={defaultMaxBinds} onChange={(event) => setDefaultMaxBinds(event.target.value)} className="admin-input mt-1 w-full py-2 focus:border-brand-400/40">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                </select>
+              </label>
             </div>
             <textarea
               value={importText}
@@ -585,7 +627,14 @@ export default function AdminCardsPage() {
                 onClick={() => setImportText(BATCH_EXAMPLE)}
                 className="btn-secondary py-2.5"
               >
-                填入示例
+                填入 CSV 示例
+              </button>
+              <button
+                type="button"
+                onClick={() => setImportText(BATCH_JSON_EXAMPLE)}
+                className="btn-secondary py-2.5"
+              >
+                填入 JSON 示例
               </button>
               <button type="button" onClick={() => setImportOpen(false)} className="btn-secondary py-2.5">取消</button>
               <button

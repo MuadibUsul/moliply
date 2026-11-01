@@ -7,7 +7,8 @@ from uuid import uuid4
 import pytest
 
 from app.models import Order, OrderStatus, PaymentEvent, utcnow
-from app.services import runtime_settings, trc20_watcher
+from app.services import runtime_settings
+from app.services.chains import trc20_watcher
 from app.services.payments import get_provider
 from app.services.payments.trc20 import DirectTrc20Provider
 

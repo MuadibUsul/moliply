@@ -7,7 +7,8 @@ from uuid import uuid4
 import pytest
 
 from app.models import Order, OrderStatus, PaymentEvent, utcnow
-from app.services import btc_watcher, direct_crypto, evm_watcher, runtime_settings
+from app.services import direct_crypto, runtime_settings
+from app.services.chains import btc_watcher, evm_watcher
 from app.services.payments.direct_multi import DirectBitcoinProvider, DirectEthereumProvider
 
 EVM_WALLET = "0x" + "a" * 40

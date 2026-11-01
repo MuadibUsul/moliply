@@ -98,6 +98,8 @@ export function paymentLabel(provider: string | null | undefined): string {
     ltzf_wechat: "微信支付",
     ltzf_alipay: "支付宝",
     xunhupay: "虎皮椒",
+    wechat_native: "微信支付",
+    alipay_f2f: "支付宝",
     mock: "模拟支付",
     mock_wechat: "微信支付",
     mock_alipay: "支付宝",

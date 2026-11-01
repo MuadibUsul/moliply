@@ -21,7 +21,7 @@ from app.schemas import CouponValidateRequest, OrderCreateRequest, PaymentCreate
 from app.security import client_ip, create_user_token, limiter
 from app.services import accounts
 from app.services import orders as order_service
-from app.services import crypto_watcher
+from app.services.chains import crypto_watcher
 from app.services.catalog import list_categories, money, serialize_product
 from app.services.payments import masked_order_title
 

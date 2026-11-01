@@ -64,6 +64,18 @@ FEISHU_EVENTS: list[dict[str, str]] = [
         "severity": "warning",
     },
     {
+        "key": "vcc.card_suspended",
+        "label": "自营卡片挂起",
+        "description": "卡片硬拒付或连续失败达到阈值后自动挂起",
+        "severity": "warning",
+    },
+    {
+        "key": "vcc.pool_low",
+        "label": "自营卡池低水位",
+        "description": "可用卡片数低于预警线，需要及时补卡",
+        "severity": "warning",
+    },
+    {
         "key": "payment.callback_failed",
         "label": "支付回调异常",
         "description": "签名、金额或订单校验失败",

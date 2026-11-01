@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import { handleAdminError } from "@/lib/admin";
 
 type ChannelData = {
+  payment: { gateway: string; ready: boolean; mode: string };
+  upstream_configured: boolean;
   upstream: {
     name: string;
     mode: string;
@@ -48,7 +50,7 @@ export default function AdminChannelsPage() {
         <div>
           <p className="eyebrow">SUPPLY & CHANNELS</p>
           <h1 className="mt-2 font-display text-[28px] font-bold tracking-tight text-white">渠道状态</h1>
-          <p className="mt-2 text-[11px] text-slate-500">查看上游 API 与自营 VCC 双通道运行状态。</p>
+          <p className="mt-2 text-[11px] text-slate-500">查看官方收款通道、本地卡池与上游兜底的运行状态。</p>
         </div>
         <button
           type="button"
@@ -66,7 +68,43 @@ export default function AdminChannelsPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+      <section className="admin-card mt-6">
+        <div className="flex items-start justify-between">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-brand-400/15 bg-brand-500/10 text-brand-300">
+            <CreditCard size={20} />
+          </span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] ${
+            data?.payment.ready
+              ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300"
+              : "border-amber-400/20 bg-amber-400/10 text-amber-300"
+          }`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+            {data?.payment.ready ? "已配置" : "待配置"}
+          </span>
+        </div>
+        <h2 className="mt-4 text-base font-semibold text-slate-100">官方收款通道</h2>
+        <p className="mt-2 text-[11px] leading-6 text-slate-500">
+          顾客扫码的微信/支付宝界面由所选网关决定，账单名称固定为「服务名前缀-订单号」。
+        </p>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <p className="text-[9px] text-slate-600">当前网关</p>
+            <p className="mt-1 text-[11px] text-slate-300">
+              {data?.payment.gateway === "alipay" ? "支付宝当面付" : data?.payment.gateway === "wechat" ? "微信支付 V3 Native" : "—"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <p className="text-[9px] text-slate-600">支付模式</p>
+            <p className="mt-1 text-[11px] text-slate-300">{data?.payment.mode === "live" ? "真实支付" : "模拟支付"}</p>
+          </div>
+        </div>
+        <Link href="/admin/settings" className="link-arrow mt-4">
+          去配置商户参数
+          <ArrowUpRight size={11} />
+        </Link>
+      </section>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <section className="admin-card">
           <div className="flex items-start justify-between">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-400/15 bg-blue-500/10 text-blue-300">
@@ -83,7 +121,7 @@ export default function AdminChannelsPage() {
           </div>
           <h2 className="mt-4 text-base font-semibold text-slate-100">上游 API 代充通道</h2>
           <p className="mt-2 text-[11px] leading-6 text-slate-500">
-            默认主力通道。将用户 Session 与上游卡密转发给供应商 API，随后按指数退避轮询充值结果。
+            可选兜底通道。只在本地卡池无卡或失败、且上游已配置时才会被调用。
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
@@ -96,8 +134,9 @@ export default function AdminChannelsPage() {
             </div>
           </div>
           <div className="mt-4 rounded-xl border border-white/[0.055] bg-white/[0.015] p-3 text-[10px] leading-5 text-slate-600">
-            上线前在 <code className="text-slate-400">.env</code> 填写 UPSTREAM_API_BASE / KEY / SECRET，并将
-            UPSTREAM_MODE 切换为 http。若供应商字段不同，仅需调整 upstream_provider.py。
+            {data?.upstream_configured
+              ? "已配置。本地卡池耗尽时会自动切到这里。"
+              : "未配置也不影响出单：未配置时全部订单走本地卡池，池空则转人工处理。"}
           </div>
           <Link href="/admin/tasks" className="link-arrow mt-4">
             查看充值任务
