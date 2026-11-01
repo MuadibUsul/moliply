@@ -26,6 +26,8 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator
 
+from app.suppliers.base import SupplierRejected, SupplierUncertain, SupplierUnavailable
+from app.suppliers.yunshu import YunshuSupplier
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
@@ -43,6 +45,8 @@ IDEMPOTENCY_TTL_SECONDS = int(os.environ.get("IDEMPOTENCY_TTL_SECONDS", "86400")
 MAX_PENDING_PER_SKU = int(os.environ.get("MAX_PENDING_PER_SKU", "0"))
 
 TERMINAL = ("success", "failed")
+SUPPLIER_NAME = os.environ.get("SUPPLIER", "").lower()
+SUPPLIER_POLL_ATTEMPTS = int(os.environ.get("SUPPLIER_POLL_ATTEMPTS", "6"))
 _lock = threading.Lock()
 
 SCHEMA = """
@@ -55,6 +59,8 @@ CREATE TABLE IF NOT EXISTS orders (
     upstream_code TEXT,
     session_fp TEXT NOT NULL,
     session_tail TEXT NOT NULL DEFAULT '',
+    supplier_ref TEXT NOT NULL DEFAULT '',
+    supplier_secret TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -133,7 +139,12 @@ app = FastAPI(title="MOLIPLY upstream", docs_url=None, redoc_url=None, lifespan=
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "mode": FULFILL_MODE, "keys": bool(MERCHANT_KEY and MERCHANT_SECRET)}
+    return {
+        "status": "ok",
+        "mode": FULFILL_MODE,
+        "keys": bool(MERCHANT_KEY and MERCHANT_SECRET),
+        "supplier": SUPPLIER_NAME or None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +154,27 @@ def healthz() -> dict:
 class Claim:
     found: bool
     payload: str = ""
+
+
+def build_supplier():
+    """Construct the configured supplier, or None when running manual/stock."""
+    if SUPPLIER_NAME != "yunshu":
+        return None
+    token = os.environ.get("YUNSHU_TOKEN", "")
+    if not token:
+        return None
+    mapping: dict[str, str] = {}
+    for pair in os.environ.get("YUNSHU_SKU_MAP", "").split(","):
+        if "=" in pair:
+            local, remote = pair.split("=", 1)
+            mapping[local.strip()] = remote.strip()
+    return YunshuSupplier(
+        os.environ.get("YUNSHU_API_BASE", "https://yunshutoken.com/partner/v1"),
+        token,
+        mapping,
+        catalog_race=os.environ.get("YUNSHU_RACE", ""),
+        sku_options=os.environ.get("YUNSHU_SKU", ""),
+    )
 
 
 def claim_stock(connection: sqlite3.Connection, sku: str, order_no: str) -> Claim:
@@ -167,15 +199,77 @@ def settle(order_no: str, status: str, message: str = "") -> None:
 
 
 def run_fulfillment(order_no: str, payload: RechargeIn) -> None:
-    if FULFILL_MODE != "stock":
-        settle(order_no, "pending", "等待人工处理")
+    if FULFILL_MODE == "stock":
+        with db() as connection:
+            claim = claim_stock(connection, payload.sku_type, order_no)
+        if not claim.found:
+            settle(order_no, "pending", "库存不足，等待人工补货")
+            return
+        settle(order_no, "success", f"已交付 {claim.payload}")
+        return
+
+    if FULFILL_MODE == "supplier":
+        supplier = build_supplier()
+        if supplier is None:
+            settle(order_no, "pending", "上游未配置，转人工")
+            return
+        contact = payload.merchant or "MOLIPLY"
+        try:
+            result = supplier.deliver(payload.sku_type, payload.session_raw, order_no, contact)
+        except SupplierRejected as exc:
+            settle(order_no, "failed", str(exc))
+            return
+        except SupplierUncertain as exc:
+            # Balance may be spent: park it, an operator decides.
+            settle(order_no, "pending", f"上游结果不明：{exc}")
+            return
+        except SupplierUnavailable as exc:
+            settle(order_no, "pending", f"上游暂不可用：{exc}")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("supplier crashed for %s", order_no)
+            settle(order_no, "pending", f"上游异常：{exc}")
+            return
+        persist_supplier(order_no, result)
+        if result.status == "success":
+            settle(order_no, "success", result.message)
+        elif result.status == "failed":
+            settle(order_no, "failed", result.message)
+        else:
+            settle(order_no, "pending", result.message)
+        return
+
+    settle(order_no, "pending", "等待人工处理")
+
+
+def persist_supplier(order_no: str, result) -> None:
+    if not result.reference:
         return
     with db() as connection:
-        claim = claim_stock(connection, payload.sku_type, order_no)
-    if not claim.found:
-        settle(order_no, "pending", "库存不足，等待人工补货")
+        connection.execute(
+            "UPDATE orders SET supplier_ref=? WHERE order_no=?", (result.reference, order_no)
+        )
+
+
+def repoll(order_no: str) -> None:
+    """Ask the supplier again for a pending order that has a live reference."""
+    supplier = build_supplier()
+    if supplier is None:
         return
-    settle(order_no, "success", f"已交付 {claim.payload}")
+    with db() as connection:
+        row = connection.execute(
+            "SELECT sku, supplier_ref, supplier_secret FROM orders WHERE order_no=?", (order_no,)
+        ).fetchone()
+    if row is None or not row["supplier_ref"]:
+        return
+    try:
+        result = supplier.poll(row["supplier_ref"], row["supplier_secret"], row["sku"], tries=1)
+    except Exception:  # noqa: BLE001
+        return
+    if result.status == "success":
+        settle(order_no, "success", result.message)
+    elif result.status == "failed":
+        settle(order_no, "failed", result.message)
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +329,10 @@ async def order_status(order_no: str, request: Request):
         row = connection.execute("SELECT status, message FROM orders WHERE order_no=?", (order_no,)).fetchone()
     if row is None:
         raise HTTPException(404, "unknown order")
+    if row["status"] == "pending" and FULFILL_MODE == "supplier":
+        repoll(order_no)
+        with db() as connection:
+            row = connection.execute("SELECT status, message FROM orders WHERE order_no=?", (order_no,)).fetchone()
     return {"order_no": order_no, "status": row["status"], "message": row["message"]}
 
 

@@ -143,3 +143,71 @@ def test_healthz_reports_key_state(service):
     client, _ = service
     body = client.get("/healthz").json()
     assert body["keys"] is True
+
+
+class FakeSupplier:
+    name = "fake"
+    status = "success"
+    error = None
+
+    def quote(self, sku, contact):
+        return 1000
+
+    def deliver(self, sku, session_raw, request_no, contact):
+        from app.suppliers.base import SupplierResult
+
+        if self.error:
+            raise self.error("boom")
+        return SupplierResult(self.status, "fake", "TRADE-1")
+
+    def poll(self, trade_no, secret, sku, tries=1):
+        from app.suppliers.base import SupplierResult
+
+        if self.status == "pending":
+            self.status = "success"
+            return SupplierResult("success", "late")
+        return SupplierResult(self.status, "")
+
+
+@pytest.fixture()
+def supplier_mode(service, monkeypatch):
+    client, module = service
+    from app.suppliers.base import SupplierRejected, SupplierUncertain
+
+    monkeypatch.setattr(module, "FULFILL_MODE", "supplier")
+    fake = FakeSupplier()
+    monkeypatch.setattr(module, "build_supplier", lambda: fake)
+    return client, module, fake, SupplierRejected, SupplierUncertain
+
+
+def test_supplier_success_settles_the_order(supplier_mode):
+    client, _, _, _, _ = supplier_mode
+    body = signed(client, "/api/v1/recharge", payload()).json()
+    assert body["status"] == "success"
+
+
+def test_supplier_rejection_fails_the_order(supplier_mode):
+    client, _, fake, rejected, _ = supplier_mode
+    fake.error = rejected
+    assert signed(client, "/api/v1/recharge", payload()).json()["status"] == "failed"
+
+
+def test_supplier_uncertainty_stays_pending(supplier_mode):
+    client, _, fake, _, uncertain = supplier_mode
+    fake.error = uncertain
+    body = signed(client, "/api/v1/recharge", payload()).json()
+    assert body["status"] == "pending"
+    assert "结果不明" in body["message"]
+
+
+def test_pending_supplier_order_is_repolled(supplier_mode):
+    client, _, fake, _, _ = supplier_mode
+    fake.status = "pending"
+    order = signed(client, "/api/v1/recharge", payload()).json()["order_no"]
+    assert signed(client, "/api/v1/recharge/" + order, method="GET").json()["status"] == "success"
+
+
+def test_healthz_reports_supplier_name(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    assert client.get("/healthz").json()["supplier"] == "yunshu"

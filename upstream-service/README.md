@@ -10,6 +10,9 @@ MOLIPLY 的货源端：实现商城的上游契约，负责真正把会员充上
 | --- | --- |
 | `manual` | 接单后挂起，你在 `/admin` 点成功或失败 |
 | `stock` | 按 SKU 认领一条预导入的码，认到即成功，没货则挂起等补货 |
+| `supplier` | **全自动**：调上游 API 买货并替客户核销，无人值守 |
+
+`supplier` 模式需要 `SUPPLIER=yunshu`、`YUNSHU_TOKEN`、`YUNSHU_SKU_MAP`。报价、下单、核销、查结果全部走接口；判定含糊时订单停在 pending 等人工，绝不猜。
 
 ## 本地起
 
