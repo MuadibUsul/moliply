@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,7 @@ from app.schemas import (
 from app.services.accounts import hash_password
 from app.security import (
     admin_login_guard,
+    decode_admin_token,
     client_ip,
     create_admin_token,
     limiter,
@@ -75,6 +76,7 @@ from app.services.fulfillment import vcc_pool_scheduler
 from app.services.upstream_provider import UpstreamProvider
 
 logger = logging.getLogger(__name__)
+ADMIN_COOKIE = "moliply_admin"
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-public"])
 protected = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -98,7 +100,12 @@ VCC_STATUS_LABELS = {"ACTIVE": "可用", "EXHAUSTED": "待销卡回血", "SUSPEN
 
 @router.post("/login")
 @limiter.limit(settings.admin_login_rate_limit)
-def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+def admin_login(
+    payload: AdminLoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
     import secrets
 
     ip = client_ip(request)
@@ -161,7 +168,42 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
     except Exception:
         db.rollback()
     token, ttl = create_admin_token(payload.username)
+    # Mirrored into a cookie so same-origin pieces (the CCE console behind
+    # Caddy) can be authenticated without a second password.
+    response.set_cookie(
+        ADMIN_COOKIE,
+        token,
+        max_age=ttl,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
     return {"token": token, "expires_in": ttl, "username": payload.username}
+
+
+@router.post("/logout")
+def admin_logout(response: Response) -> dict:
+    response.delete_cookie(ADMIN_COOKIE, path="/")
+    return {"ok": True}
+
+
+@router.get("/session")
+def admin_session(request: Request) -> dict:
+    """Liveness probe for Caddy ``forward_auth`` on the CCE console.
+
+    Accepts the cookie or a bearer token. Returns 200 only for a valid admin
+    session, and passes the CCE admin token back in a header so the reverse
+    proxy can inject it downstream.
+    """
+    token = request.cookies.get(ADMIN_COOKIE, "")
+    if not token:
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="请先登录运营后台")
+    payload = decode_admin_token(token)
+    return {"ok": True, "sub": payload.get("sub", "")}
 
 
 def _serialize_code(db: Session, code: ActivationCode) -> dict:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.services.code_generator import generate_code
 
 
@@ -162,3 +165,39 @@ def test_products_and_tasks_endpoints(client, admin_headers):
 def test_admin_endpoints_require_auth(client):
     response = client.get("/api/v1/admin/overview")
     assert response.status_code == 401
+
+
+def test_login_sets_a_session_cookie(client):
+    response = client.post("/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"})
+    assert response.status_code == 200
+    assert response.cookies.get("moliply_admin")
+    assert "httponly" in response.headers["set-cookie"].lower()
+
+
+def test_session_endpoint_accepts_the_cookie(client):
+    login = client.post("/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"})
+    token = login.cookies.get("moliply_admin")
+    # secure cookies are not replayed over plain http by TestClient
+    assert client.get("/api/v1/admin/session", cookies={"moliply_admin": token}).status_code == 200
+
+
+def test_session_endpoint_accepts_a_bearer_token(client, admin_headers):
+    assert client.get("/api/v1/admin/session", headers=admin_headers).status_code == 200
+
+
+def test_session_endpoint_rejects_anonymous(client):
+    fresh = TestClient(app)
+    assert fresh.get("/api/v1/admin/session").status_code == 401
+
+
+def test_session_endpoint_rejects_unknown_cookie(client):
+    fresh = TestClient(app)
+    fresh.cookies.set("moliply_admin", "not-a-token")
+    assert fresh.get("/api/v1/admin/session").status_code == 401
+
+
+def test_logout_clears_the_cookie(client):
+    client.post("/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"})
+    response = client.post("/api/v1/admin/logout")
+    assert response.status_code == 200
+    assert "moliply_admin" in response.headers.get("set-cookie", "")

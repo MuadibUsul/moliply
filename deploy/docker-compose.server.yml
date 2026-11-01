@@ -82,6 +82,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Loopback only: the host Caddy calls this for forward_auth on /cce.
+    ports:
+      - "127.0.0.1:18080:8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
