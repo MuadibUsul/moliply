@@ -12,6 +12,7 @@ from app.database import SessionLocal
 from app.services import feishu
 from app.services import orders as order_service
 from app.services.payments.base import PaymentProviderError
+from app.services.payments.wechat_native import HEADERS_KEY, RAW_BODY_KEY
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
@@ -33,59 +34,62 @@ async def _read_payload(request: Request) -> dict[str, Any]:
     return payload
 
 
-@router.post("/ltzf/notify", response_class=PlainTextResponse)
-async def ltzf_notify(request: Request):
+def _report_callback_failure(channel: str, order_no: str, code: str, message: str) -> None:
+    logger.warning("%s callback rejected: %s", channel, code)
+    feishu.dispatch_event(
+        "payment.callback_failed",
+        f"{channel} 支付回调异常",
+        {"订单号": order_no, "错误码": code, "说明": message},
+        severity="error",
+        link_path="/admin/orders",
+    )
+
+
+@router.post("/alipay/notify", response_class=PlainTextResponse)
+async def alipay_notify(request: Request):
+    """Alipay F2F asynchronous notification; Alipay expects the literal `success`."""
     payload = await _read_payload(request)
     db: Session = SessionLocal()
     try:
-        body = order_service.process_payment_notify(db, "ltzf", payload)
-        logger.info("Lanttu callback processed for order %s", payload.get("out_trade_no", ""))
+        body = order_service.process_payment_notify(db, "alipay", payload)
+        logger.info("Alipay callback processed for order %s", payload.get("out_trade_no", ""))
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
-        logger.warning("Lanttu callback rejected: %s", exc.code)
-        feishu.dispatch_event(
-            "payment.callback_failed",
-            "Lanttu 支付回调异常",
-            {
-                "订单号": payload.get("out_trade_no", ""),
-                "错误码": exc.code,
-                "说明": exc.message,
-            },
-            severity="error",
-            link_path="/admin/orders",
-        )
-        return PlainTextResponse("FAIL", status_code=400)
-
+        _report_callback_failure("支付宝", str(payload.get("out_trade_no", "")), exc.code, exc.message)
+        return PlainTextResponse("failure", status_code=400)
     except PaymentProviderError as exc:
-        logger.warning("Lanttu callback provider error: %s", exc.code)
-        return PlainTextResponse("FAIL", status_code=400)
+        _report_callback_failure("支付宝", str(payload.get("out_trade_no", "")), exc.code, exc.message)
+        return PlainTextResponse("failure", status_code=400)
     finally:
         db.close()
 
 
-@router.post("/xunhupay/notify", response_class=PlainTextResponse)
-async def xunhupay_notify(request: Request):
-    payload = await _read_payload(request)
+@router.post("/wechat/notify", response_class=PlainTextResponse)
+async def wechat_notify(request: Request):
+    """WeChat Pay V3 notification: signature headers + AEAD-encrypted resource."""
+    raw = await request.body()
+    try:
+        envelope = json.loads(raw)
+    except json.JSONDecodeError:
+        return PlainTextResponse('{"code":"FAIL","message":"invalid json"}', status_code=400)
+    if not isinstance(envelope, dict):
+        return PlainTextResponse('{"code":"FAIL","message":"invalid payload"}', status_code=400)
+    payload: dict[str, Any] = dict(envelope)
+    payload[RAW_BODY_KEY] = raw.decode("utf-8")
+    payload[HEADERS_KEY] = {
+        key: value for key, value in request.headers.items() if key.lower().startswith("wechatpay-")
+    }
     db: Session = SessionLocal()
     try:
-        body = order_service.process_payment_notify(db, "xunhupay", payload)
-        logger.info("Xunhupay callback processed for order %s", payload.get("trade_order_id", ""))
+        body = order_service.process_payment_notify(db, "wechat", payload)
+        logger.info("WeChat callback processed for order %s", envelope.get("resource", {}).get("original_type", ""))
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
-        logger.warning("Xunhupay callback rejected: %s", exc.code)
-        feishu.dispatch_event(
-            "payment.callback_failed",
-            "Xunhupay 支付回调异常",
-            {
-                "订单号": payload.get("trade_order_id", ""),
-                "错误码": exc.code,
-                "说明": exc.message,
-            },
-            severity="error",
-            link_path="/admin/orders",
-        )
-        return PlainTextResponse("FAIL", status_code=400)
-
+        _report_callback_failure("微信支付", "", exc.code, exc.message)
+        return PlainTextResponse(f'{{"code":"FAIL","message":"{exc.message}"}}', status_code=400)
+    except PaymentProviderError as exc:
+        _report_callback_failure("微信支付", "", exc.code, exc.message)
+        return PlainTextResponse(f'{{"code":"FAIL","message":"{exc.message}"}}', status_code=400)
     finally:
         db.close()
 
@@ -105,19 +109,7 @@ async def nowpayments_ipn(request: Request):
         logger.info("NOWPayments callback processed for order %s", payload.get("order_id", ""))
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
-        logger.warning("NOWPayments callback rejected: %s", exc.code)
-        feishu.dispatch_event(
-            "payment.callback_failed",
-            "NOWPayments 支付回调异常",
-            {
-                "订单号": payload.get("order_id", ""),
-                "错误码": exc.code,
-                "说明": exc.message,
-            },
-            severity="error",
-            link_path="/admin/orders",
-        )
+        _report_callback_failure("NOWPayments", str(payload.get("order_id", "")), exc.code, exc.message)
         return PlainTextResponse("FAIL", status_code=400)
-
     finally:
         db.close()

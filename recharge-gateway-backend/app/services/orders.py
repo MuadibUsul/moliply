@@ -57,9 +57,8 @@ ORDER_STATUS_LABELS = {
 PAYMENT_LABELS = {
     "wechat": "微信支付",
     "alipay": "支付宝",
-    "ltzf_wechat": "微信支付",
-    "ltzf_alipay": "支付宝",
-    "xunhupay": "虎皮椒",
+    "wechat_native": "微信支付",
+    "alipay_f2f": "支付宝",
     "crypto": "加密货币",
     "nowpayments": "加密货币",
     "usdt_trc20": "USDT-TRC20",

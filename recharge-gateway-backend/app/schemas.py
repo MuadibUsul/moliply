@@ -47,7 +47,7 @@ class AdminResetPasswordRequest(StrictModel):
 
 
 class PaymentCreateRequest(StrictModel):
-    provider: Literal["wechat", "alipay", "xunhupay", "crypto"] = "wechat"
+    provider: Literal["wechat", "alipay", "crypto"] = "wechat"
     coin: str = Field(default="", max_length=20)
 
 
@@ -136,6 +136,23 @@ class VccCardCreateRequest(StrictModel):
 
 class VccCardBatchImportRequest(StrictModel):
     cards: list[VccCardCreateRequest] = Field(min_length=1, max_length=200)
+
+
+class VccCardPasteImportRequest(StrictModel):
+    """Raw paste from the issuer console: a JSON array or CSV/TSV lines."""
+
+    text: str = Field(min_length=4, max_length=200_000)
+    default_balance: float = Field(default=25.0, ge=0, le=100_000)
+    max_bind_count: int = Field(default=2, ge=1, le=2)
+    provider: str = Field(default="RDVCC", max_length=32)
+    billing_address: BillingAddress | None = None
+    ph_billing_address: BillingAddress | None = None
+    dry_run: bool = False
+
+
+class VccCardCalibrateRequest(StrictModel):
+    available_balance: float = Field(ge=0, le=100_000)
+    note: str = Field(default="", max_length=200)
 
 
 class RoutingPolicyRequest(StrictModel):

@@ -431,7 +431,7 @@ function PayContent() {
         <p className="mt-3 text-sm text-slate-500">
           {directCrypto
             ? `请向下方 ${directNetwork} 地址转入精确金额；到账并确认后系统自动交付。`
-            : "请使用微信或支付宝扫描下方二维码，完成后系统将自动更新订单状态。"}
+            : "请使用微信或支付宝扫码支付，完成后系统自动更新订单状态。"}
         </p>
       </div>
 
@@ -506,7 +506,9 @@ function PayContent() {
                 {expired ? "订单已超时，请重新下单" : `请在 ${formatCountdown(remaining)} 内完成支付`}
               </p>
               <p className="mt-2 text-[10px] text-slate-600">
-                {directCrypto ? `只支持 ${directNetwork} 网络，转错链无法找回。` : "扫码支付后，页面将自动跳转至交付结果。"}
+                {directCrypto
+                  ? `只支持 ${directNetwork} 网络，转错链无法找回。`
+                  : "账单显示名称为固定服务名 + 订单号，属于正常现象。"}
               </p>
 
               {payError && (
