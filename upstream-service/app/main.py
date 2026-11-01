@@ -445,7 +445,13 @@ async def probe_supplier(request: Request):
         with httpx.Client(timeout=20.0) as client:
             response = client.post(
                 f"{supplier.base}/connect",
-                headers={"Authorization": f"Bearer {supplier.token}"},
+                # The partner API is form-encoded and answers 415 without this.
+                headers={
+                    "Authorization": f"Bearer {supplier.token}",
+                    "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+                    "Accept": "application/json",
+                },
+                content=b"",
             )
         if response.status_code >= 400:
             raise HTTPException(400, f"密钥校验失败：HTTP {response.status_code} {response.text[:120]}")
@@ -464,7 +470,12 @@ async def probe_supplier(request: Request):
             quotes.append({"sku": local, "code": remote, "price_cents": supplier.quote(local, "MOLIPLY")})
         except Exception as exc:  # noqa: BLE001
             quotes.append({"sku": local, "code": remote, "error": str(exc)[:160]})
-    return {"shop": data.get("shopName"), "balance": data.get("balance"), "quotes": quotes}
+    return {
+        "shop": data.get("shopName"),
+        "balance": data.get("balance"),
+        "quotes": quotes,
+        "mapped": len(supplier.sku_map),
+    }
 
 
 # ---------------------------------------------------------------------------
