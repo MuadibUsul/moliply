@@ -51,6 +51,24 @@ def test_billing_subject_stays_within_wechat_description_limit():
     assert subject.endswith("-MOL202610180042")
 
 
+def test_gateways_tolerate_blank_api_base(monkeypatch, rsa_pair):
+    """An empty env value must fall back to the HTTPS default, not fail the build."""
+    from app.services import runtime_settings
+    from app.services.payments.alipay_f2f import AlipayF2FProvider
+
+    private_pem, public_pem = rsa_pair
+    monkeypatch.setattr(settings, "alipay_app_id", "2021000000000000")
+    monkeypatch.setattr(settings, "alipay_app_private_key", private_pem)
+    monkeypatch.setattr(settings, "alipay_public_key", public_pem)
+    original = runtime_settings.get
+    monkeypatch.setattr(
+        runtime_settings,
+        "get",
+        lambda key, default="": "" if key == "alipay_api_base" else original(key, default),
+    )
+    assert AlipayF2FProvider().api_base.startswith("https://")
+
+
 def test_alipay_signature_roundtrip(monkeypatch, rsa_pair):
     from app.services.payments.alipay_f2f import AlipayF2FProvider
 

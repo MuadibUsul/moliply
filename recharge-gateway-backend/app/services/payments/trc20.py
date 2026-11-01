@@ -36,7 +36,7 @@ class DirectTrc20Provider(PaymentProvider):
             "usdt_trc20_contract",
             settings.usdt_trc20_contract,
         ).strip() or DEFAULT_CONTRACT
-        self.api_base = runtime.get("tron_api_base", settings.tron_api_base)
+        self.api_base = runtime.get("tron_api_base", settings.tron_api_base) or settings.tron_api_base
         self.api_key = runtime.get("tron_api_key", settings.tron_api_key)
         self.rate = runtime.get_float("crypto_cny_per_usd", settings.crypto_cny_per_usd)
         self.invoice_minutes = runtime.get_int("crypto_invoice_minutes", settings.crypto_invoice_minutes)

@@ -41,7 +41,7 @@ class NowPaymentsProvider(PaymentProvider):
     def __init__(self) -> None:
         self.api_key = runtime.get("nowpayments_api_key")
         self.ipn_secret = runtime.get("nowpayments_ipn_secret")
-        self.api_base = runtime.get("nowpayments_api_base", "https://api.nowpayments.io")
+        self.api_base = runtime.get("nowpayments_api_base", "https://api.nowpayments.io") or "https://api.nowpayments.io"
         try:
             net_guard.ensure_https(self.api_base)
         except ValueError as exc:

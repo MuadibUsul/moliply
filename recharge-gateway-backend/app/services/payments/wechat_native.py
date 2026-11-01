@@ -53,8 +53,8 @@ class WechatNativeProvider(OfficialPaymentGatewayMixin, PaymentProvider):
         self.app_id = runtime.get("wechat_app_id")
         self.mch_id = runtime.get("wechat_mch_id")
         self.mch_serial_no = runtime.get("wechat_mch_serial_no")
-        self.api_base = runtime.get("wechat_api_base", settings.wechat_api_base)
-        self.notify_url = runtime.get("wechat_notify_url", settings.wechat_notify)
+        self.api_base = runtime.get("wechat_api_base", settings.wechat_api_base) or settings.wechat_api_base
+        self.notify_url = runtime.get("wechat_notify_url", settings.wechat_notify) or settings.wechat_notify
         self.apiv3_key = runtime.get("wechat_apiv3_key")
         private_key = runtime.get("wechat_mch_private_key")
         platform_key = runtime.get("wechat_platform_public_key")
