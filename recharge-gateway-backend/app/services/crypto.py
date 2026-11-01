@@ -102,3 +102,10 @@ def luhn_valid(number: str) -> bool:
                 digit -= 9
         checksum += digit
     return checksum % 10 == 0
+
+
+def card_fingerprint(digits: str) -> str:
+    """Stable, non-reversible identifier for a card number."""
+    import hashlib
+
+    return hashlib.sha256("".join(ch for ch in digits if ch.isdigit()).encode("utf-8")).hexdigest()

@@ -88,10 +88,10 @@ CONTACT="$(get NEXT_PUBLIC_CONTACT_WECHAT)"
 CRYPTO_ENABLED="${RUNTIME_CRYPTO_ENABLED:-$(get CRYPTO_ENABLED)}"
 NOWPAYMENTS_API_KEY="$(get NOWPAYMENTS_API_KEY)"
 NOWPAYMENTS_IPN_SECRET="$(get NOWPAYMENTS_IPN_SECRET)"
-LTZF_ID="$(get LTZF_MCH_ID)"
-LTZF_KEY="$(get LTZF_KEY)"
-XH_ID="$(get XUNHUPAY_APP_ID)"
-XH_KEY="$(get XUNHUPAY_APP_SECRET)"
+ALIPAY_ID="$(get ALIPAY_APP_ID)"
+ALIPAY_KEY="$(get ALIPAY_APP_PRIVATE_KEY)"
+WECHAT_MCH="$(get WECHAT_MCH_ID)"
+WECHAT_KEY="$(get WECHAT_MCH_PRIVATE_KEY)"
 
 [[ "$STORE_URL" == https://* ]] && ok "PUBLIC_STORE_URL uses HTTPS" || bad "PUBLIC_STORE_URL must be HTTPS"
 [[ "$PAYMENT_MODE" == "live" ]] && ok "PAYMENT_MODE=live" || bad "PAYMENT_MODE is not live (currently ${PAYMENT_MODE:-unset})"
@@ -101,10 +101,10 @@ XH_KEY="$(get XUNHUPAY_APP_SECRET)"
 [[ "$DEBUG_VALUE" == "false" ]] && ok "DEBUG=false" || bad "DEBUG must be false in production"
 [[ "$SEED_DATA" == "false" ]] && ok "SEED_DEMO_DATA=false" || bad "SEED_DEMO_DATA must be false before launch"
 
-if [ "$RUNTIME_PAYMENT_READY" = "true" ] || { { [ -n "$LTZF_ID" ] && [ -n "$LTZF_KEY" ]; } || { [ -n "$XH_ID" ] && [ -n "$XH_KEY" ]; }; }; then
-  ok "payment merchant keys configured"
+if [ "$RUNTIME_PAYMENT_READY" = "true" ] || { { [ -n "$ALIPAY_ID" ] && [ -n "$ALIPAY_KEY" ]; } || { [ -n "$WECHAT_MCH" ] && [ -n "$WECHAT_KEY" ]; }; }; then
+  ok "official payment merchant keys configured"
 else
-  bad "no payment merchant keys configured (Lanttu or Xunhupay)"
+  bad "no official payment merchant keys configured (Alipay F2F or WeChat V3)"
 fi
 
 [[ -n "$ADMIN_PASSWORD" && "$ADMIN_PASSWORD" != "change-me" && ${#ADMIN_PASSWORD} -ge 12 ]] \
@@ -127,6 +127,22 @@ fi
 [[ "${ADMIN_LOCKOUT:-15}" -ge 5 ]] && ok "admin lockout duration is sane" || bad "ADMIN_LOGIN_LOCKOUT_MINUTES should be >=5"
 [[ -n "$MASTER_KEY" ]] && ok "MASTER_AES_KEY configured" || bad "MASTER_AES_KEY missing"
 [[ "$SEED_INV" == "false" ]] && ok "SEED_DEMO_INVENTORY=false" || bad "SEED_DEMO_INVENTORY must be false before launch"
+
+# Schema migrations must already be at head; a pending revision means the API
+# will upgrade itself on next restart while workers may still hold old code.
+migration_state="$(count_db "SELECT version_num FROM alembic_version LIMIT 1;")"
+migration_head=""
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$API_CONTAINER"; then
+  migration_head="$(docker exec "$API_CONTAINER" python -c 'from alembic.config import Config; from alembic.script import ScriptDirectory; c=Config("alembic.ini"); c.set_main_option("script_location","alembic"); print(ScriptDirectory.from_config(c).get_current_head())' 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [ -n "$migration_state" ] && [ -n "$migration_head" ] && [ "$migration_state" = "$migration_head" ]; then
+  ok "database migrations at head (${migration_state})"
+elif [ -z "$migration_state" ]; then
+  bad "database has no alembic_version row; run migrations before launch"
+else
+  warnf "database revision ${migration_state:-unknown} is not head ${migration_head:-unknown}; run alembic upgrade head"
+fi
+
 
 demo_codes="$(count_db "SELECT count(*) FROM activation_codes WHERE note='演示库存';")"
 demo_accounts="$(count_db "SELECT count(*) FROM account_inventory WHERE label LIKE '%@moliply.test%';")"

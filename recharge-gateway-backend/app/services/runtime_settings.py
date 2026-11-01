@@ -23,8 +23,9 @@ from app.services.notification_events import DEFAULT_FEISHU_EVENTS, FEISHU_EVENT
 logger = logging.getLogger(__name__)
 
 SECRET_KEYS = {
-    "ltzf_key",
-    "xunhupay_app_secret",
+    "alipay_app_private_key",
+    "wechat_mch_private_key",
+    "wechat_apiv3_key",
     "nowpayments_api_key",
     "nowpayments_ipn_secret",
     "tron_api_key",
@@ -66,6 +67,9 @@ INT_KEYS = {
     "btc_confirmations",
     "crypto_invoice_minutes",
     "crypto_payment_grace_minutes",
+    "vcc_max_consecutive_failures",
+    "vcc_cooldown_minutes",
+    "vcc_pool_watermark",
 }
 
 FLOAT_KEYS = {
@@ -85,16 +89,19 @@ FLOAT_KEYS = {
 
 ENV_DEFAULTS = {
     "payment_mode": lambda: settings.payment_mode,
-    "payment_gateway": lambda: "ltzf",
+    "payment_gateway": lambda: "wechat",
     "mock_payment_enabled": lambda: settings.mock_payment_enabled,
-    "ltzf_mch_id": lambda: settings.ltzf_mch_id,
-    "ltzf_app_id": lambda: settings.ltzf_app_id,
-    "ltzf_api_base": lambda: settings.ltzf_api_base,
-    "ltzf_notify_url": lambda: settings.ltzf_notify,
-    "xunhupay_app_id": lambda: settings.xunhupay_app_id,
-    "xunhupay_api_base": lambda: settings.xunhupay_api_base,
-    "xunhupay_notify_url": lambda: settings.xunhupay_notify,
-    "xunhupay_return_url": lambda: settings.xunhupay_return,
+    "official_payment_subject_prefix": lambda: settings.official_payment_subject_prefix,
+    "alipay_app_id": lambda: settings.alipay_app_id,
+    "alipay_public_key": lambda: settings.alipay_public_key,
+    "alipay_api_base": lambda: settings.alipay_api_base,
+    "alipay_notify_url": lambda: settings.alipay_notify,
+    "wechat_app_id": lambda: settings.wechat_app_id,
+    "wechat_mch_id": lambda: settings.wechat_mch_id,
+    "wechat_mch_serial_no": lambda: settings.wechat_mch_serial_no,
+    "wechat_platform_public_key": lambda: settings.wechat_platform_public_key,
+    "wechat_api_base": lambda: settings.wechat_api_base,
+    "wechat_notify_url": lambda: settings.wechat_notify,
     "crypto_enabled": lambda: settings.crypto_enabled,
     "crypto_provider": lambda: settings.crypto_provider,
     "usdt_trc20_wallet_address": lambda: settings.usdt_trc20_wallet_address,
@@ -131,6 +138,9 @@ ENV_DEFAULTS = {
     "self_vcc_min_balance": lambda: settings.self_vcc_min_balance,
     "self_vcc_ph_min_balance": lambda: settings.self_vcc_ph_min_balance,
     "self_vcc_us_min_balance": lambda: settings.self_vcc_us_min_balance,
+    "vcc_max_consecutive_failures": lambda: settings.vcc_max_consecutive_failures,
+    "vcc_cooldown_minutes": lambda: settings.vcc_cooldown_minutes,
+    "vcc_pool_watermark": lambda: settings.vcc_pool_watermark,
     "ph_plus_amount_php": lambda: settings.ph_plus_amount_php,
     "ph_pro_20x_amount_php": lambda: settings.ph_pro_20x_amount_php,
     "us_plus_amount_usd": lambda: settings.us_plus_amount_usd,
@@ -156,6 +166,7 @@ ENV_DEFAULTS = {
     "smtp_port": lambda: settings.smtp_port,
     "smtp_user": lambda: settings.smtp_user,
     "smtp_from": lambda: settings.smtp_from,
+    "ops_alert_email": lambda: settings.ops_alert_email,
     "smtp_use_ssl": lambda: settings.smtp_use_ssl,
     "order_expire_minutes": lambda: settings.order_expire_minutes,
     "enforce_stock": lambda: settings.enforce_stock,
@@ -167,8 +178,9 @@ ENV_DEFAULTS = {
 
 # Secrets also have environment defaults, read through settings attributes.
 SECRET_ENV_DEFAULTS = {
-    "ltzf_key": lambda: settings.ltzf_key,
-    "xunhupay_app_secret": lambda: settings.xunhupay_app_secret,
+    "alipay_app_private_key": lambda: settings.alipay_app_private_key,
+    "wechat_mch_private_key": lambda: settings.wechat_mch_private_key,
+    "wechat_apiv3_key": lambda: settings.wechat_apiv3_key,
     "nowpayments_api_key": lambda: settings.nowpayments_api_key,
     "nowpayments_ipn_secret": lambda: settings.nowpayments_ipn_secret,
     "tron_api_key": lambda: settings.tron_api_key,
@@ -186,7 +198,7 @@ SECRET_ENV_DEFAULTS = {
 ALLOWED_KEYS = set(ENV_DEFAULTS) | SECRET_KEYS
 _ENUM_VALUES = {
     "payment_mode": {"mock", "live"},
-    "payment_gateway": {"ltzf", "xunhupay"},
+    "payment_gateway": {"wechat", "alipay"},
     "crypto_provider": {"nowpayments", "usdt_trc20", "mock"},
     "upstream_mode": {"mock", "http"},
     "routing_policy": {"HYBRID_SELF_FIRST", "SELF_VCC_ONLY", "UPSTREAM_ONLY"},
@@ -369,6 +381,23 @@ def _coerce_public(key: str, value: str) -> Any:
     return value
 
 
+def _official_payment_ready(data: dict[str, str]) -> bool:
+    """All credentials for the *selected* official gateway are present."""
+    if data.get("payment_gateway") == "alipay":
+        return bool(
+            data.get("alipay_app_id") and data.get("alipay_app_private_key") and data.get("alipay_public_key")
+        )
+    if data.get("payment_gateway") == "wechat":
+        return bool(
+            data.get("wechat_app_id")
+            and data.get("wechat_mch_id")
+            and data.get("wechat_mch_serial_no")
+            and data.get("wechat_mch_private_key")
+            and data.get("wechat_apiv3_key")
+        )
+    return False
+
+
 def _crypto_ready(data: dict[str, str]) -> bool:
     if data.get("crypto_provider") == "usdt_trc20":
         try:
@@ -387,10 +416,7 @@ def public_settings() -> dict:
     return {
         "values": values,
         "secret_configured": secrets,
-        "payment_ready": bool(
-            (data.get("payment_gateway") == "xunhupay" and data.get("xunhupay_app_id") and data.get("xunhupay_app_secret"))
-            or (data.get("payment_gateway") != "xunhupay" and data.get("ltzf_mch_id") and data.get("ltzf_key"))
-        ),
+        "payment_ready": _official_payment_ready(data),
         "crypto_ready": _crypto_ready(data),
         "upstream_ready": bool(
             data.get("upstream_mode") == "http" and data.get("upstream_api_base") and data.get("upstream_api_key")

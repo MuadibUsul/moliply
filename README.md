@@ -20,16 +20,17 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | MOLI 激活码 | ✅ | `MOLI-XXXX-XXXX-XXXX` 生成（排除 0/O/1/I）、批量生成/导入、上游卡密加密映射、绑定账号、状态机 |
 | 免密充能中心 | ✅ | 四步向导、自动验证、ChatGPT Session / Claude Session Key、账号状态预检、实时进度轮询、失败重试 |
 | 加密货币收款 | ✅ | 支持自建 USDT-TRC20 直收（钱包地址 + TronGrid 自动确认）或 NOWPayments 托管收银台；默认关闭 |
-| 双通道充值 | ✅ | 混合路由：自营卡池优先（菲区 ₱999 → 美区 $20），失败/无卡自动回退上游 API；也可切换仅自营或仅上游 |
-| 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、菲/美双区账单、3DS IMAP 取码、余额与绑定上限、拒付自动挂起、销卡回血、`SKIP LOCKED` 选卡 |
+| 双通道充值 | ✅ | 本地卡池为默认履约，上游仅在已配置时作为兜底；未配置上游也能独立运行 |
+| 自营 VCC 卡池 | ✅ | AES-GCM 加密卡号/CVV、菲/美双区账单、额度预占、拒付冷却→连续失败挂起、低水位告警、CSV/JSON 批量导卡、余额校准 |
 | 渠道路由 | ✅ | 全局策略（混合/仅自营/仅上游）+ 单个激活码通道与区域偏好；失败原因、执行区域、计费币种写回任务 |
 | Redis/Celery | ✅ | 分布式锁、Celery Worker、Beat 清理 Session 凭证；本地可切换 inline 线程模式 |
 | 运营后台 | ✅ | 登录、概览、订单、商品、卡密、充值任务、VCC 卡池、渠道状态、系统设置 |
 | 系统设置 | ✅ | 支付/加密支付/上游/VCC/客服/SMTP/订单配置可在后台保存，密钥加密存储并即时生效 |
 | 飞书管理通知 | ✅ | 可勾选新订单、支付、交付、充值失败、人工复核、库存预警、回调异常、系统异常、每日日报 |
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
-| 独角数卡适配 | ✅（可选） | 品牌主题 Blade + 蓝兔/虎皮椒框架无关 PHP 插件 |
-| 自动化测试 | ✅ | 93 项 pytest：加密、Session、卡密、商城、支付回调、核销、失败释放、卡池、IMAP、V2 路由/兜底 |
+| 官方支付通道 | ✅ | 支付宝当面付（RSA2）+ 微信支付 V3 Native（AEAD 回调解密），商品名固定脱敏为「前缀-订单号」 |
+| 独角数卡适配 | ✅（可选，已归档） | `archive/storefront-theme-moliply/`：品牌主题 Blade + PHP 插件 |
+| 自动化测试 | ✅ | 116 项 pytest：加密、Session、卡密、商城、官方支付验签/解密、核销、失败释放、卡池预占、导卡、V2 路由/兜底 |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -51,7 +52,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
                                                  │    ├─ 自营：PH ₱999 → US $20（Playwright）
                                                  │    │    └─ IMAP 3DS 验证码
                                                  │    └─ 兜底：上游代充 API
-                                                 └── 支付回调：蓝兔 / 虎皮椒 / NOWPayments
+                                                 └── 支付回调：微信 V3 / 支付宝当面付 / NOWPayments
 ```
 
 商城与充能中心共用同一个 Next.js 应用（通过 Nginx 双域名暴露）；充能系统与订单/卡密共用一个 FastAPI 服务，避免两套数据源不一致。
@@ -60,7 +61,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 1. 用户下单 → 支付网关异步回调 → 验签、金额校验、幂等事件 → 自动分配激活码/成品号 → 订单变为“已交付”。
 2. 用户持 `MOLI-` 激活码进入充能中心 → 本地预检 + OpenAI 账号状态预检（可选）→ 行锁 + Redis 锁锁定卡密 → 创建任务 → 双通道充值 → 成功核销 / 失败释放或转人工。
-3. 任务结束 5 分钟内清空 Session 凭证；VCC 拒付一次立即挂起卡片。
+3. 任务结束 5 分钟内清空 Session 凭证；VCC 拒付先冷却，连续失败达阈值才挂起卡片。
 
 ---
 
@@ -71,12 +72,16 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 ├── recharge-gateway-backend/     FastAPI + SQLAlchemy + Celery + Playwright
 │   ├── app/
 │   │   ├── api/                  store / redeem / payments / admin
-│   │   ├── services/             加密、卡密、Session、上游、自营 VCC、IMAP、订单、支付
+│   │   ├── services/             加密、卡密、Session、上游、订单、支付
+│   │   │   ├── chains/           链上监听（TRC20/EVM/BTC）
+│   │   │   ├── fulfillment/      自营卡池、Playwright、IMAP 3DS
+│   │   │   └── payments/         官方支付驱动 + 脱敏层
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
-│   └── tests/                    93 项 pytest
+│   ├── alembic/                  数据库版本迁移
+│   └── tests/                    116 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
-├── storefront-theme-moliply/     独角数卡主题 + 蓝兔/虎皮椒脱敏插件（可选）
+├── archive/storefront-theme-moliply/  独角数卡主题 + PHP 插件（可选适配层，已归档）
 ├── nginx/                        双域名反代、限流、安全头
 ├── deploy/                       共享服务器隔离部署与 Caddy 接入说明
 ├── docker-compose.yml
@@ -225,7 +230,9 @@ cd recharge-gateway-frontend && npm run build
 | `ADMIN_TOTP_SECRET` | Google Authenticator 动态码 | base32 密钥；生产必填 |
 | `ADMIN_FAILED_LOGIN_LIMIT` / `ADMIN_LOGIN_LOCKOUT_MINUTES` | 后台连续失败锁定 | 默认 5 次 / 15 分钟 |
 | `PAYMENT_MODE` | `mock` / `live` | 配好商户密钥后切 `live` |
-| `LTZF_*` / `XUNHUPAY_*` | 蓝兔/虎皮椒 | 按签约文档填写 |
+| `ALIPAY_*` | 支付宝当面付 AppID / 应用私钥 / 支付宝公钥 | RSA2，私钥与公钥都是 PEM |
+| `WECHAT_*` | 微信 V3 AppID / 商户号 / 证书序列号 / 私钥 / APIv3 密钥 | APIv3 密钥必须 32 字节 |
+| `OFFICIAL_PAYMENT_SUBJECT_PREFIX` | 网关商品名前缀 | 默认 `MOLIPLY-技术开发与算力服务` |
 | `UPSTREAM_MODE` | `mock` / `http` | 有供应商 API 后切 `http` |
 | `SELF_VCC_ENABLED` | 自营通道开关 | 默认 `false` |
 | `SELF_VCC_DRY_RUN` | 自营通道演练 | 首次必须 `true`，验证后再关闭 |
@@ -247,23 +254,23 @@ cd recharge-gateway-frontend && npm run build
 ### 7.1 当前行为
 
 - `PAYMENT_MODE=mock`：返回指向支付页的演示二维码，支持「模拟扫码支付成功」按钮；
-- `PAYMENT_MODE=live`：按微信/支付宝选择调用蓝兔或虎皮椒（当前 `get_provider` 将微信/支付宝映射到蓝兔，`xunhupay` 作为独立 provider 可用）；
-- 所有支付请求的商品名都会经过 `masked_order_title()`，从合规名称池生成：
-  - `模力补给-数字商品订单-####`
-  - `MOLIPLY-软件订阅服务-####`
-  - `模力补给-数字权益卡券-####`
-- 回调必须通过签名校验、金额一致校验与幂等事件检查，才会触发自动交付；
+- `PAYMENT_MODE=live`：`payment_gateway` 决定用哪个官方商户号收款（`wechat` → 微信 V3 Native，`alipay` → 支付宝当面付）；
+- 微信/支付宝是**顾客扫码的 App**，不是两套并行网关：前台两个按钮都走所选网关，切换网关即切换商户号；
+- 发给网关的商品名固定为 `OFFICIAL_PAYMENT_SUBJECT_PREFIX-订单号`，不含 ChatGPT/Claude/代充/虚拟卡等词；
+- 回调必须通过签名校验（支付宝 RSA2 / 微信平台签名 + mchid 比对）、金额一致校验与幂等事件检查，才会触发自动交付；
 - 调试接口：`GET /api/v1/store/payment-title-preview?order_no=...`
 
 ### 7.2 上线前必须做
 
-1. 向蓝兔/虎皮椒签约并拿到商户号、AppID、密钥；
-2. 对照你签约版本的官方文档，核对 `ltzf.py` / `xunhupay.py` 中的**签名参数与成功状态字段**。签名函数已隔离，通常只需改 `_sign()`；
-3. 在支付平台配置异步回调地址：
-   - `https://shop.moliply.com/api/v1/payments/ltzf/notify`
-   - `https://shop.moliply.com/api/v1/payments/xunhupay/notify`
+1. 签约个体户支付宝当面付或微信 V3 Native，拿到 AppID / 商户号 / 密钥 / 证书序列号；
+2. 在后台「系统设置 → 支付通道」填写参数并保存（密钥加密落库），或写进 `.env`；
+3. 在商户后台配置异步回调地址：
+   - `https://你的域名/api/v1/payments/alipay/notify`
+   - `https://你的域名/api/v1/payments/wechat/notify`
 4. 设置 `PAYMENT_MODE=live`，关闭 `MOCK_PAYMENT_ENABLED`；
-5. 用最小金额真实下单/退款验证一次，确认回调、发码、金额校验全部正常。
+5. 用最小金额真实下单验证一次，确认回调、发码、金额校验全部正常。
+
+微信的 `WECHAT_PLATFORM_PUBLIC_KEY` 选填：不填时只依赖 AEAD 解密验真，填写后额外校验 `Wechatpay-Signature`，生产建议填写。
 
 > 商品名脱敏仅用于支付通道展示，**不得用于向用户隐瞒真实收费金额或商品性质**。请自行确认支付平台条款与当地监管要求。
 
@@ -465,8 +472,9 @@ cd recharge-gateway-backend
 - Session 解析（ChatGPT/Claude/过期/会员/类型不匹配）；
 - 订单创建、优惠码、模拟支付、自动交付、幂等结算、订单查询；
 - 核销提交、绑定账号、重复提交、成功、临时失败释放、需人工复核保持锁定、暴力破解封禁；
-- 支付商品名脱敏、蓝兔/虎皮椒签名与回调结算；
-- VCC 选卡约束、拒付挂起、绑定次数耗尽；
+- 支付商品名脱敏、支付宝 RSA2 往返验签、微信 V3 AEAD 解密与平台签名校验、回调结算；
+- VCC 选卡约束、额度预占互斥、拒付冷却与阈值挂起、绑定次数耗尽；
+- 导卡解析（JSON/CSV/制表符、表头与注释跳过、坏行报错）、余额校准；
 - V2 路由：V1 上游码兼容、混合策略 PH→US、仅美区、无 PH 卡降级、自营失败回上游、仅自营不回退、拒付挂起、全局策略覆盖；
 - 卡池区域选择（PH 卡必须有菲律宾地址）、后台卡池批量导入/销卡/策略切换；
 - IMAP 3DS 验证码解析（当前邮件/过期邮件/其他发件人/HTML）。
@@ -505,8 +513,8 @@ npm run build
 ### 必须（阻塞上线）
 
 - [ ] **服务器与域名**：香港/新加坡服务器、`shop` 与 `up` 两个域名解析；
-- [ ] **支付商户**：蓝兔支付或虎皮椒的商户号/AppID/密钥，并核对你签约版本的签名文档；
-- [ ] **上游货源**：供应商自动代充 API（地址、密钥、字段契约），或至少一批可导入的上游卡密；
+- [ ] **支付商户**：个体户支付宝当面付或微信 V3 Native 的商户资质与密钥；
+- [ ] **上游货源**（可选）：只有需要兜底时才配置；不配置则全部走本地卡池；
 - [ ] **管理员密码与加密密钥**：`ADMIN_PASSWORD`、`ADMIN_JWT_SECRET`、`MASTER_AES_KEY`（生成后离线备份）；
 - [ ] **正式商品与库存**：确认售价、质保文案、真实卡密/成品号；
 - [ ] **客服渠道**：企业微信/客服微信，填入 `NEXT_PUBLIC_CONTACT_WECHAT`；

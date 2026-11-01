@@ -1,9 +1,8 @@
-# MOLIPLY 独角数卡主题与支付脱敏插件（可选适配层）
+# MOLIPLY 独角数卡主题与支付脱敏插件（可选适配层，已归档）
 
-主交付商城由 `recharge-gateway-frontend`（Next.js）提供，本目录用于以下场景：
+> 已移至 `archive/`。主交付商城是 `recharge-gateway-frontend`（Next.js），支付已改为官方直连；
+> 本目录仅在你自行部署独角数卡并想复用品牌首屏时参考，其中 PHP 插件仍对接蓝兔/虎皮椒。
 
-- 已有独角数卡（Dujiaoka / Dujiaoka NEXT）部署，希望复用其商品、订单、卡密管理；
-- 需要把 MOLIPLY 品牌首屏注入 Dujiaoka 主题；
 - 需要蓝兔支付 / 虎皮椒支付的商品名称脱敏与回调强校验参考实现。
 
 ## 目录

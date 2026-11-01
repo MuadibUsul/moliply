@@ -330,7 +330,7 @@ export default function AdminSettingsPage() {
       )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <Section icon={CreditCard} title="支付通道" description="微信/支付宝收款、模拟支付开关与回调地址。切换 live 前请先用小额真实支付测试。">
+        <Section icon={CreditCard} title="支付通道" description="直接对接个体户官方微信/支付宝商户号。商品名统一脱敏为「前缀-订单号」，可在下方预览。">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="支付模式">
               <select value={text("payment_mode", "mock")} onChange={(event) => setValue("payment_mode", event.target.value)} className="admin-input w-full py-2.5">
@@ -338,10 +338,10 @@ export default function AdminSettingsPage() {
                 <option value="live">真实支付</option>
               </select>
             </Field>
-            <Field label="主支付网关">
-              <select value={text("payment_gateway", "ltzf")} onChange={(event) => setValue("payment_gateway", event.target.value)} className="admin-input w-full py-2.5">
-                <option value="ltzf">蓝兔支付</option>
-                <option value="xunhupay">虎皮椒</option>
+            <Field label="官方支付网关" hint="决定用哪个商户号收款">
+              <select value={text("payment_gateway", "wechat")} onChange={(event) => setValue("payment_gateway", event.target.value)} className="admin-input w-full py-2.5">
+                <option value="wechat">微信支付 V3 Native</option>
+                <option value="alipay">支付宝当面付</option>
               </select>
             </Field>
             <Field label="模拟支付按钮">
@@ -351,38 +351,55 @@ export default function AdminSettingsPage() {
               </select>
             </Field>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <Field label="蓝兔商户号">
-              <input value={text("ltzf_mch_id")} onChange={(event) => setValue("ltzf_mch_id", event.target.value)} className="admin-input w-full py-2.5" />
+
+          <Field label="商品名脱敏前缀" hint="只发送该前缀 + 订单号，避免触发官方风控">
+            <input value={text("official_payment_subject_prefix")} onChange={(event) => setValue("official_payment_subject_prefix", event.target.value)} className="admin-input w-full py-2.5" />
+          </Field>
+
+          <p className="mt-4 text-[11px] font-medium text-slate-400">支付宝当面付（RSA2）</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <Field label="应用 AppID">
+              <input value={text("alipay_app_id")} onChange={(event) => setValue("alipay_app_id", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
-            <Field label="蓝兔 AppID">
-              <input value={text("ltzf_app_id")} onChange={(event) => setValue("ltzf_app_id", event.target.value)} className="admin-input w-full py-2.5" />
+            <Field label="网关地址">
+              <input value={text("alipay_api_base")} onChange={(event) => setValue("alipay_api_base", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
-            <Field label="蓝兔 API 地址">
-              <input value={text("ltzf_api_base")} onChange={(event) => setValue("ltzf_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            {secretProps("alipay_app_private_key", "应用私钥 PKCS8", data.secret_configured.alipay_app_private_key, "粘贴完整 PEM")}
+            <Field label="支付宝公钥" hint="用于回调验签，非应用公钥">
+              <textarea value={text("alipay_public_key")} onChange={(event) => setValue("alipay_public_key", event.target.value)} rows={3} className="admin-input w-full py-2.5 font-mono text-[10px]" />
             </Field>
-            {secretProps("ltzf_key", "蓝兔签名密钥", data.secret_configured.ltzf_key)}
-            <Field label="蓝兔回调地址" hint="在蓝兔商户后台填写">
+            <Field label="支付宝回调地址" hint="在开放平台填写">
               <div className="flex gap-2">
-                <input readOnly value={data.callbacks.ltzf} className="admin-input min-w-0 flex-1 py-2.5 text-slate-500" />
-                <CopyButton value={data.callbacks.ltzf} compact />
+                <input readOnly value={data.callbacks.alipay} className="admin-input min-w-0 flex-1 py-2.5 text-slate-500" />
+                <CopyButton value={data.callbacks.alipay} compact />
               </div>
             </Field>
-            <Field label="虎皮椒 AppID">
-              <input value={text("xunhupay_app_id")} onChange={(event) => setValue("xunhupay_app_id", event.target.value)} className="admin-input w-full py-2.5" />
+          </div>
+
+          <p className="mt-5 text-[11px] font-medium text-slate-400">微信支付 V3 Native</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <Field label="AppID">
+              <input value={text("wechat_app_id")} onChange={(event) => setValue("wechat_app_id", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
-            {secretProps("xunhupay_app_secret", "虎皮椒 AppSecret", data.secret_configured.xunhupay_app_secret)}
-            <Field label="虎皮椒回调地址" hint="在虎皮椒商户后台填写">
+            <Field label="商户号">
+              <input value={text("wechat_mch_id")} onChange={(event) => setValue("wechat_mch_id", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="证书序列号">
+              <input value={text("wechat_mch_serial_no")} onChange={(event) => setValue("wechat_mch_serial_no", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="网关地址">
+              <input value={text("wechat_api_base")} onChange={(event) => setValue("wechat_api_base", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            {secretProps("wechat_mch_private_key", "商户私钥 apiclient_key.pem", data.secret_configured.wechat_mch_private_key, "粘贴完整 PEM")}
+            {secretProps("wechat_apiv3_key", "APIv3 密钥", data.secret_configured.wechat_apiv3_key, "32 字节，用于回调解密")}
+            <Field label="平台公钥（可选）" hint="填写后额外校验回调签名">
+              <textarea value={text("wechat_platform_public_key")} onChange={(event) => setValue("wechat_platform_public_key", event.target.value)} rows={3} className="admin-input w-full py-2.5 font-mono text-[10px]" />
+            </Field>
+            <Field label="微信回调地址" hint="在商户平台填写">
               <div className="flex gap-2">
-                <input readOnly value={data.callbacks.xunhupay} className="admin-input min-w-0 flex-1 py-2.5 text-slate-500" />
-                <CopyButton value={data.callbacks.xunhupay} compact />
+                <input readOnly value={data.callbacks.wechat} className="admin-input min-w-0 flex-1 py-2.5 text-slate-500" />
+                <CopyButton value={data.callbacks.wechat} compact />
               </div>
-            </Field>
-            <Field label="虎皮椒 API 地址">
-              <input value={text("xunhupay_api_base")} onChange={(event) => setValue("xunhupay_api_base", event.target.value)} className="admin-input w-full py-2.5" />
-            </Field>
-            <Field label="虎皮椒返回地址">
-              <input value={text("xunhupay_return_url")} onChange={(event) => setValue("xunhupay_return_url", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
           </div>
         </Section>
@@ -510,6 +527,18 @@ export default function AdminSettingsPage() {
             </Field>
             <Field label="美区最低余额（USD）">
               <input type="number" step="0.01" value={text("self_vcc_us_min_balance", "22")} onChange={(event) => setValue("self_vcc_us_min_balance", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="连续失败挂起阈值" hint="单次拒付先进入冷却，达到该次数才挂起">
+              <input type="number" min="1" value={text("vcc_max_consecutive_failures", "3")} onChange={(event) => setValue("vcc_max_consecutive_failures", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="拒付冷却分钟数">
+              <input type="number" min="1" value={text("vcc_cooldown_minutes", "30")} onChange={(event) => setValue("vcc_cooldown_minutes", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="卡池低水位预警" hint="可用卡片低于该数量时推送飞书/邮件">
+              <input type="number" min="1" value={text("vcc_pool_watermark", "5")} onChange={(event) => setValue("vcc_pool_watermark", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="运维告警邮箱" hint="留空则发到发件邮箱">
+              <input value={text("ops_alert_email")} onChange={(event) => setValue("ops_alert_email", event.target.value)} className="admin-input w-full py-2.5" placeholder="ops@example.com" />
             </Field>
             {secretProps("ph_residential_proxy_url", "菲律宾住宅代理 URL", data.secret_configured.ph_residential_proxy_url, "优先用于 ₱999 结账")}
             {secretProps("us_residential_proxy_url", "美国住宅代理 URL", data.secret_configured.us_residential_proxy_url, "用于美区 $20 兜底")}

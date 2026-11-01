@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     failed_code_window_minutes: int = 30
 
     # ------------------------------------------------------------------
-    # Payments (Lanttu / Xunhupay personal merchant gateways)
+    # Payments (official WeChat Pay V3 Native / Alipay F2F channels)
     # ------------------------------------------------------------------
     payment_mode: str = "mock"  # mock | live
     mock_payment_enabled: bool = True
@@ -95,16 +95,21 @@ class Settings(BaseSettings):
     allow_mock_payment_in_production: bool = False
     order_expire_minutes: int = 15
     enforce_stock: bool = True
-    ltzf_mch_id: str = ""
-    ltzf_app_id: str = ""
-    ltzf_key: str = ""
-    ltzf_api_base: str = "https://api.ltzf.cn"
-    ltzf_notify_url: str = ""
-    xunhupay_app_id: str = ""
-    xunhupay_app_secret: str = ""
-    xunhupay_api_base: str = "https://api.xunhupay.com"
-    xunhupay_notify_url: str = ""
-    xunhupay_return_url: str = ""
+    # The descriptor sent to the gateway; keep it free of platform/brand words.
+    official_payment_subject_prefix: str = "MOLIPLY-技术开发与算力服务"
+    alipay_app_id: str = ""
+    alipay_app_private_key: str = ""
+    alipay_public_key: str = ""
+    alipay_api_base: str = "https://openapi.alipay.com"
+    alipay_notify_url: str = ""
+    wechat_app_id: str = ""
+    wechat_mch_id: str = ""
+    wechat_mch_serial_no: str = ""
+    wechat_mch_private_key: str = ""
+    wechat_apiv3_key: str = ""
+    wechat_platform_public_key: str = ""
+    wechat_api_base: str = "https://api.mch.weixin.qq.com"
+    wechat_notify_url: str = ""
 
     # ------------------------------------------------------------------
     # Crypto checkout (NOWPayments: USDT / USDC / BTC / ETH)
@@ -189,6 +194,10 @@ class Settings(BaseSettings):
     us_pro_20x_amount_usd: float = 200.00
     ph_plus_cost_usd: float = 16.70
     us_plus_cost_usd: float = 20.90
+    # Pool fuses: pause a declined card, then suspend it, then alert the operator.
+    vcc_max_consecutive_failures: int = 3
+    vcc_cooldown_minutes: int = 30
+    vcc_pool_watermark: int = 5
     proxy_url: str = ""
     ph_residential_proxy_url: str = ""
     us_residential_proxy_url: str = ""
@@ -220,6 +229,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "MOLIPLY 模力补给 <no-reply@moliply.com>"
     smtp_use_ssl: bool = True
+    # Internal alert mailbox for pool/stock alarms; empty reuses ``smtp_from``.
+    ops_alert_email: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -230,16 +241,12 @@ class Settings(BaseSettings):
         return self.app_env.lower() in {"production", "prod"}
 
     @property
-    def ltzf_notify(self) -> str:
-        return self.ltzf_notify_url or f"{self.api_base_url}/api/v1/payments/ltzf/notify"
+    def alipay_notify(self) -> str:
+        return self.alipay_notify_url or f"{self.api_base_url}/api/v1/payments/alipay/notify"
 
     @property
-    def xunhupay_notify(self) -> str:
-        return self.xunhupay_notify_url or f"{self.api_base_url}/api/v1/payments/xunhupay/notify"
-
-    @property
-    def xunhupay_return(self) -> str:
-        return self.xunhupay_return_url or self.public_store_url
+    def wechat_notify(self) -> str:
+        return self.wechat_notify_url or f"{self.api_base_url}/api/v1/payments/wechat/notify"
 
 
 @lru_cache
