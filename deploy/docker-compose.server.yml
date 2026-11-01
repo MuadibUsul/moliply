@@ -80,6 +80,9 @@ services:
       # Console state must survive restarts.
       CCE_DB_PATH: /data/cce.sqlite3
       CCE_CLIENT_DIR: /data/clients
+      # Console endpoints also accept this token for scripted access; the
+      # admin session cookie is the normal path.
+      CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

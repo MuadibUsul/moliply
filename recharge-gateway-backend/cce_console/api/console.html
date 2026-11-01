@@ -157,7 +157,7 @@
 
 <div class="gate" id="gate">
   <h1>Claude 账号管理台</h1>
-  <p>输入管理密码，只需一次</p>
+  <p>已登录运营后台可直接进入；否则输入管理密码</p>
   <div class="field"><input id="token" type="password" placeholder="管理密码" autocomplete="current-password"></div>
   <button class="btn btn-primary" id="btn-login" style="width:100%">进入</button>
 </div>
@@ -193,12 +193,16 @@ function toast(msg, err) {
 async function api(path, opts = {}) {
   const res = await fetch(B + path, {
     ...opts,
-    headers: { "x-admin-token": TOKEN, "content-type": "application/json", ...(opts.headers || {}) },
+    headers: {
+      ...(TOKEN ? { "x-admin-token": TOKEN } : {}),
+      "content-type": "application/json",
+      ...(opts.headers || {}),
+    },
   });
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
-  if (res.status === 401) { logout(); throw new Error("密码不对"); }
+  if (res.status === 401) { logout(); throw new Error("登录已失效，请回运营后台重新登录"); }
   if (!res.ok) throw new Error(data?.detail || data?.error || res.status);
   return data;
 }
@@ -516,7 +520,11 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 $("#btn-refresh").onclick = () => { loadFleet(); toast("已刷新"); };
 
-if (TOKEN) { api("/admin/profiles").then(enter).catch(() => logout()); }
+if (TOKEN) {
+  api("/admin/profiles").then(enter).catch(() => logout());
+} else {
+  api("/admin/profiles").then(enter).catch(() => {});
+}
 </script>
 </body>
 </html>
