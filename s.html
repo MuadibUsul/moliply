@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title></title>
+
+    <style>
+      .page-loading {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: 0;
+        display: flex;
+        width: 100%;
+        height: 100%;
+        justify-content: center;
+        align-items: center;
+        z-index: 0;
+      }
+      .circular {
+        display: inline-block;
+        width: 30px;
+        height: 30px;
+        border: 2px solid rgba(0, 0, 0, 0.2);
+        border-radius: 50%;
+        border-top-color: rgba(0, 0, 0, 0.4);
+        animation: spin 1s ease-in-out infinite;
+        -webkit-animation: spin 1s ease-in-out infinite;
+      }
+
+      @keyframes spin {
+        to {
+          -webkit-transform: rotate(360deg);
+        }
+      }
+      @-webkit-keyframes spin {
+        to {
+          -webkit-transform: rotate(360deg);
+        }
+      }
+    </style>
+    <script id="6cc076e6727a87d6" src="https://o.alicdn.com/frontend-lib/common-lib/jquery.min.js" captchaType="esa"></script><script type="module" crossorigin src="/package/shop/assets/index.3fc5a55f.js"></script>
+    <link rel="modulepreload" href="/package/shop/assets/arco.c23d6347.js">
+    <link rel="modulepreload" href="/package/shop/assets/vue.450b66ea.js">
+    <link rel="stylesheet" href="/package/shop/assets/index.28e5d166.css">
+  </head>
+
+  <body>
+    <div id="app">
+      <div class="page-loading">
+        <div class="circular"></div>
+      </div>
+    </div>
+
+    
+  </body>
+</html>
