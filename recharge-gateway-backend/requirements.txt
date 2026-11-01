@@ -18,5 +18,5 @@ playwright==1.64.0
 python-multipart==0.0.32
 aiosqlite==0.21.0
 browserforge>=1.2
-camoufox==0.5.8
+camoufox==0.5.9
 numpy==1.26.4
