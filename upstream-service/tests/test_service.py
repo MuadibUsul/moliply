@@ -211,3 +211,51 @@ def test_healthz_reports_supplier_name(service, monkeypatch):
     client, module = service
     monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
     assert client.get("/healthz").json()["supplier"] == "yunshu"
+
+
+# -- channel management ----------------------------------------------------
+def test_supplier_config_roundtrip(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    body = json.dumps({"token": "ysu_secret_value", "sku_map": "CHATGPT_PLUS_1M=CODE1"})
+    assert signed(client, "/api/v1/supplier", body).status_code == 200
+
+    read = signed(client, "/api/v1/supplier", method="GET").json()
+    assert read["configured"] is True
+    assert read["source"] == "database"
+    assert read["token_hint"] == "ysu_secr"
+    assert read["sku_map"] == "CHATGPT_PLUS_1M=CODE1"
+
+
+def test_supplier_config_requires_signature(service):
+    client, _ = service
+    assert client.get("/api/v1/supplier").status_code == 401
+
+
+def test_empty_token_keeps_the_stored_one(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    signed(client, "/api/v1/supplier", json.dumps({"token": "ysu_keep"}))
+    signed(client, "/api/v1/supplier", json.dumps({"token": "", "catalog_race": "PH"}))
+    read = signed(client, "/api/v1/supplier", method="GET").json()
+    assert read["token_hint"] == "ysu_keep"
+    assert read["catalog_race"] == "PH"
+
+
+def test_build_supplier_prefers_the_database_row(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    monkeypatch.setenv("YUNSHU_TOKEN", "ysu_from_env")
+    assert module.build_supplier().token == "ysu_from_env"
+
+    signed(client, "/api/v1/supplier", json.dumps({"token": "ysu_from_db", "sku_map": "A=B"}))
+    built = module.build_supplier()
+    assert built.token == "ysu_from_db"
+    assert built.sku_map == {"A": "B"}
+
+
+def test_probe_rejects_an_unconfigured_supplier(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    monkeypatch.setenv("YUNSHU_TOKEN", "")
+    assert signed(client, "/api/v1/supplier/probe", "{}").status_code == 400

@@ -186,3 +186,13 @@ class AccountImportRequest(StrictModel):
 class SettingsUpdateRequest(StrictModel):
     values: dict[str, str | int | float | bool] = Field(default_factory=dict)
     clear_secrets: list[str] = Field(default_factory=list, max_length=20)
+
+class SupplierConfigRequest(StrictModel):
+    """Supplier credential held by the upstream service, not the store."""
+
+    token: str | None = Field(default=None, max_length=200)
+    api_base: str | None = Field(default=None, max_length=300)
+    sku_map: str | None = Field(default=None, max_length=4000)
+    catalog_race: str | None = Field(default=None, max_length=200)
+    sku_options: str | None = Field(default=None, max_length=400)
+    enabled: bool | None = None

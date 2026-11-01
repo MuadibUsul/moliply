@@ -138,10 +138,16 @@ export default function AdminChannelsPage() {
               ? "已配置。本地卡池耗尽时会自动切到这里。"
               : "未配置也不影响出单：未配置时全部订单走本地卡池，池空则转人工处理。"}
           </div>
-          <Link href="/admin/tasks" className="link-arrow mt-4">
-            查看充值任务
-            <ArrowUpRight size={11} />
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-4">
+            <Link href="/admin/channels/supplier" className="link-arrow">
+              配置上游密钥与套餐
+              <ArrowUpRight size={11} />
+            </Link>
+            <Link href="/admin/tasks" className="link-arrow">
+              查看充值任务
+              <ArrowUpRight size={11} />
+            </Link>
+          </div>
         </section>
 
         <section className="admin-card">

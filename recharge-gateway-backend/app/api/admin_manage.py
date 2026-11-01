@@ -37,6 +37,7 @@ from app.schemas import (
     CodeStatusRequest,
     ProductUpdateRequest,
     SettingsUpdateRequest,
+    SupplierConfigRequest,
     VccCardBatchImportRequest,
     VccCardCalibrateRequest,
     VccCardCreateRequest,
@@ -62,6 +63,7 @@ from app.services import orders as order_service
 from app.services import redeem as redeem_service
 from app.services import feishu
 from app.services import runtime_settings
+from app.services.errors import RechargeError
 from app.services.catalog import available_stock, money, serialize_product
 from app.services.code_generator import generate_code, is_valid_code_format, normalize_code
 from app.services.crypto import (
@@ -1233,3 +1235,40 @@ def admin_channels(db: Session = Depends(get_db)) -> dict:
         },
         "manual_review": manual_review,
     }
+
+
+@protected.get("/channels/supplier")
+def admin_get_supplier(admin: dict = Depends(require_admin)) -> dict:
+    """Read the supplier credential state as held by the upstream service."""
+    try:
+        return UpstreamProvider().supplier_config()
+    except RechargeError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+
+
+@protected.post("/channels/supplier")
+def admin_save_supplier(payload: SupplierConfigRequest, db: Session = Depends(get_db), admin: dict = Depends(require_admin)) -> dict:
+    try:
+        result = UpstreamProvider().save_supplier(payload.model_dump(exclude_none=True))
+    except RechargeError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="channels.supplier.save",
+            entity_type="supplier",
+            entity_id="yunshu",
+            detail=f"keys={','.join(sorted(payload.model_dump(exclude_none=True).keys()))}"[:450],
+        )
+    )
+    db.commit()
+    return result
+
+
+@protected.post("/channels/supplier/probe")
+def admin_probe_supplier(admin: dict = Depends(require_admin)) -> dict:
+    """Verify the key and pull live quotes. Spends nothing."""
+    try:
+        return UpstreamProvider().probe_supplier()
+    except RechargeError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc

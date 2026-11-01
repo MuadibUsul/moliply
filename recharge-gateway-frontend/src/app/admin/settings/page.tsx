@@ -17,6 +17,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { CopyButton } from "@/components/CopyButton";
 import { api } from "@/lib/api";
 import { handleAdminError } from "@/lib/admin";
@@ -485,22 +486,29 @@ export default function AdminSettingsPage() {
           </div>
         </Section>
 
-        <Section icon={ServerCog} title="上游代充通道" description="接入供应商自动代充 API；mock 模式只用于演示，不能接真实客户。">
-          <div className="grid gap-3 sm:grid-cols-2">
+        <Section icon={ServerCog} title="上游代充通道" description="供应商密钥与套餐映射已移到独立的「上游渠道」页；这里只保留本机通路参数。mock 模式只用于演示，不能接真实客户。">
+          <div className="rounded-xl border border-brand-400/15 bg-brand-500/[0.06] px-4 py-3 text-[11px] leading-6 text-slate-400">
+            云枢密钥、套餐映射与取价测试在
+            <Link href="/admin/channels/supplier" className="mx-1 text-brand-300 underline underline-offset-2">
+              上游渠道
+            </Link>
+            页配置。
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Field label="通道模式">
               <select value={text("upstream_mode", "mock")} onChange={(event) => setValue("upstream_mode", event.target.value)} className="admin-input w-full py-2.5">
                 <option value="mock">模拟</option>
                 <option value="http">真实 HTTP</option>
               </select>
             </Field>
-            <Field label="API Base" hint="生产环境必须为 HTTPS">
+            <Field label="API Base" hint="指向自建上游服务，生产环境必须为 HTTPS">
               <input value={text("upstream_api_base")} onChange={(event) => setValue("upstream_api_base", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
             <Field label="允许的上游域名（可选）" hint="逗号分隔；留空表示任意 HTTPS 域名">
               <input value={text("upstream_allowed_hosts")} onChange={(event) => setValue("upstream_allowed_hosts", event.target.value)} className="admin-input w-full py-2.5" placeholder="api.supplier.com,.supplier.net" />
             </Field>
-            {secretProps("upstream_api_key", "API Key", data.secret_configured.upstream_api_key)}
-            {secretProps("upstream_api_secret", "API Secret", data.secret_configured.upstream_api_secret)}
+            {secretProps("upstream_api_key", "API Key（商城 → 上游服务）", data.secret_configured.upstream_api_key)}
+            {secretProps("upstream_api_secret", "API Secret（商城 → 上游服务）", data.secret_configured.upstream_api_secret)}
             <Field label="最长等待秒数">
               <input type="number" value={text("upstream_max_wait_seconds", "180")} onChange={(event) => setValue("upstream_max_wait_seconds", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>

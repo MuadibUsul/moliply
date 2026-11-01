@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   Package,
+  PlugZap,
   ReceiptText,
   Search,
   ServerCog,
@@ -39,6 +40,7 @@ const NAV_GROUPS = [
       { href: "/admin/tasks", label: "充值任务", icon: Zap },
       { href: "/admin/cards", label: "VCC 卡池", icon: CreditCard },
       { href: "/admin/channels", label: "渠道状态", icon: ServerCog },
+      { href: "/admin/channels/supplier", label: "上游渠道", icon: PlugZap },
       { href: "/cce/ui", label: "Claude 账号", icon: KeyRound, external: true },
     ],
   },
@@ -58,6 +60,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/tasks": "充值任务",
   "/admin/cards": "VCC 卡池",
   "/admin/channels": "渠道状态",
+  "/admin/channels/supplier": "上游渠道",
   "/cce/ui": "Claude 账号",
   "/admin/settings": "系统设置",
 };
@@ -101,7 +104,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <div className="grid gap-0.5">
               {group.items.map((item) => {
                 const Icon = item.icon;
-                const active = item.href === "/admin" ? pathname === "/admin" : pathname.startsWith(item.href);
+                // Longest matching href wins, so /admin/channels/supplier does
+                // not also light up /admin/channels.
+                const active =
+                  item.href === "/admin"
+                    ? pathname === "/admin"
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const nested = active && [...NAV_GROUPS.flatMap((g) => g.items)].some(
+                  (other) => other.href !== item.href && other.href.startsWith(`${item.href}/`) && pathname.startsWith(other.href),
+                );
                 // The console is a separate document; a full navigation keeps its own routing.
                 if ("external" in item && item.external) {
                   return (
@@ -123,9 +134,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     href={item.href}
                     onClick={() => setMobileOpen(false)}
                     className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-xs transition ${
-                      active
+                      active && !nested
                         ? "bg-brand-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.28)]"
-                        : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                        : active
+                          ? "bg-white/[0.05] text-slate-200"
+                          : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
                     }`}
                   >
                     <Icon size={15} strokeWidth={active ? 2.2 : 1.8} />

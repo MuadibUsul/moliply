@@ -177,3 +177,44 @@ class UpstreamProvider:
             "status": "online" if configured else "unconfigured",
             "label": "运行正常" if configured else "待配置",
         }
+
+    # ------------------------------------------------------------------
+    # Channel management. The supplier credential lives on the upstream
+    # service; these forward over the same signed contract as a recharge.
+    # ------------------------------------------------------------------
+    def _require_base(self) -> str:
+        if not self.base or not self.merchant_key:
+            raise RechargeError("UPSTREAM_NOT_CONFIGURED", "上游充值通道尚未配置，请先填写 API Base 与 Key")
+        net_guard.ensure_https(self.base)
+        return self.base.rstrip("/")
+
+    def _call(self, method: str, path: str, payload: dict | None = None) -> dict:
+        base = self._require_base()
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) if payload is not None else ""
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.request(
+                    method,
+                    f"{base}{path}",
+                    content=body.encode("utf-8") if body else None,
+                    headers=self._headers(body),
+                )
+        except httpx.HTTPError as exc:
+            raise RechargeError("UPSTREAM_TIMEOUT", f"上游服务无响应：{exc.__class__.__name__}") from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise RechargeError("UPSTREAM_INVALID_RESPONSE", "上游服务返回非 JSON") from exc
+        if response.status_code >= 400:
+            detail = data.get("message") if isinstance(data, dict) else ""
+            raise RechargeError("UPSTREAM_REJECTED", str(detail or f"上游服务拒绝：HTTP {response.status_code}"))
+        return data if isinstance(data, dict) else {}
+
+    def supplier_config(self) -> dict:
+        return self._call("GET", "/api/v1/supplier")
+
+    def save_supplier(self, values: dict) -> dict:
+        return self._call("POST", "/api/v1/supplier", values)
+
+    def probe_supplier(self) -> dict:
+        return self._call("POST", "/api/v1/supplier/probe", {})

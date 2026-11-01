@@ -277,14 +277,12 @@ function card(p) {
       <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">命令方式</button>
       <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">凭证</button>
       <button class="btn btn-sm" data-act="preflight" data-id="${esc(p.profile_id)}">检测出口</button>
-      <button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>
-    </div>
-  </div>`;
-}
-        ${p.status === "IDLE" && p.has_credentials ? "" : "disabled"}>交付给客户</button>
+      <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">命令方式</button>
       <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">凭证</button>
       <button class="btn btn-sm" data-act="preflight" data-id="${esc(p.profile_id)}">检测出口</button>
       <button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>
+      <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}"
+        ${p.status === "IDLE" && p.has_credentials ? "" : "disabled"}>交付给客户</button>
     </div>
   </div>`;
 }
