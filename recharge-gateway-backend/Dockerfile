@@ -29,7 +29,7 @@ COPY scripts ./scripts
 COPY cce_console ./cce_console
 
 RUN useradd --create-home --uid 10001 moliply \
-    && chown -R moliply:moliply /app
+    && mkdir -p /data && chown -R moliply:moliply /app /data
 USER moliply
 
 EXPOSE 8000
