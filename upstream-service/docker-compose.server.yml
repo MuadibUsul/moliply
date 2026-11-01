@@ -1,0 +1,30 @@
+# Upstream fulfillment service, isolated from the store stack.
+# Public access is only through the host Caddy at moliply.shop/upstream/*.
+name: moliply-upstream
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  upstream:
+    build: .
+    restart: unless-stopped
+    mem_limit: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    env_file: .env
+    environment:
+      DB_PATH: /data/upstream.db
+    volumes:
+      - upstream_data:/data
+    ports:
+      - "172.18.0.1:18099:9000"
+    logging: *logging
+
+volumes:
+  upstream_data:
+    name: moliply_upstream_data

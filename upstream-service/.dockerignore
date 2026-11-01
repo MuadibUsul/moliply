@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+up.db
+server.log
+vars.sh
+tests/
+.env
