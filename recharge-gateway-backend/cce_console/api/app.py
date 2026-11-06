@@ -372,6 +372,54 @@ def create_app() -> FastAPI:
 
     admin = Depends(require_admin)
 
+    @app.get("/admin/status", dependencies=[admin])
+    async def console_status() -> dict[str, Any]:
+        """One call behind the console's status header.
+
+        Everything the operator must see before touching anything: readiness,
+        whether the scheduler is alive, what it is doing, and how much card
+        ammunition is left. Keeping it in one response stops the header from
+        firing five requests and disagreeing with itself.
+        """
+        problems = []
+        if not os.environ.get("CCE_MASTER_KEY"):
+            problems.append("CCE_MASTER_KEY unset")
+        if not TUNNEL_HOST:
+            problems.append("CCE_TUNNEL_HOST unset")
+        if not os.environ.get("CCE_TUNNEL_SECRETS"):
+            problems.append("CCE_TUNNEL_SECRETS unset")
+        if state.singbox.available is False:
+            problems.append("sing-box 二进制缺失")
+        elif not state.singbox.running:
+            problems.append("sing-box 未运行")
+
+        cards = await card_pool.list_cards(state.db)
+        running = await state.db.fetch_one(
+            "SELECT profile_id, email, stage FROM account_jobs"
+            " WHERE stage IN ('registering', 'subscribing', 'registered') LIMIT 1"
+        )
+        queued = await state.db.fetch_one(
+            "SELECT count(*) AS n FROM account_jobs WHERE stage = 'queued'"
+        )
+        counts = await state.db.fetch_all(
+            "SELECT stage, count(*) AS n FROM account_jobs GROUP BY stage"
+        )
+        return {
+            "ready": not problems,
+            "problems": problems,
+            "worker": {
+                "enabled": state.worker is not None and not state.worker.done(),
+                "interval": WORKER_INTERVAL,
+                "busy": running is not None,
+                "running_profile": running["profile_id"] if running else "",
+                "running_email": running["email"] if running else "",
+                "running_stage": running["stage"] if running else "",
+                "queued": int(queued["n"]) if queued else 0,
+            },
+            "cards": cards["summary"],
+            "stages": {row["stage"]: int(row["n"]) for row in counts},
+        }
+
     @app.get("/admin/client", dependencies=[admin])
     async def list_clients() -> dict[str, Any]:
         return {"files": list(_client_files())}
@@ -487,6 +535,12 @@ def create_app() -> FastAPI:
             job = jobs.get(row["profile_id"])
             item["job_stage"] = job["stage"] if job else None
             item["email"] = job["email"] if job else ""
+            item["human_note"] = job["human_note"] if job else ""
+            item["last_error"] = job["last_error"] if job else ""
+            item["attempts"] = job["attempts"] if job else 0
+            item["plan"] = job["plan"] if job else ""
+            # The console's fix-proxy form needs the current value to prefill.
+            item["proxy_url"] = row.get("upstream_proxy_url", "")
             items.append(item)
         return {"profiles": items}
 
@@ -496,6 +550,26 @@ def create_app() -> FastAPI:
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
         return _public_profile(row)
+
+    @app.patch("/admin/profiles/{profile_id}/proxy", dependencies=[admin])
+    async def set_profile_proxy(profile_id: str, body: JobProxy) -> dict[str, Any]:
+        """Fix the proxy of a profile that has no pipeline job (legacy rows)."""
+        profile = await state.db.get_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+        await state.db.execute(
+            "UPDATE profiles SET upstream_proxy_url = ?, expected_ip = ? WHERE profile_id = ?",
+            (body.upstream_proxy_url, body.expected_ip.strip(), profile_id),
+        )
+        state.singbox.register(profile_id, profile["local_proxy_port"], body.upstream_proxy_url)
+        if state.singbox.available:
+            try:
+                await state.singbox.reload()
+            except SingBoxError:
+                pass
+        if profile["status"] in {"PROXY_DEAD", "AUTH_EXPIRED", "COOLDOWN"}:
+            await state.db.set_status(profile_id, "IDLE")
+        return {"ok": True}
 
     @app.post("/admin/profiles/{profile_id}/status", dependencies=[admin])
     async def set_profile_status(profile_id: str, body: StatusReport) -> dict[str, Any]:
@@ -614,6 +688,28 @@ def create_app() -> FastAPI:
             " updated_at = CURRENT_TIMESTAMP WHERE profile_id = ?",
             (profile_id,),
         )
+        return {"ok": True}
+
+    @app.patch("/admin/jobs/{profile_id}/mail", dependencies=[admin])
+    async def set_job_mail(profile_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Replace the Gmail app password after a typo, then requeue."""
+        job = await state.db.fetch_one("SELECT * FROM account_jobs WHERE profile_id = ?", (profile_id,))
+        if job is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+        password = str(body.get("app_password") or "").replace(" ", "")
+        if len(password) < 12:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "应用专用密码应为 16 位")
+        from core.crypto import encrypt_blob
+
+        await state.db.execute(
+            "UPDATE account_jobs SET gmail_app_password_enc = ?, stage = 'queued',"
+            " last_error = '', human_note = '', attempts = 0, updated_at = CURRENT_TIMESTAMP"
+            " WHERE profile_id = ?",
+            (encrypt_blob(password.encode(), associated=profile_id.encode()), profile_id),
+        )
+        await state.db.set_status(profile_id, "IDLE")
+        if WORKER_INTERVAL > 0:
+            asyncio.create_task(pipeline.run_pending(state.db, state.pool, limit=1, concurrency=1))
         return {"ok": True}
 
     @app.post("/admin/jobs/{profile_id}/skip", dependencies=[admin])

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude 账号管理台</title>
+<title>Claude 账号托管台</title>
 <style>
   :root {
     --bg: #0e0e10;
@@ -25,51 +25,89 @@
     font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
   button, input, select, textarea { font: inherit; color: inherit; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 80px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 20px 90px; }
 
-  header { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; flex-wrap: wrap; }
-  h1 { font-size: 19px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .spacer { flex: 1; }
+  h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 12.5px; }
 
   .btn {
     border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-    padding: 8px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    padding: 7px 13px; border-radius: 8px; cursor: pointer; white-space: nowrap;
     transition: background .13s, border-color .13s, opacity .13s;
   }
   .btn:hover:not(:disabled) { background: #26262c; border-color: #3a3a42; }
-  .btn:disabled { opacity: .45; cursor: default; }
+  .btn:disabled { opacity: .4; cursor: default; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 560; }
   .btn-primary:hover:not(:disabled) { background: #3f7ce8; border-color: #3f7ce8; }
-  .btn-sm { padding: 6px 11px; font-size: 13px; }
+  .btn-sm { padding: 5px 10px; font-size: 12.5px; border-radius: 7px; }
+  .btn-ghost { background: none; border-color: transparent; color: var(--muted); }
+  .btn-ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
   .btn-danger { color: var(--bad); }
   .btn-danger:hover:not(:disabled) { background: #f8514915; border-color: #f8514955; }
 
-  .gate { max-width: 420px; margin: 12vh auto; text-align: center; }
-  .gate h1 { font-size: 22px; margin-bottom: 8px; }
-  .gate p { color: var(--muted); margin: 0 0 22px; }
+  .gate { max-width: 420px; margin: 14vh auto; text-align: center; }
+  .gate h1 { font-size: 21px; margin-bottom: 8px; }
+  .gate p { color: var(--muted); margin: 0 0 20px; }
   .gate input { width: 100%; text-align: center; font-family: ui-monospace, Consolas, monospace; }
 
-  input, textarea {
+  input, textarea, select {
     width: 100%; background: #101013; border: 1px solid var(--line);
-    padding: 9px 11px; border-radius: 8px; outline: none;
+    padding: 8px 10px; border-radius: 8px; outline: none;
   }
-  input:focus, textarea:focus { border-color: var(--accent-dim); }
-  label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
-  .field { margin-bottom: 14px; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent-dim); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field { margin-bottom: 12px; }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 
-  .grid { display: grid; gap: 12px; }
+  /* ---- status header ---- */
+  .topbar { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+  .topbar .titles { flex: 1; min-width: 190px; }
+  .metrics { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .metric {
+    flex: 1 1 178px; text-align: left; padding: 10px 13px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); cursor: default;
+    transition: border-color .14s, background .14s;
+  }
+  button.metric { cursor: pointer; }
+  button.metric:hover { border-color: #3a3a42; background: var(--panel-2); }
+  .metric .k { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+  .metric .v { font-size: 15px; font-weight: 620; margin-top: 3px; }
+  .metric.good .v { color: var(--ok); }
+  .metric.warn .v { color: var(--warn); }
+  .metric.bad .v { color: var(--bad); }
+  .metric.alarm { border-color: #f8514966; background: #f8514910; animation: alarm 1.6s ease-in-out infinite; }
+  @keyframes alarm { 50% { border-color: #f85149cc; background: #f8514920; } }
+  .metric .detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ---- filters ---- */
+  .filters { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
+  .pill-filter {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+    border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--muted); cursor: pointer; font-size: 12.5px;
+  }
+  .pill-filter:hover { color: var(--text); border-color: #3a3a42; }
+  .pill-filter.on { background: #4f8dfd1f; border-color: #4f8dfd66; color: #cfe0ff; }
+  .pill-filter .n {
+    font-variant-numeric: tabular-nums; font-size: 11px; padding: 0 5px;
+    border-radius: 999px; background: #ffffff14;
+  }
+  .pill-filter.hot .n { background: #f8514933; color: #ffb4b0; }
+
+  /* ---- cards ---- */
+  .grid { display: grid; gap: 11px; }
   .card {
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 16px 17px;
+    border-radius: var(--radius); padding: 14px 16px;
   }
-  .card-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
-  .name { font-weight: 620; font-size: 15px; word-break: break-all; }
-  .meta { color: var(--muted); font-size: 12px; margin-top: 3px; font-family: ui-monospace, Consolas, monospace; }
+  .card.is-running { border-color: #4f8dfd88; animation: breathe 2.2s ease-in-out infinite; }
+  @keyframes breathe { 50% { border-color: #4f8dfd33; } }
+  .card-top { display: flex; align-items: flex-start; gap: 12px; }
+  .name { font-weight: 620; font-size: 14.5px; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 11.5px; margin-top: 3px; font-family: ui-monospace, Consolas, monospace; }
 
   .pill {
-    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
     border: 1px solid transparent; white-space: nowrap; font-weight: 550;
   }
   .p-idle { color: var(--ok); background: #3fb9501a; border-color: #3fb95038; }
@@ -78,259 +116,289 @@
   .p-bad { color: var(--bad); background: #f851491a; border-color: #f8514938; }
   .p-dead { color: var(--muted); background: #8b8b961a; border-color: #8b8b9638; }
 
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-  .note { font-size: 12.5px; color: var(--muted); margin-top: 9px; }
-  .note b { color: var(--text); font-weight: 550; }
+  .actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .note.warn { color: #e6b455; }
+  .note.bad { color: #ffb4b0; }
 
-  .empty { text-align: center; padding: 56px 20px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .fixbox { margin-top: 10px; padding: 11px 12px; border: 1px solid #f8514933; background: #f851490d; border-radius: 9px; }
+  .fixbox .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .fixbox .row > * { flex: 1 1 210px; }
 
-  .modal-bg {
-    position: fixed; inset: 0; background: #000000b8; display: none;
-    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  .empty { text-align: center; padding: 46px 20px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+
+  /* ---- drawer ---- */
+  .scrim { position: fixed; inset: 0; background: #000000b0; opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 40; }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: min(720px, 96vw);
+    background: var(--panel); border-left: 1px solid var(--line); z-index: 50;
+    transform: translateX(102%); transition: transform .22s ease; display: flex; flex-direction: column;
   }
-  .modal-bg.open { display: flex; }
-  .modal {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 22px; width: 100%; max-width: 620px; max-height: 88vh; overflow: auto;
-  }
-  .modal h2 { font-size: 16px; margin: 0 0 4px; }
-  .modal .sub { margin-bottom: 18px; }
-  .modal-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .drawer-head h2 { font-size: 15px; margin: 0; flex: 1; }
+  .drawer-body { padding: 16px 18px 26px; overflow: auto; flex: 1; }
+  .drawer-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 13px 18px; border-top: 1px solid var(--line); }
+
+  table.preview { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 10px; }
+  table.preview th { text-align: left; color: var(--muted); font-weight: 550; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  table.preview td { padding: 5px 6px; border-bottom: 1px solid #ffffff0d; font-family: ui-monospace, Consolas, monospace; }
+  table.preview tr.bad td { background: #f8514914; color: #ffb4b0; }
+  table.preview td.st { font-family: inherit; }
 
   pre {
     background: #0a0a0c; border: 1px solid var(--line); border-radius: 8px;
-    padding: 13px; overflow: auto; font: 12.5px/1.6 ui-monospace, Consolas, monospace;
+    padding: 12px; overflow: auto; font: 12px/1.6 ui-monospace, Consolas, monospace;
     white-space: pre-wrap; word-break: break-all; margin: 0;
   }
-  code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 
+  /* ---- toasts ---- */
+  .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 380px; }
   .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(16px);
-    background: #22222a; border: 1px solid var(--line); padding: 11px 18px;
-    border-radius: 9px; opacity: 0; transition: opacity .18s, transform .18s;
-    pointer-events: none; z-index: 100; max-width: 90vw;
+    background: #22313f; border: 1px solid #3f566e; padding: 10px 14px; border-radius: 9px;
+    font-size: 12.5px; box-shadow: 0 8px 24px #00000066;
   }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.err { border-color: #f8514955; color: #ffb4b0; }
-
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
-  .tab {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    padding: 9px 13px; cursor: pointer; color: var(--muted); margin-bottom: -1px;
-  }
-  .tab.on { color: var(--text); border-bottom-color: var(--accent); }
-  .hidden { display: none !important; }
+  .toast.err { background: #3a1d1f; border-color: #f8514977; color: #ffc9c6; }
+  .toast.ok { background: #16301d; border-color: #3fb95077; color: #bff3cb; }
 </style>
 </head>
 <body>
 
 <div class="wrap" id="app" hidden>
-  <header>
-    <div>
-      <h1>Claude 账号管理台</h1>
-      <div class="sub" id="fleet-line">—</div>
+  <div class="topbar">
+    <div class="titles">
+      <h1>Claude 账号托管台</h1>
+      <div class="sub" id="fleet-line">加载中…</div>
     </div>
-    <div class="spacer"></div>
-    <button class="btn" id="btn-refresh">刷新</button>
-    <button class="btn" id="btn-add">＋ 单条添加</button>
-    <button class="btn" id="btn-logout">退出</button>
-  </header>
-
-  <div class="tabs">
-    <button class="tab" data-tab="pipeline">注册流水线</button>
-    <button class="tab on" data-tab="fleet">账号</button>
-    <button class="tab" data-tab="cards">充值卡</button>
-    <button class="tab" data-tab="client">客户端下载</button>
+    <div class="actions" style="margin-top:0">
+      <button class="btn btn-primary" id="btn-import">＋ 批量导入账号</button>
+      <button class="btn" id="btn-cards">客户与客户端</button>
+      <button class="btn btn-ghost" id="btn-logout">退出</button>
+    </div>
   </div>
 
-  <section id="tab-fleet">
-    <div class="grid" id="fleet"></div>
-    <div class="empty" id="fleet-empty" hidden>还没有账号，点右上角「添加账号」开始。</div>
-  </section>
-
-  <section id="tab-pipeline" class="hidden">
-    <div class="card">
-      <div class="name">批量导入：IP + Gmail → 自动注册 → 开 Pro → 出凭证</div>
-      <div class="note">
-        每行一条：<code>邮箱,应用专用密码,IP</code>，可选继续补 <code>代理URL,套餐,密码</code>。
-        代理留空时用下面的模板（<code>{ip}</code> 会替换成该行 IP）。
-        导入后点「开始跑队列」，成功走到「就绪」，卡住停在「待人工」。
-      </div>
-      <div class="field" style="margin-top:14px">
-        <label>代理模板（可选）</label>
-        <input id="proxy-template" placeholder="socks5://user:pass@host:1080">
-        <div class="hint">模板里带 <code>{ip}</code> 时按行替换，例如 <code>socks5://u:p@{ip}:1080</code>。</div>
-      </div>
-      <div class="field">
-        <label>导入内容</label>
-        <textarea id="import-text" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,203.0.113.7"></textarea>
-      </div>
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-import">导入并建环境</button>
-        <button class="btn" id="btn-run">开始跑队列</button>
-      </div>
-      <div class="hint" id="import-result"></div>
-      <div class="note" style="margin-top:12px">导入后到「账号」页看进度：每条的阶段、失败原因和继续按钮都在那张卡上。</div>
-    </div>
-  </section>
-
-  <section id="tab-cards" class="hidden">
-    <div class="card">
-      <div class="name">订阅充值卡</div>
-      <div class="note">每行 <code>卡号,月,年,CVV,邮编</code>。开 Pro 时按顺序取一张可用卡；硬拒付标成「已废」不再重试。</div>
-      <div class="field" style="margin-top:14px">
-        <textarea id="cards-text" rows="6" placeholder="4242424242424242,12,2029,123,10001"></textarea>
-      </div>
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-cards-add">导入卡片</button>
-        <button class="btn" id="btn-cards-refresh">刷新</button>
-      </div>
-      <div class="hint" id="cards-result"></div>
-    </div>
-    <div class="grid" id="cards" style="margin-top:14px"></div>
-  </section>
-
-  <section id="tab-client" class="hidden">
-    <div class="card">
-      <div class="name">给客户的启动器</div>
-      <div class="note" id="client-note">正在读取…</div>
-      <div class="actions" id="client-links"></div>
-    </div>
-  </section>
+  <div class="metrics" id="metrics"></div>
+  <div class="filters" id="filters"></div>
+  <div class="grid" id="list"></div>
+  <div class="empty" id="list-empty" hidden>没有账号。点右上角「批量导入账号」开始。</div>
 </div>
 
-<div class="gate" id="boot">
-  <p>正在进入…</p>
-</div>
-
-<div class="gate" id="gate" hidden>
-  <h1>Claude 账号管理台</h1>
+<div class="gate" id="gate" style="display:none">
+  <h1>Claude 账号托管台</h1>
   <p>已登录运营后台可直接进入；否则输入管理密码</p>
   <div class="field"><input id="token" type="password" placeholder="管理密码" autocomplete="current-password"></div>
   <button class="btn btn-primary" id="btn-login" style="width:100%">进入</button>
 </div>
 
-<div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
-<div class="toast" id="toast"></div>
+<div class="scrim" id="scrim"></div>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h2 id="drawer-title">—</h2>
+    <button class="btn btn-ghost" id="drawer-close">关闭</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+  <div class="drawer-foot" id="drawer-foot"></div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
 
 <script>
 const B = window.CCE_BASE ?? location.pathname.replace(/\/ui$/, "").replace(/\/$/, "");
 let TOKEN = localStorage.getItem("cce_token") || "";
 
-const STATUS = {
-  IDLE:       ["可交付", "p-idle"],
-  BUSY:       ["客户使用中", "p-busy"],
-  COOLDOWN:   ["冷却中", "p-cooldown"],
-  AUTH_EXPIRED:["登录已失效", "p-bad"],
-  PROXY_DEAD: ["出口异常", "p-bad"],
-  BANNED:     ["已封禁", "p-dead"],
-};
+/* ------------------------------------------------------------------ utils */
 
-const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+const $ = (sel) => document.querySelector(sel);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-function toast(msg, err) {
-  const el = $("#toast");
-  el.textContent = msg;
-  el.className = "toast show" + (err ? " err" : "");
-  clearTimeout(el._t);
-  el._t = setTimeout(() => (el.className = "toast"), 3200);
+function toast(message, kind) {
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.textContent = message;
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), kind === "err" ? 6000 : 3200);
 }
 
-async function api(path, opts = {}) {
-  const res = await fetch(B + path, {
-    credentials: "same-origin",
-    ...opts,
-    headers: {
-      ...(TOKEN ? { "x-admin-token": TOKEN } : {}),
-      "content-type": "application/json",
-      ...(opts.headers || {}),
-    },
-  });
+/** Every request goes through here: prefix, auth, cookie, error reporting. */
+async function apiFetch(path, options = {}) {
+  const headers = { "content-type": "application/json", ...(options.headers || {}) };
+  if (TOKEN) headers["x-admin-token"] = TOKEN;
+  const res = await fetch(B + path, { ...options, credentials: "same-origin", headers });
+  hideBoot();
+  let body = null;
   const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
-  if (res.status === 401) { logout(); throw new Error("登录已失效，请回运营后台重新登录"); }
-  if (!res.ok) throw new Error(data?.detail || data?.error || res.status);
-  return data;
+  try { body = text ? JSON.parse(text) : null; } catch { body = { detail: text }; }
+  if (res.status === 401) {
+    logout();
+    if ($("#gate").style.display !== "") throw new Error("未登录");
+    throw new Error("密码不对");
+  }
+  if (!res.ok) {
+    const detail = body?.detail || body?.error || `HTTP ${res.status}`;
+    toast(detail, "err");
+    throw new Error(detail);
+  }
+  return body;
 }
 
-/* -- gate ---------------------------------------------------------------- */
-
-$("#btn-login").onclick = async () => {
-  const value = $("#token").value.trim();
-  if (!value) return toast("请输入管理密码", true);
-  TOKEN = value;
-  try {
-    await api("/admin/profiles");
-    localStorage.setItem("cce_token", value);
-    enter();
-  } catch (e) { toast(e.message, true); }
-};
-$("#token").addEventListener("keydown", (e) => e.key === "Enter" && $("#btn-login").click());
+function hideBoot() { const b = $("#boot"); if (b) b.hidden = true; }
 
 function logout() {
   TOKEN = "";
   localStorage.removeItem("cce_token");
   $("#app").hidden = true;
-  $("#boot").hidden = true;
-  $("#gate").hidden = false;
-}
-$("#btn-logout").onclick = logout;
-
-function enter() {
-  $("#boot").hidden = true;
-  $("#gate").hidden = true;
-  $("#app").hidden = false;
-  loadFleet();
-  loadClients();
+  $("#gate").style.display = "";
 }
 
-/* -- fleet --------------------------------------------------------------- */
+/* ------------------------------------------------------------------ store */
 
-async function loadFleet() {
+const STORE = { profiles: [], status: null, filter: "all", timer: null, closed: new Set() };
+
+const STAGE = {
+  queued:       { label: "排队中", cls: "p-dead", bucket: "active" },
+  registering:  { label: "注册中", cls: "p-busy", bucket: "active" },
+  registered:   { label: "已注册", cls: "p-busy", bucket: "active" },
+  subscribing:  { label: "开 Pro 中", cls: "p-busy", bucket: "active" },
+  subscribed:   { label: "已开通 Pro", cls: "p-busy", bucket: "needcred" },
+  needs_human:  { label: "待人工", cls: "p-cooldown", bucket: "human" },
+  failed:       { label: "流程失败", cls: "p-bad", bucket: "human" },
+  ready:        { label: "就绪", cls: "p-idle", bucket: "ready" },
+};
+
+const STATUS_LABEL = {
+  IDLE: ["空闲", "p-idle"], BUSY: ["使用中", "p-busy"], COOLDOWN: ["冷却中", "p-cooldown"],
+  AUTH_EXPIRED: ["登录失效", "p-bad"], PROXY_DEAD: ["出口异常", "p-bad"], BANNED: ["已封禁", "p-dead"],
+};
+
+function bucketOf(p) {
+  if (p.job_stage) return STAGE[p.job_stage]?.bucket || "other";
+  return p.has_credentials ? "ready" : "needcred";
+}
+
+function labelFor(p) {
+  if (!p.has_credentials && (p.job_stage === "ready" || !p.job_stage)) return ["缺凭证", "p-cooldown"];
+  if (p.job_stage) return [STAGE[p.job_stage]?.label || p.job_stage, STAGE[p.job_stage]?.cls || "p-dead"];
+  return STATUS_LABEL[p.status] || [p.status, "p-dead"];
+}
+
+const deliverable = (p) =>
+  p.status === "IDLE" && p.has_credentials && (!p.job_stage || p.job_stage === "ready");
+
+/* ---------------------------------------------------------------- refresh */
+
+async function refreshAll() {
   let data;
-  try { data = await api("/admin/profiles"); } catch (e) { return toast(e.message, true); }
-  const rows = data.profiles || [];
+  try {
+    const [status, profiles] = await Promise.all([
+      apiFetch("/admin/status"),
+      apiFetch("/admin/profiles"),
+    ]);
+    STORE.status = status;
+    STORE.profiles = profiles.profiles || [];
+  } catch {
+    return schedule();
+  }
+  renderAll();
+  schedule();
+}
 
-  const counts = {};
-  for (const p of rows) counts[p.status] = (counts[p.status] || 0) + 1;
-  $("#fleet-line").textContent = rows.length
-    ? `${rows.length} 个账号 · ${counts.IDLE || 0} 个可交付 · ${counts.BUSY || 0} 个使用中`
-    : "暂无账号";
+function schedule() {
+  if (STORE.timer) clearTimeout(STORE.timer);
+  const active = STORE.profiles.some((p) =>
+    ["queued", "registering", "registered", "subscribing"].includes(p.job_stage || ""));
+  STORE.timer = setTimeout(refreshAll, active ? 3000 : 15000);
+}
 
-  $("#fleet-empty").hidden = rows.length > 0;
-  $("#fleet").innerHTML = rows.map(card).join("");
-  $("#fleet").querySelectorAll("[data-act]").forEach((btn) => {
-    btn.onclick = () => act(btn.dataset.act, btn.dataset.id);
+/* ----------------------------------------------------------------- render */
+
+function renderAll() {
+  const counts = { all: STORE.profiles.length, human: 0, active: 0, needcred: 0, ready: 0 };
+  for (const p of STORE.profiles) {
+    const b = bucketOf(p);
+    if (b in counts) counts[b] += 1;
+  }
+  STORE.counts = counts;
+  renderMetrics();
+  renderFilters();
+  renderList();
+}
+
+function renderMetrics() {
+  const s = STORE.status;
+  if (!s) return;
+  const cards = s.cards || {};
+  const available = cards.available || 0;
+  const running = s.worker?.busy;
+
+  const readyCls = s.ready ? "good" : "bad";
+  const readyText = s.ready ? "正常" : "异常";
+  const readyDetail = s.ready ? "全部组件就绪" : s.problems.join("；");
+
+  const workerCls = !s.worker?.enabled ? "bad" : running ? "warn" : "good";
+  const workerText = !s.worker?.enabled ? "已停止" : running ? "正在执行" : "运行中";
+  const workerDetail = running
+    ? `${s.worker.running_email || s.worker.running_profile} · ${s.worker.running_stage}`
+    : s.worker?.queued ? `排队 ${s.worker.queued} 条` : "空闲";
+
+  $("#metrics").innerHTML = [
+    `<div class="metric ${readyCls}"><div class="k">系统就绪</div><div class="v">${readyText}</div><div class="detail">${esc(readyDetail)}</div></div>`,
+    `<button class="metric ${workerCls}" data-open="worker"><div class="k">调度引擎</div><div class="v">${workerText}</div><div class="detail">${esc(workerDetail)}</div></button>`,
+    `<button class="metric ${available ? "good" : "bad alarm"}" data-open="cards"><div class="k">充值卡弹药</div><div class="v">可用 ${available}</div><div class="detail">使用中 ${cards.in_use || 0} · 已废 ${cards.dead || 0} · 已用 ${cards.used || 0}</div></button>`,
+  ].join("");
+
+  $("#metrics").querySelectorAll("[data-open]").forEach((el) => {
+    el.onclick = () => openDrawer(el.dataset.open);
   });
 }
 
-const JOB_STAGES = {
-  queued:      ["排队中", "p-dead"],
-  registering: ["注册中", "p-busy"],
-  registered:  ["已注册", "p-busy"],
-  subscribing: ["开 Pro 中", "p-busy"],
-  subscribed:  ["已开通 Pro", "p-busy"],
-  needs_human: ["待人工", "p-cooldown"],
-  failed:      ["流程失败", "p-bad"],
-  ready:       ["就绪", "p-idle"],
-};
+function renderFilters() {
+  const c = STORE.counts;
+  const defs = [
+    ["all", "全部", c.all, false],
+    ["human", "待人工 / 失败", c.human, true],
+    ["active", "队列与执行中", c.active, false],
+    ["needcred", "缺凭证待同步", c.needcred, false],
+    ["ready", "就绪可交付", c.ready, false],
+  ];
+  $("#filters").innerHTML = defs.map(([key, label, n, hot]) =>
+    `<button class="pill-filter ${STORE.filter === key ? "on" : ""} ${hot && n ? "hot" : ""}" data-filter="${key}">
+       ${label}<span class="n">${n}</span>
+     </button>`).join("");
+  $("#filters").querySelectorAll("[data-filter]").forEach((el) => {
+    el.onclick = () => { STORE.filter = el.dataset.filter; renderAll(); };
+  });
+}
+
+function renderList() {
+  const rows = STORE.filter === "all"
+    ? STORE.profiles
+    : STORE.profiles.filter((p) => bucketOf(p) === STORE.filter);
+  $("#list-empty").hidden = rows.length > 0;
+  $("#list-empty").textContent = STORE.profiles.length
+    ? "该分类下没有账号。"
+    : "没有账号。点右上角「批量导入账号」开始。";
+  $("#list").innerHTML = rows.map(card).join("");
+  $("#list").querySelectorAll("[data-act]").forEach((el) => {
+    el.onclick = () => onAction(el.dataset.act, el.dataset.id);
+  });
+  $("#fleet-line").textContent = STORE.profiles.length
+    ? `${STORE.profiles.length} 个账号 · 待人工 ${STORE.counts.human} · 就绪 ${STORE.counts.ready}`
+    : "尚无账号";
+}
 
 function card(p) {
-  // One pill, pipeline stage first: that is what the operator must act on. A
-  // card without credentials is never deliverable, whatever the row says.
-  const stage = p.job_stage ? JOB_STAGES[p.job_stage] : null;
-  const [label, cls] = stage
-    ? stage
-    : !p.has_credentials && p.status === "IDLE"
-      ? ["缺凭证", "p-cooldown"]
-      : STATUS[p.status] || [p.status, "p-dead"];
+  const [label, cls] = labelFor(p);
+  const running = STORE.status?.worker?.running_profile === p.profile_id;
   const trouble = p.status === "PROXY_DEAD" || p.status === "AUTH_EXPIRED";
-  const ready = p.status === "IDLE" && p.has_credentials && (!p.job_stage || p.job_stage === "ready");
+  const reason = p.human_note || p.last_error || "";
+  const needCred = !p.has_credentials && (!p.job_stage || p.job_stage === "ready" || p.job_stage === "subscribed");
+  const canDeliver = deliverable(p);
 
-  return `<div class="card">
+  return `<div class="card ${running ? "is-running" : ""}">
     <div class="card-top">
       <div style="flex:1">
         <div class="name">${esc(p.email || p.profile_id)}</div>
@@ -338,91 +406,146 @@ function card(p) {
       </div>
       <span class="pill ${cls}">${label}</span>
     </div>
-    ${p.has_credentials ? "" : `<div class="note">⚠ 没有登录凭证：先点「登录取凭证」，否则客户打不开</div>`}
-    ${trouble ? `<div class="note">出口 IP 变了或登录失效，处理后再交付。</div>` : ""}
+
+    ${reason ? `<div class="note ${p.job_stage === "needs_human" ? "warn" : "bad"}">${esc(reason)}</div>` : ""}
+    ${needCred ? `<div class="note warn">没有登录凭证，客户打不开。点「同步凭证」完成登录。</div>` : ""}
+    ${trouble ? `<div class="note warn">出口 IP 变了或登录失效，先修好再交付。</div>` : ""}
+
+    ${p.job_stage === "needs_human" || (!p.job_stage && trouble) ? fixBox(p) : ""}
+
     <div class="actions">
-      <button class="btn btn-primary btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}"
-        ${ready ? "" : "disabled"}>交付给客户</button>
-      ${p.job_stage && p.job_stage !== "ready"
-        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">继续流程</button>`
-        : ""}
-      <button class="btn btn-sm" data-act="bundle" data-id="${esc(p.profile_id)}"
-        ${ready ? "" : "disabled"}>下载客户端包</button>
-      <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">${p.has_credentials ? "凭证" : "登录取凭证"}</button>
-      <button class="btn btn-sm" data-act="preflight" data-id="${esc(p.profile_id)}">检测出口</button>
-      <button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>
+      ${canDeliver ? `<button class="btn btn-primary btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">复制交付指令</button>` : ""}
+      ${p.job_stage && !["ready"].includes(p.job_stage)
+        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">继续流程</button>` : ""}
+      ${needCred || p.job_stage === "subscribed"
+        ? `<button class="btn btn-sm ${needCred ? "btn-primary" : ""}" data-act="sync" data-id="${esc(p.profile_id)}">同步凭证</button>` : ""}
+      <button class="btn btn-sm" data-act="stealth" data-id="${esc(p.profile_id)}">检测环境</button>
+      ${p.has_credentials && !canDeliver
+        ? `<button class="btn btn-sm" data-act="skip" data-id="${esc(p.profile_id)}">标为就绪</button>` : ""}
+      <button class="btn btn-sm btn-ghost" data-act="bundle" data-id="${esc(p.profile_id)}" ${canDeliver ? "" : "disabled"}>整合包</button>
+      ${p.status === "IDLE" && p.has_credentials
+        ? `<button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>` : ""}
     </div>
   </div>`;
 }
 
-/* -- actions ------------------------------------------------------------- */
+/** Repair affordances, chosen from what the backend actually complained about. */
+function fixBox(p) {
+  const reason = (p.human_note || p.last_error || "").toLowerCase();
+  const proxyIssue = reason.includes("代理") || p.status === "PROXY_DEAD" || reason.includes("ip");
+  const mailIssue = reason.includes("验证码") || reason.includes("gmail") || reason.includes("邮箱");
+  const manualGate = !proxyIssue && !mailIssue;
 
-async function act(kind, id) {
-  if (kind === "release") {
-    if (!confirm(`释放 ${id}？正在跑的客户会被断开。`)) return;
-    try { await api(`/admin/profiles/${id}/release`, { method: "POST" }); toast("已释放"); loadFleet(); }
-    catch (e) { toast(e.message, true); }
-    return;
+  if (proxyIssue) {
+    return `<div class="fixbox">
+      <div class="field"><label>新的住宅代理 URL</label>
+        <input id="px-${esc(p.profile_id)}" value="${esc(p.proxy_url || "")}" placeholder="socks5://user:pass@host:port"></div>
+      <div class="field"><label>该代理的真实出口 IP</label>
+        <input id="ip-${esc(p.profile_id)}" value="${esc(p.expected_ip || "")}" placeholder="203.0.113.7"></div>
+      <div class="actions" style="margin-top:0">
+        <button class="btn btn-primary btn-sm" data-act="fixproxy" data-id="${esc(p.profile_id)}">保存并重排</button>
+        <button class="btn btn-sm" data-act="stealth" data-id="${esc(p.profile_id)}">先测当前出口</button>
+      </div>
+    </div>`;
   }
-  if (kind === "deliver") return deliver(id);
-  if (kind === "resume") {
-    toast("正在推进流程，可能要几分钟…");
-    try {
-      await api(`/admin/jobs/${id}/run`, { method: "POST" });
-      toast("已推进");
-    } catch (e) { toast(e.message, true); }
-    loadFleet();
-    return;
+  if (mailIssue) {
+    return `<div class="fixbox">
+      <div class="field"><label>Gmail 应用专用密码（16 位，可在 Google 账号 → 安全性 生成）</label>
+        <input id="pw-${esc(p.profile_id)}" placeholder="abcd efgh ijkl mnop"></div>
+      <div class="actions" style="margin-top:0">
+        <button class="btn btn-sm" data-act="testmail" data-id="${esc(p.profile_id)}">测试 IMAP</button>
+        <button class="btn btn-primary btn-sm" data-act="fixmail" data-id="${esc(p.profile_id)}">保存并重排</button>
+      </div>
+    </div>`;
   }
-  if (kind === "bundle") {
-    const os = /Win/i.test(navigator.platform) ? "windows" : "linux";
-    toast("正在生成客户端包…");
-    // The endpoint mints a fresh key and streams a zip; a plain link would not
-    // carry the admin header, so fetch and hand the blob to the browser.
-    try {
-      const res = await fetch(`${B}/admin/bundle/${id}?os_name=${os}`, {
-        headers: { "x-admin-token": TOKEN },
-      });
-      if (!res.ok) throw new Error((await res.json()).detail || res.status);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${id}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast("已下载，解压后双击即可");
-    } catch (e) { toast(e.message, true); }
-    loadFleet();
-    return;
-  }
-  if (kind === "credential") return credential(id);
-  if (kind === "preflight") {
-    toast("正在检测出口…");
-    try { await api(`/admin/profiles/${id}/preflight`, { method: "POST" }); toast("出口正常"); }
-    catch (e) { toast(e.message, true); }
-    loadFleet();
-  }
+  return `<div class="fixbox">
+    <div class="note" style="margin-top:0">多半卡在人机校验。先去「检测环境」确认出口与指纹，人工过掉验证后点「标为就绪」。</div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn btn-primary btn-sm" data-act="skip" data-id="${esc(p.profile_id)}">我已手动处理，标为就绪</button>
+    </div>
+  </div>`;
 }
 
-async function deliver(id) {
-  let key;
+/* ---------------------------------------------------------------- actions */
+
+async function onAction(act, id) {
+  const p = STORE.profiles.find((x) => x.profile_id === id);
+  if (!p) return;
   try {
-    key = await api("/admin/keys", {
-      method: "POST",
-      body: JSON.stringify({ profile_id: id, plan_tier: "pro", valid_days: 30 }),
-    });
-  } catch (e) { return toast(e.message, true); }
+    if (act === "resume") {
+      toast("正在推进，可能要几分钟…");
+      await apiFetch(`/admin/jobs/${id}/run`, { method: "POST" });
+    } else if (act === "sync") {
+      toast("正在打开账号环境取凭证…");
+      await apiFetch(`/admin/profiles/${id}/sync-credentials`, { method: "POST" });
+      toast("凭证已同步", "ok");
+    } else if (act === "stealth") {
+      toast("正在检测出口与指纹…");
+      const r = await apiFetch(`/admin/profiles/${id}/stealth-check`, { method: "POST" });
+      const failed = Object.entries(r.checks || {}).filter(([, ok]) => !ok).map(([k]) => k);
+      toast(failed.length ? `不一致：${failed.join("、")}` : "出口与指纹一致", failed.length ? "err" : "ok");
+    } else if (act === "skip") {
+      await apiFetch(`/admin/jobs/${id}/skip`, { method: "POST" });
+      toast("已标为就绪", "ok");
+    } else if (act === "release") {
+      if (!confirm(`释放 ${id}？正在跑的客户会被断开。`)) return;
+      await apiFetch(`/admin/profiles/${id}/release`, { method: "POST" });
+    } else if (act === "bundle") {
+      const os = /Win/i.test(navigator.platform) ? "windows" : "linux";
+      toast("正在打包…");
+      const res = await fetch(`${B}/admin/bundle/${id}?os_name=${os}`, {
+        headers: TOKEN ? { "x-admin-token": TOKEN } : {},
+        credentials: "same-origin",
+      });
+      if (!res.ok) throw new Error(`打包失败 HTTP ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = `${id}-${os}.zip`; a.click();
+      URL.revokeObjectURL(url);
+    } else if (act === "deliver") {
+      await copyDelivery(id);
+    } else if (act === "fixproxy") {
+      const proxy = $(`#px-${id}`).value.trim();
+      const ip = $(`#ip-${id}`).value.trim();
+      if (!proxy || !ip) return toast("代理和出口 IP 都要填", "err");
+      // A profile imported before the pipeline existed has no job row; fix the
+      // profile itself in that case so the box still works.
+      await apiFetch(p.job_stage ? `/admin/jobs/${id}/proxy` : `/admin/profiles/${id}/proxy`, {
+        method: "PATCH",
+        body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: ip }),
+      });
+      toast("已保存", "ok");
+    } else if (act === "testmail") {
+      const pw = $(`#pw-${id}`).value.trim();
+      if (!pw) return toast("先填应用专用密码", "err");
+      const r = await apiFetch(`/admin/mail/check?email=${encodeURIComponent(p.email)}&app_password=${encodeURIComponent(pw)}`);
+      toast(r.ok ? "IMAP 可用" : r.error, r.ok ? "ok" : "err");
+    } else if (act === "fixmail") {
+      const pw = $(`#pw-${id}`).value.trim();
+      if (!pw) return toast("先填应用专用密码", "err");
+      await apiFetch(`/admin/jobs/${id}/mail`, {
+        method: "PATCH", body: JSON.stringify({ app_password: pw }),
+      });
+      toast("已保存并重排", "ok");
+    }
+  } catch {
+    /* apiFetch already reported it */
+  }
+  refreshAll();
+}
 
+/** Mint a key and put the whole customer command on the clipboard. */
+async function copyDelivery(id) {
+  const key = await apiFetch("/admin/keys", {
+    method: "POST",
+    body: JSON.stringify({ profile_id: id, plan_tier: "pro", valid_days: 30 }),
+  });
   const host = location.origin + B;
-  const gateway = (await api("/admin/client")).files.includes("tls.crt")
-    ? `${location.hostname}:8444` : "<网关地址>";
-  const files = (await api("/admin/client")).files;
+  const files = (await apiFetch("/admin/client")).files || [];
+  const gateway = files.includes("tls.crt") ? `${location.hostname}:8444` : "<网关地址>";
   const win = files.includes("claude-box-windows-x64.exe");
-  const nix = files.includes("claude-box");
-
-  const build = (os) => {
-    if (os === "win") {
-      return [
+  const cmd = win
+    ? [
         "# 1. 下载启动器和证书（只需一次），放到同一个文件夹",
         `curl.exe -H "x-admin-token: ${TOKEN}" -o claude-box.exe "${host}/admin/client/claude-box-windows-x64.exe"`,
         `curl.exe -H "x-admin-token: ${TOKEN}" -o gateway-ca.pem "${host}/admin/client/tls.crt"`,
@@ -433,255 +556,233 @@ async function deliver(id) {
         `  --key ${key.card_key} \``,
         `  --secret ${key.tunnel_secret} \``,
         `  --host ${host} --gateway ${gateway}`,
+      ].join("\n")
+    : [
+        "# 1. 下载启动器和证书（只需一次）",
+        `curl -H "x-admin-token: ${TOKEN}" -o claude-box "${host}/admin/client/claude-box"`,
+        `curl -H "x-admin-token: ${TOKEN}" -o gateway-ca.pem "${host}/admin/client/tls.crt"`,
+        "chmod +x claude-box",
+        "",
+        "# 2. 启动（每次用这个）",
+        `CCE_TUNNEL_CA=./gateway-ca.pem ./claude-box cli \\`,
+        `  --key ${key.card_key} \\`,
+        `  --secret ${key.tunnel_secret} \\`,
+        `  --host ${host} --gateway ${gateway}`,
       ].join("\n");
-    }
-    return [
-      "# 1. 下载启动器和证书（只需一次）",
-      `curl -H "x-admin-token: ${TOKEN}" -o claude-box "${host}/admin/client/claude-box"`,
-      `curl -H "x-admin-token: ${TOKEN}" -o gateway-ca.pem "${host}/admin/client/tls.crt"`,
-      "chmod +x claude-box",
-      "",
-      "# 2. 启动（每次用这个）",
-      `CCE_TUNNEL_CA=./gateway-ca.pem ./claude-box cli \\`,
-      `  --key ${key.card_key} \\`,
-      `  --secret ${key.tunnel_secret} \\`,
-      `  --host ${host} --gateway ${gateway}`,
-    ].join("\n");
-  };
-
-  const start = win && /Win/i.test(navigator.platform) ? "win" : "nix";
-  let current = build(start);
-
-  showModal(`
-    <h2>交付给客户</h2>
-    <div class="sub">选对方的系统，把下面整段发过去。30 天后失效</div>
-    <div class="tabs" style="margin-bottom:14px">
-      ${nix ? `<button class="tab ${start === "nix" ? "on" : ""}" data-os="nix">Linux / macOS</button>` : ""}
-      ${win ? `<button class="tab ${start === "win" ? "on" : ""}" data-os="win">Windows</button>` : ""}
-    </div>
-    <pre id="cmd">${esc(current)}</pre>
-    <div class="note">有效期到 ${esc(key.expires_at.slice(0, 10))}。${win ? "" : "服务器上还没放 Windows 客户端。"}</div>
-    <div class="modal-foot">
-      <button class="btn" onclick="closeModal()">关闭</button>
-      <button class="btn btn-primary" id="copy">复制全部</button>
-    </div>`);
-
-  $("#modal").querySelectorAll("[data-os]").forEach((t) => {
-    t.onclick = () => {
-      current = build(t.dataset.os);
-      $("#cmd").textContent = current;
-      $("#modal").querySelectorAll("[data-os]").forEach((x) => x.classList.toggle("on", x === t));
-    };
-  });
-  $("#copy").onclick = async () => {
-    try { await navigator.clipboard.writeText(current); toast("已复制"); }
-    catch { toast("浏览器拒绝了剪贴板，请手动选中", true); }
-  };
-  loadFleet();
+  try {
+    await navigator.clipboard.writeText(cmd);
+    toast(`交付指令已复制，30 天后失效（${key.expires_at.slice(0, 10)}）`, "ok");
+  } catch {
+    openDrawer("deliver", { id, cmd, expires: key.expires_at });
+    return;
+  }
+  openDrawer("deliver", { id, cmd, expires: key.expires_at });
 }
 
-async function credential(id) {
-  showModal(`
-    <h2>凭证</h2>
-    <div class="sub">二选一：在服务器上自动登录，或导入已有的 .claude</div>
-    <div class="field">
-      <label>方式一 · 自动登录</label>
-      <button class="btn" id="sync">开始自动登录</button>
-      <div class="hint">会打开浏览器走 Claude 登录，遇到验证码要人工点。最长几分钟。</div>
-    </div>
-    <div class="field">
-      <label>方式二 · 导入已有目录</label>
-      <input id="imp-path" placeholder="/home/deploy/cce/imp/.claude">
-      <div class="hint">服务器上已经存在的 .claude 目录路径</div>
-      <button class="btn btn-sm" id="imp" style="margin-top:8px">导入</button>
-    </div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">关闭</button></div>`);
+/* ----------------------------------------------------------------- drawer */
 
-  $("#sync").onclick = async () => {
-    toast("正在登录，可能要几分钟…");
-    try { await api(`/admin/profiles/${id}/sync-credentials`, { method: "POST" }); toast("完成"); }
-    catch (e) { toast(e.message, true); }
-    loadFleet();
-  };
-  $("#imp").onclick = async () => {
-    const path = $("#imp-path").value.trim();
-    if (!path) return toast("填目录路径", true);
-    try {
-      const r = await api(`/admin/profiles/${id}/import-credentials`, {
-        method: "POST", body: JSON.stringify({ path }),
+function openDrawer(kind, ctx = {}) {
+  const body = $("#drawer-body");
+  const foot = $("#drawer-foot");
+  foot.innerHTML = "";
+  $("#drawer").classList.add("open");
+  $("#drawer").setAttribute("aria-hidden", "false");
+  $("#scrim").classList.add("open");
+
+  if (kind === "worker") {
+    $("#drawer-title").textContent = "调度引擎";
+    const s = STORE.status || {};
+    body.innerHTML = `<div class="note">自动调度每 ${s.worker?.interval ?? 20} 秒取一条排队任务，一次一个浏览器。</div>
+      <div class="note">当前：${s.worker?.busy ? `${esc(s.worker.running_email)} · ${esc(s.worker.running_stage)}` : "空闲"}</div>
+      <div class="note">排队：${s.worker?.queued ?? 0} 条</div>`;
+    foot.innerHTML = `<button class="btn btn-primary" id="d-run">立即推进一次</button>`;
+    $("#d-run").onclick = async () => {
+      toast("已手动触发");
+      await apiFetch("/admin/jobs/run", { method: "POST", body: JSON.stringify({ limit: 1, concurrency: 1 }) });
+      refreshAll();
+    };
+    return;
+  }
+
+  if (kind === "cards") {
+    $("#drawer-title").textContent = "充值卡";
+    body.innerHTML = `<div class="note">每行 <code>卡号,月,年,CVV,邮编</code>。开 Pro 按顺序取一张可用卡，硬拒付标废不再重试。</div>
+      <div class="field" style="margin-top:12px"><textarea id="d-cards" rows="7" placeholder="4242424242424242,12,2029,123,10001"></textarea></div>
+      <div id="d-cards-list" class="note">加载中…</div>`;
+    foot.innerHTML = `<button class="btn btn-primary" id="d-cards-add">导入卡片</button>`;
+    $("#d-cards-add").onclick = async () => {
+      const items = $("#d-cards").value.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+        const [pan, month, year, cvv, zip] = line.split(",").map((c) => (c || "").trim());
+        return { pan, exp_month: month, exp_year: year, cvv, billing_zip: zip };
+      }).filter((i) => i.pan && i.cvv);
+      if (!items.length) return toast("没有可导入的行", "err");
+      const r = await apiFetch("/admin/cards", { method: "POST", body: JSON.stringify({ items }) });
+      toast(`导入 ${r.created} 张${r.failed.length ? `，失败 ${r.failed.length}` : ""}`, r.failed.length ? "err" : "ok");
+      $("#d-cards").value = "";
+      loadCardsInto();
+      refreshAll();
+    };
+    loadCardsInto();
+    return;
+  }
+
+  if (kind === "import") {
+    $("#drawer-title").textContent = "批量导入账号";
+    body.innerHTML = `
+      <div class="note">每行一条：<b>邮箱,应用专用密码,IP</b>，可再补 <b>代理URL,套餐,密码</b>。
+        代理留空时套用下面的模板，<code>{ip}</code> 会按行替换。直接从 Excel 复制多行即可。</div>
+      <div class="field" style="margin-top:12px"><label>代理模板（可选）</label>
+        <input id="d-tpl" placeholder="socks5://user:pass@host:1080"></div>
+      <div class="field"><label>粘贴内容</label>
+        <textarea id="d-import" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,203.0.113.7"></textarea></div>
+      <div class="note" id="d-preview-hint">粘贴后这里实时预览解析结果。</div>
+      <div id="d-preview"></div>`;
+    foot.innerHTML = `<button class="btn btn-primary" id="d-do-import">导入并开始</button>`;
+    const reparse = () => renderPreview();
+    $("#d-import").addEventListener("input", reparse);
+    $("#d-tpl").addEventListener("input", reparse);
+    $("#d-do-import").onclick = async () => {
+      const { rows, bad } = parseRows();
+      if (!rows.length) return toast("没有可导入的行", "err");
+      const r = await apiFetch("/admin/jobs/import", {
+        method: "POST",
+        body: JSON.stringify({
+          text: $("#d-import").value,
+          proxy_template: $("#d-tpl").value.trim(),
+        }),
       });
-      toast(`已导入 ${r.bytes} 字节`);
-      if (r.bytes > 200000) toast("体积偏大，可能打错了目录", true);
-    } catch (e) { toast(e.message, true); }
-    loadFleet();
-  };
-}
-
-/* -- add account --------------------------------------------------------- */
-
-$("#btn-add").onclick = () => {
-  showModal(`
-    <h2>添加账号</h2>
-    <div class="sub">一个账号对应一条固定住宅 IP</div>
-    <div class="field"><label>账号名</label>
-      <input id="n-id" placeholder="acct-001"></div>
-    <div class="field"><label>住宅代理</label>
-      <input id="n-proxy" placeholder="socks5://user:pass@1.2.3.4:1080">
-      <div class="hint">格式 socks5:// 或 http://，含账号密码</div></div>
-    <div class="field"><label>该代理的出口 IP</label>
-      <input id="n-ip" placeholder="203.0.113.7">
-      <div class="hint">必须和代理真实出口一致，否则会被拦截</div></div>
-    <div class="modal-foot">
-      <button class="btn" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" id="n-save">创建</button>
-    </div>`);
-  $("#n-save").onclick = async () => {
-    const body = {
-      profile_id: $("#n-id").value.trim(),
-      upstream_proxy_url: $("#n-proxy").value.trim(),
-      expected_ip: $("#n-ip").value.trim(),
+      toast(`已建 ${r.created} 个环境${bad ? `，${bad} 行有问题` : ""}`, r.failed.length ? "err" : "ok");
+      closeDrawer();
+      refreshAll();
     };
-    if (!body.profile_id || !body.upstream_proxy_url || !body.expected_ip)
-      return toast("三项都要填", true);
-    try {
-      await api("/admin/profiles", { method: "POST", body: JSON.stringify(body) });
-      closeModal(); toast("已创建"); loadFleet();
-    } catch (e) { toast(e.message, true); }
-  };
-};
+    renderPreview();
+    return;
+  }
 
-/* -- clients ------------------------------------------------------------- */
+  if (kind === "deliver") {
+    $("#drawer-title").textContent = "交付指令";
+    body.innerHTML = `<div class="note">把下面整段发给客户，30 天后失效（${esc(ctx.expires?.slice(0, 10) || "")}）。</div>
+      <pre style="margin-top:12px">${esc(ctx.cmd)}</pre>`;
+    foot.innerHTML = `<button class="btn btn-primary" id="d-copy">复制</button>`;
+    $("#d-copy").onclick = async () => {
+      try { await navigator.clipboard.writeText(ctx.cmd); toast("已复制", "ok"); }
+      catch { toast("浏览器拒绝剪贴板，请手动选中", "err"); }
+    };
+    return;
+  }
 
-const LABELS = {
-  "claude-box": ["Linux 客户端", "启动器"],
-  "claude-box-windows-x64.exe": ["Windows 客户端", "启动器"],
-  "claude-box-darwin-arm64": ["macOS 客户端 (Apple 芯片)", "启动器"],
-  "claude-box-darwin-x64": ["macOS 客户端 (Intel)", "启动器"],
-  "tls.crt": ["网关证书", "两个平台都要，必下"],
-};
-
-async function loadClients() {
-  let data;
-  try { data = await api("/admin/client"); } catch { return; }
-  const files = data.files || [];
-  $("#client-note").textContent = files.length
-    ? "把对应平台的文件和证书发给客户，客户端下载后可直接运行"
-    : "服务器上还没有放客户端程序";
-  $("#client-links").innerHTML = files.map((f) => {
-    const [title, hint] = LABELS[f] || [f, ""];
-    return `<a class="card" style="text-decoration:none;color:inherit;display:block;padding:13px 15px"
-      href="${B}/admin/client/${encodeURIComponent(f)}" download>
-      <div class="name" style="font-size:13.5px">${esc(title)}</div>
-      <div class="meta">${esc(f)}${hint ? " · " + esc(hint) : ""}</div>
-    </a>`;
-  }).join("");
-}
-
-/* -- misc ---------------------------------------------------------------- */
-
-function showModal(html) {
-  $("#modal").innerHTML = html;
-  $("#modal-bg").classList.add("open");
-}
-function closeModal() { $("#modal-bg").classList.remove("open"); }
-window.closeModal = closeModal;
-$("#modal-bg").onclick = (e) => { if (e.target.id === "modal-bg") closeModal(); };
-
-const TABS = ["fleet", "pipeline", "cards", "client"];
-
-document.querySelectorAll(".tab").forEach((t) => {
-  t.onclick = () => {
-    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
-    TABS.forEach((name) => $(`#tab-${name}`).classList.toggle("hidden", t.dataset.tab !== name));
-    if (t.dataset.tab === "pipeline") loadJobs();
-    if (t.dataset.tab === "cards") loadCards();
-  };
-});
-$("#btn-refresh").onclick = () => { loadFleet(); toast("已刷新"); };
-
-/* -- pipeline ------------------------------------------------------------ */
-
-
-async function loadJobs() {
-  // The pipeline tab no longer owns a list; it just refreshes the account view.
-  loadFleet();
-}
-
-$("#btn-import").onclick = async () => {
-  const text = $("#import-text").value.trim();
-  if (!text) return toast("先粘贴导入内容", true);
-  try {
-    const result = await api("/admin/jobs/import", {
-      method: "POST",
-      body: { text, proxy_template: $("#proxy-template").value.trim() },
+  if (kind === "client") {
+    $("#drawer-title").textContent = "客户端与证书";
+    body.innerHTML = `<div class="note">给客户的文件都从这里发。</div><div id="d-client" class="note">加载中…</div>`;
+    apiFetch("/admin/client").then((data) => {
+      const files = data.files || [];
+      $("#d-client").innerHTML = files.length ? files.map((f) =>
+        `<div class="actions"><a class="btn btn-sm" href="${B}/admin/client/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`
+      ).join("") : "服务器上还没有放客户端程序。";
     });
-    $("#import-result").textContent = `已建 ${result.created} 个环境` +
-      (result.failed.length ? `；${result.failed.length} 行失败：${result.failed.join("；")}` : "");
-    loadJobs();
-    loadFleet();
-  } catch (e) { toast(e.message, true); }
-};
-
-$("#btn-run").onclick = async () => {
-  toast("开始跑队列，耗时较长…");
-  try {
-    const result = await api("/admin/jobs/run", { method: "POST", body: { limit: 20, concurrency: 2 } });
-    toast(`跑了 ${result.ran} 个`);
-    loadJobs();
-    loadFleet();
-  } catch (e) { toast(e.message, true); }
-};
-
-$("#btn-jobs-refresh") && ($("#btn-jobs-refresh").onclick = () => loadJobs());
-
-/* -- cards --------------------------------------------------------------- */
-
-async function loadCards() {
-  let data;
-  try { data = await api("/admin/cards"); } catch (e) { return toast(e.message, true); }
-  const items = data.items || [];
-  $("#cards").innerHTML = items.map((card) => `<div class="card">
-    <div class="card-top">
-      <div style="flex:1">
-        <div class="name">${esc(card.card_bin)}******${esc(card.last4)}</div>
-        <div class="meta">${esc(card.exp)} · ${esc(card.billing_zip || "无邮编")}</div>
-      </div>
-      <span class="pill ${card.status === "available" ? "p-idle" : card.status === "dead" ? "p-bad" : "p-dead"}">${esc(card.status)}</span>
-    </div>
-    ${card.last_error ? `<div class="note">${esc(card.last_error)}</div>` : ""}
-  </div>`).join("");
-  if (!items.length) $("#cards").innerHTML = `<div class="empty">还没有卡片。</div>`;
+    return;
+  }
 }
 
-$("#btn-cards-add").onclick = async () => {
-  const lines = $("#cards-text").value.split("\n").map((l) => l.trim()).filter(Boolean);
-  const items = lines.map((line) => {
-    const [pan, month, year, cvv, zip] = line.split(",").map((c) => (c || "").trim());
-    return { pan, exp_month: month, exp_year: year, cvv, billing_zip: zip };
-  }).filter((i) => i.pan && i.cvv);
-  if (!items.length) return toast("没有可导入的行", true);
+function closeDrawer() {
+  $("#drawer").classList.remove("open");
+  $("#drawer").setAttribute("aria-hidden", "true");
+  $("#scrim").classList.remove("open");
+}
+
+async function loadCardsInto() {
+  const box = $("#d-cards-list");
+  if (!box) return;
   try {
-    const result = await api("/admin/cards", { method: "POST", body: { items } });
-    $("#cards-result").textContent = `导入 ${result.created} 张` +
-      (result.failed.length ? `；失败：${result.failed.join("；")}` : "");
-    $("#cards-text").value = "";
-    loadCards();
-  } catch (e) { toast(e.message, true); }
+    const data = await apiFetch("/admin/cards");
+    const s = data.summary || {};
+    box.innerHTML = `总数 ${s.total || 0} · 可用 ${s.available || 0} · 使用中 ${s.in_use || 0} · 已废 ${s.dead || 0}`
+      + (data.items || []).slice(0, 8).map((c) =>
+        `<div>${esc(c.card_bin)}******${esc(c.last4)} · ${esc(c.exp)} · ${esc(c.status)}</div>`).join("");
+  } catch { /* reported */ }
+}
+
+/* ------------------------------------------------------- import preview */
+
+function parseRows() {
+  const tpl = $("#d-tpl")?.value.trim() || "";
+  const rows = [];
+  let bad = 0;
+  for (const raw of ($("#d-import")?.value || "").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const parts = line.split(",").map((c) => c.trim());
+    const email = (parts[0] || "").toLowerCase();
+    const pw = parts[1] || "";
+    const ip = parts[2] || "";
+    const proxy = parts[3] || (tpl && ip ? tpl.replace("{ip}", ip) : "");
+    const problems = [];
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) problems.push("邮箱");
+    if (!pw) problems.push("应用密码");
+    if (!ip) problems.push("IP");
+    if (!proxy) problems.push("代理");
+    if (problems.length) bad += 1;
+    rows.push({ email, pw, ip, proxy, plan: parts[4] || "pro", problems });
+  }
+  return { rows, bad };
+}
+
+function renderPreview() {
+  const { rows, bad } = parseRows();
+  const hint = $("#d-preview-hint");
+  const box = $("#d-preview");
+  if (!box) return;
+  if (!rows.length) {
+    hint.textContent = "粘贴后这里实时预览解析结果。";
+    box.innerHTML = "";
+    return;
+  }
+  hint.textContent = `${rows.length} 行，${bad ? `${bad} 行有问题（红底）` : "格式全部通过"}`;
+  box.innerHTML = `<table class="preview">
+    <thead><tr><th>邮箱</th><th>应用密码</th><th>IP</th><th>代理</th><th>套餐</th><th>校验</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr class="${r.problems.length ? "bad" : ""}">
+      <td>${esc(r.email || "—")}</td><td>${esc(r.pw ? "••••" : "—")}</td><td>${esc(r.ip || "—")}</td>
+      <td>${esc(r.proxy || "—")}</td><td>${esc(r.plan)}</td>
+      <td class="st">${r.problems.length ? "缺 " + r.problems.join("/") : "OK"}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+/* ------------------------------------------------------------------- boot */
+
+$("#btn-login").onclick = async () => {
+  const value = $("#token").value.trim();
+  if (!value) return toast("请输入管理密码", "err");
+  TOKEN = value;
+  try {
+    await apiFetch("/admin/status");
+    localStorage.setItem("cce_token", value);
+    enter();
+  } catch { /* reported */ }
 };
+$("#token").addEventListener("keydown", (e) => e.key === "Enter" && $("#btn-login").click());
+$("#btn-logout").onclick = logout;
 
-$("#btn-cards-refresh").onclick = () => loadCards();
+$("#btn-import").onclick = () => openDrawer("import");
+$("#btn-cards").onclick = () => openDrawer("client");
+$("#drawer-close").onclick = closeDrawer;
+$("#scrim").onclick = closeDrawer;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
-// Boot straight through: the admin session cookie usually covers us, so the
-// password gate only appears when that fails. Nothing is shown while probing.
-api("/admin/profiles")
+function enter() {
+  hideBoot();
+  $("#gate").style.display = "none";
+  $("#app").hidden = false;
+  refreshAll();
+}
+
+// Cookie-first: a logged-in admin never sees the password gate.
+apiFetch("/admin/status")
   .then(enter)
-  .catch((err) => {
-    // api() already cleared the token on 401; keep it if the probe failed for
-    // another reason so the operator is not asked to retype it.
-    $("#boot").hidden = true;
-    $("#gate").hidden = false;
-    const hint = $("#gate p");
-    if (hint) hint.textContent = TOKEN ? "会话校验失败：" + err.message : "已登录运营后台可直接进入；否则输入管理密码";
+  .catch(() => {
+    TOKEN = "";
+    localStorage.removeItem("cce_token");
+    hideBoot();
+    $("#gate").style.display = "";
   });
 </script>
 </body>
