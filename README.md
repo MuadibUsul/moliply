@@ -78,6 +78,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   │   └── payments/         官方支付驱动 + 脱敏层
 │   │   ├── tasks/                Celery 任务与 Beat
 │   │   └── seed.py               演示商品/库存/优惠码
+│   ├── cce_console/              /cce 账号托管台（注册/开 Pro/指纹环境/交付），见其 README
 │   ├── alembic/                  数据库版本迁移
 │   └── tests/                    116 项 pytest
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
