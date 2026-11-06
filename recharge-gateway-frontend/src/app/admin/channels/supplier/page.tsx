@@ -25,22 +25,22 @@ type LinkSettings = {
   secret_configured: Record<string, boolean>;
 };
 
-type Quote = { sku: string; code: string; price_cents?: number; priceText?: string; error?: string };
+type Quote = {
+  sku: string;
+  code: string;
+  price_cents?: number;
+  priceText?: string;
+  error?: string;
+  /** Cheapest active listed price for this SKU, computed server-side. */
+  sell_price?: number | null;
+  margin?: number | null;
+};
 
 type ProbeResult = {
   shop: string | null;
   balance: string | null;
   quotes: Quote[];
   mapped: number;
-};
-
-/** Our own list prices, for a margin readout next to the supplier quote. */
-const SELL_PRICE: Record<string, number> = {
-  CHATGPT_PLUS_1M: 158,
-  CLAUDE_PRO_1M: 168,
-  GPT_PRO_100: 649,
-  GPT_PRO_200: 1249,
-  GPT_PRO_500: 2999,
 };
 
 const SOURCE_LABEL: Record<SupplierConfig["source"], string> = {
@@ -276,8 +276,10 @@ export default function SupplierChannelPage() {
             <tbody>
               {(probe?.quotes || []).map((quote) => {
                 const cost = quote.price_cents != null ? quote.price_cents / 100 : null;
-                const sell = SELL_PRICE[quote.sku];
-                const margin = cost != null && sell != null ? sell - cost : null;
+                // Sell price and margin are computed by the server from the
+                // live catalogue, so a price change shows up without a build.
+                const sell = quote.sell_price ?? null;
+                const margin = quote.margin ?? null;
                 return (
                   <tr key={quote.sku} className="border-t border-white/[0.05]">
                     <td className="py-2 text-slate-300">{quote.sku}</td>

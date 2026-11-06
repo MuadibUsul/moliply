@@ -18,6 +18,7 @@ from app.models import (
     Order,
     OrderStatus,
     Product,
+    ProductVariant,
     RegionPreference,
     RechargeState,
     RechargeTask,
@@ -1265,10 +1266,45 @@ def admin_save_supplier(payload: SupplierConfigRequest, db: Session = Depends(ge
     return result
 
 
+def _active_list_prices(db: Session) -> dict[str, Decimal]:
+    """Lowest active listed price per SKU.
+
+    The cheapest active variant is the honest number: it is what a customer
+    would actually pay, and a second, pricier variant must not hide a loss.
+    """
+    rows = (
+        db.query(ProductVariant.sku_type, func.min(ProductVariant.price))
+        .join(Product, Product.id == ProductVariant.product_id)
+        .filter(
+            ProductVariant.active.is_(True),
+            Product.active.is_(True),
+            ProductVariant.sku_type.isnot(None),
+        )
+        .group_by(ProductVariant.sku_type)
+        .all()
+    )
+    return {sku.value: price for sku, price in rows if sku is not None}
+
+
 @protected.post("/channels/supplier/probe")
-def admin_probe_supplier(admin: dict = Depends(require_admin)) -> dict:
-    """Verify the key and pull live quotes. Spends nothing."""
+def admin_probe_supplier(db: Session = Depends(get_db), admin: dict = Depends(require_admin)) -> dict:
+    """Verify the key and pull live quotes. Spends nothing.
+
+    Quotes are joined with our own listed prices so the margin column reflects
+    the shop, not a constant copied into the frontend once and then forgotten.
+    """
     try:
-        return UpstreamProvider().probe_supplier()
+        result = UpstreamProvider().probe_supplier()
     except RechargeError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc
+    prices = _active_list_prices(db)
+    for quote in result.get("quotes", []):
+        price = prices.get(quote.get("sku", ""))
+        quote["sell_price"] = float(price) if price is not None else None
+        cost = quote.get("price_cents")
+        quote["margin"] = (
+            round(float(price) - cost / 100, 2)
+            if price is not None and cost is not None
+            else None
+        )
+    return result
