@@ -83,6 +83,7 @@ services:
       # Console endpoints also accept this token for scripted access; the
       # admin session cookie is the normal path.
       CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      ARTIFACT_DIR: /artifacts
     depends_on:
       db:
         condition: service_healthy
@@ -93,6 +94,9 @@ services:
       - "172.18.0.1:18080:8000"
     volumes:
       - moliply_console_data:/data
+      # Checkout failure screenshots are written by the worker and served by the
+      # API, so both containers need the same volume.
+      - moliply_artifacts:/artifacts
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
@@ -125,11 +129,14 @@ services:
       PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
       API_BASE_URL: ${PUBLIC_STORE_URL}
       CORS_ORIGINS: ${PUBLIC_STORE_URL}
+      ARTIFACT_DIR: /artifacts
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - moliply_artifacts:/artifacts
     command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "--concurrency=2"]
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.tasks.celery_worker.celery_app inspect ping -t 5 >/dev/null 2>&1 || exit 1"]
@@ -208,6 +215,8 @@ networks:
     external: true
 
 volumes:
+  moliply_artifacts:
+    name: moliply_artifacts
   moliply_console_data:
     name: moliply_console_data
   moliply_db_data:

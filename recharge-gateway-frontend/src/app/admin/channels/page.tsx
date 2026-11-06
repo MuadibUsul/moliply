@@ -19,6 +19,13 @@ type ChannelData = {
     enabled: boolean;
     dry_run: boolean;
     available_card_id: number | null;
+    circuit?: {
+      open: boolean;
+      failures_in_window: number;
+      open_seconds_left: number;
+      threshold: number;
+      window_seconds: number;
+    };
   };
   manual_review: number;
 };
@@ -43,6 +50,16 @@ export default function AdminChannelsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function resetCircuit() {
+    setError(null);
+    try {
+      await api("/api/v1/admin/channels/self-vcc/circuit/reset", { method: "POST" });
+      await load();
+    } catch (err) {
+      setError(handleAdminError(err));
+    }
+  }
 
   return (
     <div>
@@ -182,6 +199,25 @@ export default function AdminChannelsPage() {
               </p>
             </div>
           </div>
+          {data?.self_vcc.circuit?.open ? (
+            <div className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/[0.06] p-3 text-[10px] leading-5 text-rose-200">
+              <p className="font-medium">通道已自动熔断，当前任务全部直接走上游。</p>
+              <p className="mt-1 text-rose-200/70">
+                {data.self_vcc.circuit.open_seconds_left
+                  ? `约 ${Math.ceil(data.self_vcc.circuit.open_seconds_left / 60)} 分钟后自动半开。`
+                  : "等待下一次成功调用后自动解除。"}
+                修复选择器或代理后可立即手动解除。
+              </p>
+              <button type="button" onClick={() => void resetCircuit()} className="mt-2 text-brand-300 hover:text-brand-200">
+                手动解除熔断
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[10px] leading-5 text-slate-500">
+              熔断计数 {data?.self_vcc.circuit?.failures_in_window ?? 0}/{data?.self_vcc.circuit?.threshold ?? 3}
+              （15 分钟窗口）。达到阈值后 30 分钟内不再尝试浏览器结账。
+            </div>
+          )}
           <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[0.045] p-3 text-[10px] leading-5 text-amber-200/65">
             启用顺序：录入 VCC 卡片 → 配置美国住宅代理 → 配置 RDVCC IMAP 邮箱 → 关闭 SELF_VCC_DRY_RUN →
             设置 SELF_VCC_ENABLED=true。未完成代理与邮箱验证前请保持演练模式。

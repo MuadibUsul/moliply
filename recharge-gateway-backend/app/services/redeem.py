@@ -397,6 +397,8 @@ def _finalize_failure(
     message: str,
     release_code: bool,
     vcc_card_id: int | None = None,
+    error_detail: str = "",
+    evidence_path: str | None = None,
 ) -> None:
     now = utcnow()
     task.state = RechargeState.FAILED
@@ -404,6 +406,8 @@ def _finalize_failure(
     task.updated_at = now
     task.error_code = error_code
     task.error_message = message
+    task.error_detail = error_detail[:1000] or None
+    task.evidence_path = evidence_path
     if vcc_card_id:
         task.vcc_card_id = vcc_card_id
     if code and release_code and code.status != CodeStatus.USED:
@@ -522,7 +526,16 @@ def run_recharge_task(task_id: str) -> None:
             try:
                 outcome = channel_dispatcher.dispatch(db, task, code, session)
             except RechargeError as exc:
-                _finalize_failure(db, task, code, exc.code, exc.message, exc.release_code)
+                _finalize_failure(
+                    db,
+                    task,
+                    code,
+                    exc.code,
+                    exc.message,
+                    exc.release_code,
+                    error_detail=exc.error_detail,
+                    evidence_path=exc.artifact_path,
+                )
                 return
             _finalize_success(db, task, code, outcome.message, outcome.upstream_order_no)
         except Exception:  # noqa: BLE001
@@ -588,6 +601,12 @@ def serialize_task(db: Session, task: RechargeTask) -> dict:
         "steps": steps,
         "error_code": task.error_code,
         "error_message": task.error_message,
+        # Operator diagnostics: null unless the checkout captured some.
+        "error_detail": task.error_detail,
+        "has_evidence": bool(task.evidence_path),
+        "evidence_name": (
+            task.evidence_path.replace("\\", "/").rsplit("/", 1)[-1] if task.evidence_path else None
+        ),
         "target_email": mask_email(task.target_email),
         "session_kind": task.session_kind,
         "sku_label": _sku_label(db, code) if code else "",

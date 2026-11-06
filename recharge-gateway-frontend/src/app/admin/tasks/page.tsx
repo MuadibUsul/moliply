@@ -175,7 +175,24 @@ export default function AdminTasksPage() {
                     <td className="max-w-[180px] truncate text-[10px] text-slate-400">{task.target_email_full}</td>
                     <td className="max-w-[170px] truncate text-[10px] text-slate-400">{task.sku_label}</td>
                     <td><StatusBadge status={task.state} label={task.state_label} /></td>
-                    <td className="font-mono text-[9px] text-rose-300/80">{task.error_code || "—"}</td>
+                    <td>
+                      <div className="text-rose-300/80">
+                        <span className="font-mono text-[9px]">{task.error_code || "—"}</span>
+                        {task.error_detail && (
+                          <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-500">{task.error_detail}</p>
+                        )}
+                        {task.has_evidence && (
+                          <a
+                            href={`/api/v1/admin/tasks/${task.task_id}/evidence`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-block text-[9px] text-brand-300 hover:text-brand-200"
+                          >
+                            查看失败快照
+                          </a>
+                        )}
+                      </div>
+                    </td>
                     <td className="text-[10px] text-slate-500">{task.attempts}</td>
                     <td className="text-[10px] text-slate-600">{formatDateTime(task.created_at)}</td>
                     <td>

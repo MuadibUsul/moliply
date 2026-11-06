@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -75,7 +76,7 @@ from app.services.crypto import (
     mask_card_number,
     mask_email,
 )
-from app.services.fulfillment import vcc_pool_scheduler
+from app.services.fulfillment import self_vcc_circuit, vcc_pool_scheduler
 from app.services.upstream_provider import UpstreamProvider
 
 logger = logging.getLogger(__name__)
@@ -742,6 +743,47 @@ def admin_cleanup_tokens(db: Session = Depends(get_db)) -> dict:
     return {"cleared": count}
 
 
+@router.get("/tasks/{task_id}/evidence")
+def admin_task_evidence(task_id: str, request: Request, db: Session = Depends(get_db)):
+    """Serve the failure screenshot a self-VCC run captured.
+
+    Lives on the public router because an ``<a href>`` cannot attach a bearer
+    header; the login cookie is accepted instead, falling back to the token.
+    The stored path is resolved and confined to the artifact directory.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    if not _evidence_viewer_allowed(request):
+        raise HTTPException(status_code=401, detail="请先登录运营后台")
+
+    task = db.get(RechargeTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="充值任务不存在")
+    if not task.evidence_path:
+        raise HTTPException(status_code=404, detail="该任务没有失败现场快照")
+    path = Path(task.evidence_path).resolve()
+    artifact_dir = Path(os.getenv("ARTIFACT_DIR", "/tmp/moliply_artifacts")).resolve()
+    if artifact_dir not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="快照文件已清理或不在快照目录内")
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+def _evidence_viewer_allowed(request: Request) -> bool:
+    token = request.cookies.get(ADMIN_COOKIE, "")
+    if not token:
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    if not token:
+        return False
+    try:
+        decode_admin_token(token)
+    except HTTPException:
+        return False
+    return True
+
+
 def _create_vcc_card(
     db: Session,
     payload: VccCardCreateRequest,
@@ -1233,9 +1275,30 @@ def admin_channels(db: Session = Depends(get_db)) -> dict:
             "enabled": runtime_settings.get_bool("self_vcc_enabled", settings.self_vcc_enabled),
             "dry_run": runtime_settings.get_bool("self_vcc_dry_run", settings.self_vcc_dry_run),
             "available_card_id": card.id if card else None,
+            "circuit": self_vcc_circuit.state(),
         },
         "manual_review": manual_review,
     }
+
+
+@protected.post("/channels/self-vcc/circuit/reset")
+def admin_reset_self_vcc_circuit(
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Close the self-VCC breaker by hand, e.g. right after fixing a selector."""
+    self_vcc_circuit.reset()
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="channel.circuit_reset",
+            entity_type="channel",
+            entity_id="self_vcc",
+            detail="manual reset",
+        )
+    )
+    db.commit()
+    return {"circuit": self_vcc_circuit.state()}
 
 
 @protected.get("/channels/supplier")

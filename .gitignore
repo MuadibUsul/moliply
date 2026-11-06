@@ -37,3 +37,10 @@ htmlcov/
 # Vendored console cache
 recharge-gateway-backend/cce_console/**/__pycache__/
 upstream-service/**/__pycache__/
+
+# Production secrets and generated snapshots. `*.env.example` stays tracked so a
+# fresh checkout still has a template to copy.
+prod.env
+*.env.prod
+*.secrets
+recharge-gateway-backend/artifacts/

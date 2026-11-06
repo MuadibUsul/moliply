@@ -33,6 +33,31 @@ ln -sfn "$REL" "$BASE/current"
 echo "==> starting"
 docker compose -f "$BASE/current/docker-compose.server.yml" --env-file "$BASE/.env" up -d --remove-orphans
 
+# The API runs migrations on boot, and with STRICT_MIGRATIONS=1 a failure is
+# fatal. Running `upgrade head` here first makes a bad revision fail the deploy
+# before the containers are considered live, instead of at first request.
+echo "==> migrating to the current alembic head"
+migrated=0
+for _ in $(seq 1 20); do
+  if docker compose -f "$BASE/current/docker-compose.server.yml" --env-file "$BASE/.env" \
+      exec -T api alembic upgrade head; then
+    migrated=1
+    break
+  fi
+  sleep 3
+done
+if [ "$migrated" -ne 1 ]; then
+  echo "!! alembic upgrade failed" >&2
+  docker compose -f "$BASE/current/docker-compose.server.yml" --env-file "$BASE/.env" logs --tail 60 api >&2 || true
+  if [ -n "$PREV" ] && [ -d "$PREV" ]; then
+    echo "==> rolling back to $PREV" >&2
+    ln -sfn "$PREV" "$BASE/current"
+    cd "$BASE/current"
+    docker compose -f "$BASE/current/docker-compose.server.yml" --env-file "$BASE/.env" up -d --remove-orphans
+  fi
+  exit 1
+fi
+
 echo "==> waiting for health at $HEALTH_URL"
 healthy=0
 for _ in $(seq 1 30); do
@@ -53,9 +78,5 @@ fi
 
 echo "==> pruning old releases (keeping $KEEP)"
 ls -1dt "$BASE"/releases/*/ 2>/dev/null | tail -n "+$((KEEP + 1))" | xargs -r rm -rf
-
-echo "==> migrated to the current alembic head"
-docker compose -f "$BASE/current/docker-compose.server.yml" --env-file "$BASE/.env" \
-  exec -T api alembic upgrade head || echo "   (alembic step skipped)"
 
 echo "done: $(readlink -f "$BASE/current")"

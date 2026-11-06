@@ -203,6 +203,10 @@ export type RedeemTask = {
   steps: RedeemStep[];
   error_code: string | null;
   error_message: string | null;
+  /** Operator-only page text captured on a failed self-VCC run. */
+  error_detail?: string | null;
+  has_evidence?: boolean;
+  evidence_name?: string | null;
   target_email: string;
   session_kind: string;
   sku_label: string;

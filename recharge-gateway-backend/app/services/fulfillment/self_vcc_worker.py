@@ -13,11 +13,14 @@ retrying a customer's account.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 import httpx
 from sqlalchemy.orm import Session
@@ -44,15 +47,58 @@ CHATGPT_SKUS = {
 
 
 class SelfVccFailure(RechargeError):
-    def __init__(self, code: str, message: str, release_code: bool = True, card_id: int | None = None) -> None:
+    """A classified self-VCC failure.
+
+    ``payment_submitted`` says whether the final pay button was ever clicked.
+    Before that point nothing can have been charged, so the caller may release
+    the card and fall back to upstream without any double-charge risk. After it,
+    only an explicit Stripe decline is still safe to fall back from; anything
+    else may have charged already and must be locked for a human.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        release_code: bool = True,
+        card_id: int | None = None,
+        *,
+        payment_submitted: bool = False,
+        is_explicit_decline: bool = False,
+    ) -> None:
         super().__init__(code, message, release_code)
         self.card_id = card_id
+        self.payment_submitted = payment_submitted
+        self.is_explicit_decline = is_explicit_decline
+        # Filled in by the checkout driver for the admin task view.
+        self.error_detail = ""
+        self.artifact_path: str | None = None
 
 
 @dataclass
 class SelfVccResult:
     card_id: int
     message: str
+
+
+# Stripe's own vocabulary for "the card was refused", as opposed to a page that
+# merely failed to load. Anything else after submission is an unknown outcome.
+DECLINE_MARKERS = (
+    "declined",
+    "card was declined",
+    "insufficient_funds",
+    "insufficient funds",
+    "incorrect_cvc",
+    "incorrect cvc",
+    "expired_card",
+    "expired card",
+    "transaction_not_allowed",
+)
+
+
+def _looks_declined(body: str) -> bool:
+    lowered = (body or "").lower()
+    return any(marker in lowered for marker in DECLINE_MARKERS)
 
 
 def check_proxy_health() -> dict:
@@ -149,6 +195,49 @@ def _create_checkout_url(session: SessionInfo) -> str:
             "自营通道未能创建升级结账页，任务已转人工处理",
             release_code=False,
         ) from exc
+
+
+def _artifact_dir() -> Path:
+    return Path(os.getenv("ARTIFACT_DIR", "/tmp/moliply_artifacts"))
+
+
+def _capture_failure_snapshot(page: Any, label: str, keep: int = 50) -> str | None:
+    """Save a screenshot of the failed page, returning its path.
+
+    Card fields are blurred first so a support screenshot can be shared without
+    leaking a PAN. Never raises: a broken artifact step must not mask the real
+    failure.
+    """
+    try:
+        directory = _artifact_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        page.evaluate(
+            """() => {
+                document.querySelectorAll(
+                    'input[autocomplete="cc-number"], input[autocomplete="cc-csc"], iframe'
+                ).forEach((el) => { el.style.filter = "blur(10px)"; });
+            }"""
+        )
+        safe_label = re.sub(r"[^A-Za-z0-9_-]+", "_", label)[:40] or "failure"
+        path = directory / f"fail_{safe_label}_{int(time.time())}.png"
+        page.screenshot(path=str(path), timeout=5_000, full_page=False)
+        for stale in sorted(directory.glob("fail_*.png"), key=lambda p: p.stat().st_mtime)[:-keep]:
+            stale.unlink(missing_ok=True)
+        return str(path)
+    except Exception:  # noqa: BLE001 - diagnostics must stay best-effort
+        logger.debug("Failure snapshot could not be captured", exc_info=False)
+        return None
+
+
+def _alert_text(page: Any) -> str:
+    """Visible Stripe/OpenAI error text, if the page exposes any."""
+    try:
+        node = page.locator("[role='alert'], .Error, .error, [data-testid*='error']").first
+        if node.count() and node.is_visible():
+            return node.inner_text(timeout=2_000).strip()[:300]
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 class PlaywrightCheckout:
@@ -280,6 +369,7 @@ class PlaywrightCheckout:
                 ),
             )
             page = context.new_page()
+            submitted = False
             try:
                 page.goto(checkout_url, wait_until="domcontentloaded", timeout=60_000)
                 page.wait_for_timeout(2500)
@@ -327,11 +417,18 @@ class PlaywrightCheckout:
 
                 if not filled:
                     body = page.locator("body").inner_text(timeout=5000).lower()
-                    if "declined" in body:
-                        raise SelfVccFailure("CARD_DECLINED", "支付卡被拒绝，卡片已挂起，任务已转人工处理", card_id=None)
+                    if _looks_declined(body):
+                        raise SelfVccFailure(
+                            "CARD_DECLINED",
+                            "支付卡被拒绝，卡片已挂起，任务已转人工处理",
+                            card_id=None,
+                            payment_submitted=True,
+                            is_explicit_decline=True,
+                        )
+                    alert = _alert_text(page)
                     raise SelfVccFailure(
                         "CHECKOUT_UI_CHANGED",
-                        "未能识别结账页银行卡表单，任务已转人工处理",
+                        f"未能识别结账页银行卡表单{('：' + alert) if alert else ''}，任务已转人工处理",
                         release_code=False,
                     )
 
@@ -344,7 +441,15 @@ class PlaywrightCheckout:
                     ],
                 )
                 if not clicked:
-                    raise SelfVccFailure("CHECKOUT_UI_CHANGED", "未能提交支付表单，任务已转人工处理", release_code=False)
+                    alert = _alert_text(page)
+                    raise SelfVccFailure(
+                        "CHECKOUT_UI_CHANGED",
+                        f"未能提交支付表单{('：' + alert) if alert else ''}，任务已转人工处理",
+                        release_code=False,
+                    )
+                # From here a charge may exist; the caller can no longer assume
+                # the card is untouched.
+                submitted = True
 
                 # Give Stripe a moment to raise the 3DS challenge.
                 page.wait_for_timeout(5000)
@@ -367,6 +472,7 @@ class PlaywrightCheckout:
                             "AWAITING_3DS_CODE",
                             "已触发 3DS 验证，但未读取到验证码邮件，任务已转人工处理",
                             release_code=False,
+                            payment_submitted=True,
                         )
                     code_input.fill(verification.code, timeout=5000)
                     self._click_first(
@@ -376,19 +482,48 @@ class PlaywrightCheckout:
 
                 page.wait_for_timeout(8000)
                 body = page.locator("body").inner_text(timeout=5000).lower()
-                if "declined" in body or "card was declined" in body:
-                    raise SelfVccFailure("CARD_DECLINED", "支付卡被拒绝，卡片已挂起", card_id=None)
+                if _looks_declined(body):
+                    raise SelfVccFailure(
+                        "CARD_DECLINED",
+                        "支付卡被拒绝，卡片已挂起",
+                        card_id=None,
+                        payment_submitted=True,
+                        is_explicit_decline=True,
+                    )
                 if "success" in body or "thanks" in body or "you're now" in body:
                     cancelled = self._cancel_autorenew(page)
                     return (
                         "自营卡池扣款成功，会员已升级"
                         + ("，已取消次月自动续订" if cancelled else "；次月自动续订需人工确认")
                     )
+                alert = _alert_text(page)
                 raise SelfVccFailure(
                     "AWAITING_MANUAL_REVIEW",
-                    "支付已提交但未能确认升级结果，任务已转人工处理",
+                    f"支付已提交但未能确认升级结果{('：' + alert) if alert else ''}，任务已转人工处理",
                     release_code=False,
+                    payment_submitted=True,
                 )
+            except SelfVccFailure as exc:
+                # Stamp the phase once, at the single place every path funnels
+                # through, so no raise site can forget it.
+                if submitted and not exc.payment_submitted:
+                    exc.payment_submitted = True
+                detail = _alert_text(page)
+                if detail:
+                    exc.error_detail = detail
+                exc.artifact_path = _capture_failure_snapshot(page, exc.code)
+                raise
+            except Exception as exc:  # noqa: BLE001 - unexpected, still keep evidence
+                snapshot = _capture_failure_snapshot(page, exc.__class__.__name__)
+                raised = SelfVccFailure(
+                    "SELF_VCC_ERROR",
+                    f"自营结账过程异常：{exc.__class__.__name__}，任务已转人工处理",
+                    release_code=False,
+                    payment_submitted=submitted,
+                )
+                raised.error_detail = _alert_text(page)
+                raised.artifact_path = snapshot
+                raise raised from exc
             finally:
                 context.close()
                 browser.close()

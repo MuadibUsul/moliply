@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Generator
 
@@ -37,11 +38,13 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def ensure_schema_compatibility() -> None:
-    """Apply the one additive migration needed by existing installations.
+    """Patch a legacy database that predates a column.
 
-    ``create_all`` creates new tables (users) but does not add columns to an
-    existing orders table. This adds orders.user_id once, without touching
-    existing rows. Fresh databases already have the column from metadata.
+    The column list is also expressed as Alembic revision ``e9f4a5b6c7d8``. This
+    helper stays for two cases only: an install that is already at head but was
+    built with an older metadata (rare), and the development ``create_all``
+    fallback. It is idempotent, so running it after a successful migration is
+    just a cheap no-op.
     """
     inspector = inspect(engine)
     if "orders" not in inspector.get_table_names():
@@ -147,38 +150,68 @@ def _run_migrations() -> None:
 
 
 def _backfill_card_fingerprints() -> None:
-    """Fill ``card_fingerprint`` for cards created before the column existed."""
-    from app.services.crypto import card_fingerprint, decrypt_text
-    from app.models import VccCard
+    """Fill ``card_fingerprint`` for cards created before the column existed.
 
-    with SessionLocal() as db:
-        rows = (
-            db.query(VccCard)
-            .filter(VccCard.card_fingerprint.is_(None))
-            .limit(2000)
-            .all()
-        )
-        if not rows:
-            return
-        for card in rows:
+    Uses raw SQL rather than the ORM: on a legacy install this runs before the
+    tables are guaranteed to match the current model, and a model SELECT would
+    trip over any still-missing column.
+    """
+    from app.services.crypto import card_fingerprint, decrypt_text
+
+    inspector = inspect(engine)
+    if "vcc_cards" not in inspector.get_table_names():
+        return
+    names = {column["name"] for column in inspector.get_columns("vcc_cards")}
+    if not {"card_fingerprint", "card_number_enc"} <= names:
+        return
+
+    with engine.begin() as connection:
+        rows = connection.execute(
+            text("SELECT id, card_number_enc FROM vcc_cards WHERE card_fingerprint IS NULL LIMIT 2000")
+        ).fetchall()
+        for card_id, encrypted in rows:
             try:
-                card.card_fingerprint = card_fingerprint(decrypt_text(card.card_number_enc))
+                fingerprint = card_fingerprint(decrypt_text(encrypted))
             except Exception:
-                logger.warning("Unable to fingerprint vcc card id=%s", card.id)
-            db.add(card)
-        db.commit()
+                logger.warning("Unable to fingerprint vcc card id=%s", card_id)
+                continue
+            connection.execute(
+                text("UPDATE vcc_cards SET card_fingerprint = :fp WHERE id = :id"),
+                {"fp": fingerprint, "id": card_id},
+            )
+    if rows:
         logger.info("Backfilled %s card fingerprints", len(rows))
+
+
+def _strict_migrations() -> bool:
+    """Whether a failed migration should abort startup.
+
+    Production must never serve on a half-migrated schema: the container would
+    report healthy while writing into stale columns. ``deploy/release.sh`` turns
+    the resulting crash into an automatic rollback. Development keeps the
+    forgiving path, and ``STRICT_MIGRATIONS`` can force either behaviour.
+    """
+    override = os.getenv("STRICT_MIGRATIONS", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    return settings.is_production
 
 
 def init_db() -> None:
     """Migrate the schema and seed the demo catalogue when the database is empty."""
     from app import models  # noqa: F401  (register metadata)
 
+    strict = _strict_migrations()
     try:
         _run_migrations()
-    except Exception:
-        # A migration failure must not lock the store; the additive
-        # compatibility pass below still runs so the app can serve.
+    except Exception as exc:
+        if strict:
+            logger.critical("Database migration failed and strict mode is on; aborting startup: %s", exc)
+            raise
+        # Development convenience only: the additive pass below still runs so a
+        # broken revision does not block local work.
         logger.exception("Alembic migration failed; falling back to compatibility pass")
         Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()

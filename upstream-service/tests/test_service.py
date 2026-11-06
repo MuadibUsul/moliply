@@ -259,3 +259,37 @@ def test_probe_rejects_an_unconfigured_supplier(service, monkeypatch):
     monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
     monkeypatch.setenv("YUNSHU_TOKEN", "")
     assert signed(client, "/api/v1/supplier/probe", "{}").status_code == 400
+
+
+# -- admin surface ----------------------------------------------------------
+
+
+def admin_headers():
+    return {"x-admin-token": "admin-token"}
+
+
+def test_admin_rejects_query_parameter_token(service):
+    client, _ = service
+    assert client.get("/admin/api/orders?token=admin-token").status_code == 401
+
+
+def test_admin_accepts_header_token(service):
+    client, _ = service
+    assert client.get("/admin/api/orders", headers=admin_headers()).status_code == 200
+
+
+def test_admin_lockout_after_five_bad_tokens(service):
+    client, module = service
+    module.reset_admin_failures()
+    for _ in range(5):
+        assert client.get("/admin/api/orders", headers={"x-admin-token": "nope"}).status_code == 401
+
+    # The sixth attempt is refused even with the right token.
+    assert client.get("/admin/api/orders", headers=admin_headers()).status_code == 429
+
+    # A different IP is unaffected.
+    ok = client.get(
+        "/admin/api/orders",
+        headers={**admin_headers(), "x-forwarded-for": "203.0.113.9"},
+    )
+    assert ok.status_code == 200

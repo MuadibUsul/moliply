@@ -363,6 +363,10 @@ class RechargeTask(Base):
     vcc_card_id: Mapped[int | None] = mapped_column(ForeignKey("vcc_cards.id"), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Diagnostics for a human: the text the checkout page showed, and where the
+    # screenshot landed. Separate from `error_message`, which the customer sees.
+    error_detail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    evidence_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     client_ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)

@@ -6,7 +6,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 
 > 商业计划、成本资料与设计源文件保留在私有环境，不纳入公开仓库；线上服务器地址与凭据同样不在仓库中。
 
-当前状态：**前后端构建通过、93 项后端测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
+当前状态：**前后端构建通过、167 项后端测试 + 26 项上游测试通过，Docker 全栈（Nginx/Postgres/Redis/Celery）端到端冒烟通过，桌面/移动端主流程已联调。** 线上环境由维护者通过 `deploy/` 与私有 `.env` 部署。
 
 ---
 
@@ -30,7 +30,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 | 安全 | ✅ | AES-256-GCM、JWT、限流、暴力破解 IP 限制、支付回调验签/金额校验、幂等事件、审计日志 |
 | 官方支付通道 | ✅ | 支付宝当面付（RSA2）+ 微信支付 V3 Native（AEAD 回调解密），商品名固定脱敏为「前缀-订单号」 |
 | 独角数卡适配 | ✅（可选，已归档） | `archive/storefront-theme-moliply/`：品牌主题 Blade + PHP 插件 |
-| 自动化测试 | ✅ | 116 项 pytest：加密、Session、卡密、商城、官方支付验签/解密、核销、失败释放、卡池预占、导卡、V2 路由/兜底 |
+| 自动化测试 | ✅ | 167 项 pytest：加密、Session、卡密、商城、官方支付验签/解密、核销、失败释放、卡池预占、导卡、V2 路由/兜底 |
 | 容器部署 | ✅ | Docker Compose（Postgres/Redis/API/Worker/Beat/Web/Nginx）与双域名反代 |
 
 ---
@@ -80,7 +80,7 @@ MOLIPLY（模力补给）数字商品发卡商城 + 免密自助充能中心 + �
 │   │   └── seed.py               演示商品/库存/优惠码
 │   ├── cce_console/              /cce 账号托管台（注册/开 Pro/指纹环境/交付），见其 README
 │   ├── alembic/                  数据库版本迁移
-│   └── tests/                    116 项 pytest
+│   └── tests/                    167 项 pytest（含 CCE 不变量）
 ├── recharge-gateway-frontend/    Next.js 14 + Tailwind 商城 + 充能中心 + 后台
 ├── archive/storefront-theme-moliply/  独角数卡主题 + PHP 插件（可选适配层，已归档）
 ├── nginx/                        双域名反代、限流、安全头
@@ -415,6 +415,17 @@ V2 的增量能力：订单不再只有上游 API 一条路，而是按下述顺
 - 支付中途异常不会自动释放卡密，任务进入人工复核；
 - 自营失败会写入 `fallback_reason`，并可按飞书事件 `channel.fallback` 发送降级提醒。
 
+失败分三档处理（`channel_dispatcher._attempt_self`）：
+
+| 阶段 | 判定 | 处理 |
+| --- | --- | --- |
+| 未点击付款 | 代理抖动、页面改版、找不到卡号框、结账页打不开 | 释放预占 → 计入熔断 → 下一个区域 → 上游兜底，客户无感 |
+| 明确拒付 | Stripe 返回 declined / insufficient / expired 等 | 卡片冷却或挂起 → 上游兜底 |
+| 已提交但结果不明 | 点了付款/填了 3DS 后页面崩溃或超时 | **不回退**（避免二次扣款），任务转人工复核 |
+
+页面提示原文与失败截图会写入任务记录，后台「充值任务」可直接查看。
+15 分钟内累计 3 次「未点击付款」类故障会自动熔断自营通道 30 分钟，期间直接走上游；任意一次成功自动解除。熔断状态与手动解除在「渠道状态」页。
+
 已知限制：
 
 - OpenAI/Stripe 的结账页是外部 UI，`stripe_playwright.py` / `self_vcc_worker.py` 中的选择器与结账创建方式是**尽力而为**实现，可能需要随官方页面更新；
@@ -438,7 +449,7 @@ V2 的增量能力：订单不再只有上游 API 一条路，而是按下述顺
 ### 已知取舍
 
 - 订单中心使用下单邮箱+密码登录，交付内容只对订单账户可见；忘记密码需要后台重置（无 SMTP 自助找回）。
-- 没有 Alembic 迁移，当前使用 `Base.metadata.create_all`。长期迭代建议引入 Alembic；
+- 数据库迁移走 Alembic 单轨（`alembic upgrade head`）；生产环境迁移失败会中止启动并由 `deploy/release.sh` 回滚，开发环境才退回 `create_all`；
 - 独角数卡主题/插件是参考实现，具体落盘路径与网关基类需按你安装的 Dujiaoka 版本映射；
 - 自营通道的浏览器自动化需要持续维护。
 
@@ -554,6 +565,8 @@ npm run build
 ## 16. 文档索引
 
 - [环境变量模板](.env.example)
+- [全项目架构说明](docs/ARCHITECTURE.md)
+- [双通道实盘切换 SOP](docs/GO-LIVE-CHANNELS.md)
 - [共享服务器隔离部署](deploy/README.md)
 - [开业上线清单](deploy/GO-LIVE.md)
 - [自建上游渠道教程](docs/self-hosted-upstream.md)

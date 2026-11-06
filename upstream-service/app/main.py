@@ -481,12 +481,60 @@ async def probe_supplier(request: Request):
 # ---------------------------------------------------------------------------
 # Operator console (token auth, no session data beyond a 6-char tail)
 # ---------------------------------------------------------------------------
+# Failed tokens per client IP, in a sliding window. Only the admin surface is
+# limited; the HMAC merchant contract has its own signature check.
+ADMIN_WINDOW_SECONDS = int(os.environ.get("ADMIN_FAILURE_WINDOW_SECONDS", "900"))
+ADMIN_MAX_FAILURES = int(os.environ.get("ADMIN_MAX_FAILURES", "5"))
+_admin_failures: dict[str, list[float]] = {}
+_admin_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _prune_admin_failures(key: str, now: float) -> list[float]:
+    stamps = [at for at in _admin_failures.get(key, []) if now - at < ADMIN_WINDOW_SECONDS]
+    if stamps:
+        _admin_failures[key] = stamps
+    else:
+        _admin_failures.pop(key, None)
+    return stamps
+
+
 def require_admin(request: Request) -> None:
+    """Header-only admin auth with an IP lockout.
+
+    ``?token=`` is accepted for one release only, because it leaks the token
+    into access logs and Referer headers.
+    """
     if not ADMIN_TOKEN:
         raise HTTPException(503, "admin token is not configured")
-    token = request.headers.get("x-admin-token", "") or request.query_params.get("token", "")
-    if not hmac.compare_digest(token, ADMIN_TOKEN):
+
+    key = _client_ip(request)
+    now = time.time()
+    with _admin_lock:
+        stamps = _prune_admin_failures(key, now)
+        if len(stamps) >= ADMIN_MAX_FAILURES:
+            raise HTTPException(
+                429,
+                f"too many failed admin attempts; retry in {ADMIN_WINDOW_SECONDS // 60} minutes",
+            )
+
+    token = request.headers.get("x-admin-token", "")
+    if not token or not hmac.compare_digest(token, ADMIN_TOKEN):
+        with _admin_lock:
+            _admin_failures.setdefault(key, []).append(now)
         raise HTTPException(401, "bad admin token")
+
+
+def reset_admin_failures() -> None:
+    """Test hook: forget every lockout counter."""
+    with _admin_lock:
+        _admin_failures.clear()
 
 
 @app.get("/admin/api/orders")
@@ -555,7 +603,7 @@ ADMIN_HTML = """<!doctype html><meta charset=utf-8><title>MOLIPLY upstream</titl
 h1{font-size:16px;margin:0 0 4px}input,button{font:inherit;background:#131d31;color:#e6edf7;border:1px solid #24354f;border-radius:6px;padding:6px 9px}
 button{cursor:pointer}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{border-bottom:1px solid #1b2a41;padding:6px;text-align:left}
 .muted{color:#6b7d95}.ok{color:#4ade80}.bad{color:#f87171}section{margin-bottom:22px}</style>
-<h1>MOLIPLY 上游服务</h1><p class=muted>人工兜底控制台。Token 只存在浏览器本地。</p>
+<h1>MOLIPLY 上游服务</h1><p class=muted>人工兜底控制台。Token 只存在浏览器本地，仅经 X-Admin-Token 头发送（不再用 ?token=）。</p>
 <section>Token <input id=t placeholder="admin token" size=34><button onclick=save()>保存</button> <span id=msg class=muted></span></section>
 <section><b>待处理订单</b> <button onclick=load()>刷新</button><table id=orders></table></section>
 <section><b>库存</b><table id=stock></table>

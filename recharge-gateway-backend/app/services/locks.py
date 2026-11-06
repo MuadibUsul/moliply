@@ -52,6 +52,15 @@ class LockUnavailable(Exception):
     pass
 
 
+def redis_client():
+    """Shared Redis client, or None when Redis is unreachable.
+
+    Returns None exactly like the lock helper does so callers can degrade to
+    in-process behaviour instead of branching on an exception.
+    """
+    return _get_client()
+
+
 @contextmanager
 def redis_lock(key: str, ttl_seconds: int | None = None) -> Iterator[bool]:
     """Yield True when the lock was acquired, False when another owner holds it.

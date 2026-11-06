@@ -9,3 +9,6 @@ class RechargeError(Exception):
         self.code = code
         self.message = message
         self.release_code = release_code
+        # Operator-facing diagnostics; never shown to the customer.
+        self.error_detail = ""
+        self.artifact_path: str | None = None

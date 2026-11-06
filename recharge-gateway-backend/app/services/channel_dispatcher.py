@@ -25,7 +25,7 @@ from app.models import (
 from app.services import feishu
 from app.services import region_router
 from app.services import runtime_settings as runtime
-from app.services.fulfillment import stripe_playwright, vcc_pool_scheduler
+from app.services.fulfillment import self_vcc_circuit, stripe_playwright, vcc_pool_scheduler
 from app.services.crypto import decrypt_text
 from app.services.errors import RechargeError
 from app.services.self_vcc_worker import SelfVccFailure
@@ -59,12 +59,16 @@ class ChannelFallback(Exception):
         *,
         can_fallback: bool = True,
         notify: bool = True,
+        error_detail: str = "",
+        artifact_path: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.can_fallback = can_fallback
         self.notify = notify
+        self.error_detail = error_detail
+        self.artifact_path = artifact_path
 
 
 def effective_mode(code: ActivationCode) -> str:
@@ -152,15 +156,22 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
             can_fallback=True,
             notify=False,
         )
+    if self_vcc_circuit.is_open():
+        # The breaker already alerted when it opened; alerting on every skipped
+        # order afterwards would only train the operator to ignore it.
+        raise ChannelFallback(
+            "SELF_VCC_CIRCUIT_OPEN",
+            "自营通道连续故障，已自动熔断，本次直接走上游",
+            can_fallback=True,
+            notify=False,
+        )
 
     last_error: ChannelFallback | None = None
     for region in _candidate_regions(code.preferred_region, session):
         card = None
         reserved = False
-        payment_started = False
         try:
             proxy = region_router.proxy_for(region)
-            billing = region_router.billing_for(card, region) if False else None
             currency, amount = region_router.amount_for(region, code.sku_type)
             card = vcc_pool_scheduler.acquire_card(db, region, amount=region_router.cost_usd_for(region, code.sku_type))
             if card is None:
@@ -194,7 +205,6 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 if value == "AWAITING_3DS":
                     _set_state(db, task, RechargeState.AWAITING_3DS)
 
-            payment_started = True
             message = stripe_playwright.checkout_and_cancel_autorenew(
                 checkout_url,
                 card_data,
@@ -203,6 +213,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
             )
             vcc_pool_scheduler.mark_success(db, card, region, charged=region_router.cost_usd_for(region, code.sku_type))
             reserved = False
+            self_vcc_circuit.reset()
             return DispatchOutcome(
                 channel=SELF_VCC,
                 region=region,
@@ -215,49 +226,88 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 vcc_pool_scheduler.release_reservation(db, card)
                 reserved = False
             last_error = exc
-            if exc.can_fallback and exc.code != "NO_ACTIVE_VCC_IN_POOL":
+            if exc.can_fallback:
                 # Region-specific failure: let the outer loop try the other region.
                 continue
-            if not exc.can_fallback:
-                raise
-            # No card in PH: still try US.
-            continue
+            raise
         except SelfVccFailure as exc:
-            # Only a real decline counts against the card; a broken checkout UI
-            # leaves it healthy, so the other region may reuse it immediately.
+            detail = _failure_detail(exc)
+            # ``CARD_DECLINED`` is itself decisive, so old raise sites that only
+            # set the code keep working.
+            declined = exc.is_explicit_decline or exc.code == "CARD_DECLINED"
             if reserved and card is not None:
-                if exc.code == "CARD_DECLINED":
+                if declined:
                     vcc_pool_scheduler.record_failure(db, card, exc.message)
                 else:
                     vcc_pool_scheduler.release_reservation(db, card)
                 reserved = False
-            elif reserved and not payment_started:
-                vcc_pool_scheduler.release_reservation(db, card)
-                reserved = False
-            fallbackable = exc.release_code
-            if fallbackable:
-                last_error = ChannelFallback(exc.code, exc.message)
+
+            if declined:
+                # Stripe refused the card, so nothing was charged; the card is
+                # parked but the customer can still be served upstream.
+                last_error = ChannelFallback(
+                    exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
+                )
                 continue
-            raise ChannelFallback(exc.code, exc.message, can_fallback=False) from exc
+            if not exc.payment_submitted:
+                # Nothing was charged: a broken page or a dead proxy, so count
+                # it toward the breaker and let the other region try.
+                self_vcc_circuit.record_failure(exc.code)
+                last_error = ChannelFallback(
+                    exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
+                )
+                continue
+
+            # Submitted with an unknown outcome: a second region, and a later
+            # upstream retry, could both charge. Lock for a human instead.
+            raise ChannelFallback(
+                "PAYMENT_OUTCOME_UNKNOWN",
+                detail,
+                can_fallback=False,
+                error_detail=exc.error_detail,
+                artifact_path=exc.artifact_path,
+            ) from exc
         except region_router.RegionError as exc:
             if reserved and card is not None:
                 vcc_pool_scheduler.release_reservation(db, card)
                 reserved = False
+            self_vcc_circuit.record_failure(exc.code)
             last_error = ChannelFallback(exc.code, exc.message)
             continue
         except RechargeError:
-            if reserved and card is not None and not payment_started:
+            if reserved and card is not None:
                 vcc_pool_scheduler.release_reservation(db, card)
             raise
         except Exception as exc:  # noqa: BLE001
-            if reserved and card is not None and not payment_started:
+            if reserved and card is not None:
                 vcc_pool_scheduler.release_reservation(db, card)
             logger.warning("Self-VCC unexpected failure: %s", exc.__class__.__name__)
+            self_vcc_circuit.record_failure(exc.__class__.__name__)
             raise ChannelFallback("SELF_VCC_ERROR", "自营通道执行异常，已转人工处理", can_fallback=False) from exc
 
     if last_error:
         raise last_error
     raise ChannelFallback("NO_ACTIVE_VCC_IN_POOL", "自营卡池暂无可用卡片")
+
+
+def _failure_detail(exc: SelfVccFailure) -> str:
+    """Message plus whatever the page showed, for the task record."""
+    detail = exc.message or exc.code
+    if exc.error_detail and exc.error_detail not in detail:
+        detail = f"{detail}（页面提示：{exc.error_detail}）"
+    return detail[:500]
+
+
+def _as_recharge_error(exc: ChannelFallback, *, release_code: bool | None = None) -> RechargeError:
+    """Convert a routing decision into the customer-safe error the task stores."""
+    error = RechargeError(
+        exc.code,
+        exc.message,
+        release_code=exc.can_fallback if release_code is None else release_code,
+    )
+    error.error_detail = exc.error_detail
+    error.artifact_path = exc.artifact_path
+    return error
 
 
 def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: SessionInfo) -> DispatchOutcome:
@@ -275,11 +325,7 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
         try:
             return _attempt_self(db, task, code, session)
         except ChannelFallback as exc:
-            raise RechargeError(
-                exc.code,
-                exc.message,
-                release_code=exc.can_fallback,
-            ) from exc
+            raise _as_recharge_error(exc) from exc
 
     # HYBRID_SELF_FIRST
     if not runtime.get_bool("self_vcc_enabled", settings.self_vcc_enabled):
@@ -303,11 +349,11 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
         db.add(task)
         db.commit()
         if not exc.can_fallback:
-            raise RechargeError(exc.code, exc.message, release_code=False) from exc
+            raise _as_recharge_error(exc, release_code=False) from exc
         if not upstream_configured():
             # No upstream to land on: report the pool condition directly instead
             # of surfacing a confusing "upstream unconfigured" error.
-            raise RechargeError(exc.code, exc.message, release_code=exc.can_fallback) from exc
+            raise _as_recharge_error(exc) from exc
         if exc.notify:
             feishu.dispatch_event(
                 "channel.fallback",
