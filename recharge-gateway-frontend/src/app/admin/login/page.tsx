@@ -180,10 +180,6 @@ export default function AdminLoginPage() {
               {!loading && <ArrowRight size={15} />}
             </button>
 
-            <p className="mt-4 text-center text-[10px] leading-5 text-slate-600">
-              首次部署请修改 <code className="rounded bg-white/[0.05] px-1 py-0.5 text-slate-400">.env</code> 中的
-              <code className="ml-1 rounded bg-white/[0.05] px-1 py-0.5 text-slate-400">ADMIN_PASSWORD</code>
-            </p>
           </form>
 
           <div className="mt-6 flex items-center justify-between">

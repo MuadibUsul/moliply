@@ -132,18 +132,62 @@
     </div>
     <div class="spacer"></div>
     <button class="btn" id="btn-refresh">刷新</button>
-    <button class="btn btn-primary" id="btn-add">＋ 添加账号</button>
+    <button class="btn" id="btn-add">＋ 单条添加</button>
     <button class="btn" id="btn-logout">退出</button>
   </header>
 
   <div class="tabs">
+    <button class="tab" data-tab="pipeline">注册流水线</button>
     <button class="tab on" data-tab="fleet">账号</button>
+    <button class="tab" data-tab="cards">充值卡</button>
     <button class="tab" data-tab="client">客户端下载</button>
   </div>
 
   <section id="tab-fleet">
     <div class="grid" id="fleet"></div>
     <div class="empty" id="fleet-empty" hidden>还没有账号，点右上角「添加账号」开始。</div>
+  </section>
+
+  <section id="tab-pipeline" class="hidden">
+    <div class="card">
+      <div class="name">批量导入：IP + Gmail → 自动注册 → 开 Pro → 出凭证</div>
+      <div class="note">
+        每行一条：<code>邮箱,应用专用密码,IP</code>，可选继续补 <code>代理URL,套餐,密码</code>。
+        代理留空时用下面的模板（<code>{ip}</code> 会替换成该行 IP）。
+        导入后点「开始跑队列」，成功走到「就绪」，卡住停在「待人工」。
+      </div>
+      <div class="field" style="margin-top:14px">
+        <label>代理模板（可选）</label>
+        <input id="proxy-template" placeholder="socks5://user:pass@host:1080">
+        <div class="hint">模板里带 <code>{ip}</code> 时按行替换，例如 <code>socks5://u:p@{ip}:1080</code>。</div>
+      </div>
+      <div class="field">
+        <label>导入内容</label>
+        <textarea id="import-text" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,203.0.113.7"></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-import">导入并建环境</button>
+        <button class="btn" id="btn-run">开始跑队列</button>
+      </div>
+      <div class="hint" id="import-result"></div>
+      <div class="note" style="margin-top:12px">导入后到「账号」页看进度：每条的阶段、失败原因和继续按钮都在那张卡上。</div>
+    </div>
+  </section>
+
+  <section id="tab-cards" class="hidden">
+    <div class="card">
+      <div class="name">订阅充值卡</div>
+      <div class="note">每行 <code>卡号,月,年,CVV,邮编</code>。开 Pro 时按顺序取一张可用卡；硬拒付标成「已废」不再重试。</div>
+      <div class="field" style="margin-top:14px">
+        <textarea id="cards-text" rows="6" placeholder="4242424242424242,12,2029,123,10001"></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-cards-add">导入卡片</button>
+        <button class="btn" id="btn-cards-refresh">刷新</button>
+      </div>
+      <div class="hint" id="cards-result"></div>
+    </div>
+    <div class="grid" id="cards" style="margin-top:14px"></div>
   </section>
 
   <section id="tab-client" class="hidden">
@@ -263,33 +307,50 @@ async function loadFleet() {
   });
 }
 
+const JOB_STAGES = {
+  queued:      ["排队中", "p-dead"],
+  registering: ["注册中", "p-busy"],
+  registered:  ["已注册", "p-busy"],
+  subscribing: ["开 Pro 中", "p-busy"],
+  subscribed:  ["已开通 Pro", "p-busy"],
+  needs_human: ["待人工", "p-cooldown"],
+  failed:      ["流程失败", "p-bad"],
+  ready:       ["就绪", "p-idle"],
+};
+
 function card(p) {
-  const [label, cls] = STATUS[p.status] || [p.status, "p-dead"];
+  // One pill, pipeline stage first: that is what the operator must act on. A
+  // card without credentials is never deliverable, whatever the row says.
+  const stage = p.job_stage ? JOB_STAGES[p.job_stage] : null;
+  const [label, cls] = stage
+    ? stage
+    : !p.has_credentials && p.status === "IDLE"
+      ? ["缺凭证", "p-cooldown"]
+      : STATUS[p.status] || [p.status, "p-dead"];
   const trouble = p.status === "PROXY_DEAD" || p.status === "AUTH_EXPIRED";
-  const ready = p.status === "IDLE" && p.has_credentials;
+  const ready = p.status === "IDLE" && p.has_credentials && (!p.job_stage || p.job_stage === "ready");
 
   return `<div class="card">
     <div class="card-top">
       <div style="flex:1">
-        <div class="name">${esc(p.profile_id)}</div>
-        <div class="meta">出口 ${esc(p.expected_ip)} · 端口 ${esc(p.local_proxy_port)}</div>
+        <div class="name">${esc(p.email || p.profile_id)}</div>
+        <div class="meta">${esc(p.profile_id)} · 出口 ${esc(p.expected_ip)} · 端口 ${esc(p.local_proxy_port)}</div>
       </div>
       <span class="pill ${cls}">${label}</span>
     </div>
-    ${p.has_credentials ? "" : `<div class="note">⚠ 还没导入登录凭证，现在交付客户会打不开</div>`}
-    ${trouble ? `<div class="note">出口 IP 变了或登录失效，先改好再释放。</div>` : ""}
+    ${p.has_credentials ? "" : `<div class="note">⚠ 没有登录凭证：先点「登录取凭证」，否则客户打不开</div>`}
+    ${trouble ? `<div class="note">出口 IP 变了或登录失效，处理后再交付。</div>` : ""}
     <div class="actions">
-      <button class="btn btn-primary btn-sm" data-act="bundle" data-id="${esc(p.profile_id)}"
+      <button class="btn btn-primary btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}"
+        ${ready ? "" : "disabled"}>交付给客户</button>
+      ${p.job_stage && p.job_stage !== "ready"
+        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">继续流程</button>`
+        : ""}
+      <button class="btn btn-sm" data-act="bundle" data-id="${esc(p.profile_id)}"
         ${ready ? "" : "disabled"}>下载客户端包</button>
-      <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">命令方式</button>
-      <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">凭证</button>
-      <button class="btn btn-sm" data-act="preflight" data-id="${esc(p.profile_id)}">检测出口</button>
-      <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">命令方式</button>
-      <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">凭证</button>
+      <button class="btn btn-sm" data-act="credential" data-id="${esc(p.profile_id)}">${p.has_credentials ? "凭证" : "登录取凭证"}</button>
       <button class="btn btn-sm" data-act="preflight" data-id="${esc(p.profile_id)}">检测出口</button>
       <button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>
-      <button class="btn btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}"
-        ${p.status === "IDLE" && p.has_credentials ? "" : "disabled"}>交付给客户</button>
     </div>
   </div>`;
 }
@@ -304,6 +365,15 @@ async function act(kind, id) {
     return;
   }
   if (kind === "deliver") return deliver(id);
+  if (kind === "resume") {
+    toast("正在推进流程，可能要几分钟…");
+    try {
+      await api(`/admin/jobs/${id}/run`, { method: "POST" });
+      toast("已推进");
+    } catch (e) { toast(e.message, true); }
+    loadFleet();
+    return;
+  }
   if (kind === "bundle") {
     const os = /Win/i.test(navigator.platform) ? "windows" : "linux";
     toast("正在生成客户端包…");
@@ -517,14 +587,89 @@ function closeModal() { $("#modal-bg").classList.remove("open"); }
 window.closeModal = closeModal;
 $("#modal-bg").onclick = (e) => { if (e.target.id === "modal-bg") closeModal(); };
 
+const TABS = ["fleet", "pipeline", "cards", "client"];
+
 document.querySelectorAll(".tab").forEach((t) => {
   t.onclick = () => {
     document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
-    $("#tab-fleet").classList.toggle("hidden", t.dataset.tab !== "fleet");
-    $("#tab-client").classList.toggle("hidden", t.dataset.tab !== "client");
+    TABS.forEach((name) => $(`#tab-${name}`).classList.toggle("hidden", t.dataset.tab !== name));
+    if (t.dataset.tab === "pipeline") loadJobs();
+    if (t.dataset.tab === "cards") loadCards();
   };
 });
 $("#btn-refresh").onclick = () => { loadFleet(); toast("已刷新"); };
+
+/* -- pipeline ------------------------------------------------------------ */
+
+
+async function loadJobs() {
+  // The pipeline tab no longer owns a list; it just refreshes the account view.
+  loadFleet();
+}
+
+$("#btn-import").onclick = async () => {
+  const text = $("#import-text").value.trim();
+  if (!text) return toast("先粘贴导入内容", true);
+  try {
+    const result = await api("/admin/jobs/import", {
+      method: "POST",
+      body: { text, proxy_template: $("#proxy-template").value.trim() },
+    });
+    $("#import-result").textContent = `已建 ${result.created} 个环境` +
+      (result.failed.length ? `；${result.failed.length} 行失败：${result.failed.join("；")}` : "");
+    loadJobs();
+    loadFleet();
+  } catch (e) { toast(e.message, true); }
+};
+
+$("#btn-run").onclick = async () => {
+  toast("开始跑队列，耗时较长…");
+  try {
+    const result = await api("/admin/jobs/run", { method: "POST", body: { limit: 20, concurrency: 2 } });
+    toast(`跑了 ${result.ran} 个`);
+    loadJobs();
+    loadFleet();
+  } catch (e) { toast(e.message, true); }
+};
+
+$("#btn-jobs-refresh") && ($("#btn-jobs-refresh").onclick = () => loadJobs());
+
+/* -- cards --------------------------------------------------------------- */
+
+async function loadCards() {
+  let data;
+  try { data = await api("/admin/cards"); } catch (e) { return toast(e.message, true); }
+  const items = data.items || [];
+  $("#cards").innerHTML = items.map((card) => `<div class="card">
+    <div class="card-top">
+      <div style="flex:1">
+        <div class="name">${esc(card.card_bin)}******${esc(card.last4)}</div>
+        <div class="meta">${esc(card.exp)} · ${esc(card.billing_zip || "无邮编")}</div>
+      </div>
+      <span class="pill ${card.status === "available" ? "p-idle" : card.status === "dead" ? "p-bad" : "p-dead"}">${esc(card.status)}</span>
+    </div>
+    ${card.last_error ? `<div class="note">${esc(card.last_error)}</div>` : ""}
+  </div>`).join("");
+  if (!items.length) $("#cards").innerHTML = `<div class="empty">还没有卡片。</div>`;
+}
+
+$("#btn-cards-add").onclick = async () => {
+  const lines = $("#cards-text").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  const items = lines.map((line) => {
+    const [pan, month, year, cvv, zip] = line.split(",").map((c) => (c || "").trim());
+    return { pan, exp_month: month, exp_year: year, cvv, billing_zip: zip };
+  }).filter((i) => i.pan && i.cvv);
+  if (!items.length) return toast("没有可导入的行", true);
+  try {
+    const result = await api("/admin/cards", { method: "POST", body: { items } });
+    $("#cards-result").textContent = `导入 ${result.created} 张` +
+      (result.failed.length ? `；失败：${result.failed.join("；")}` : "");
+    $("#cards-text").value = "";
+    loadCards();
+  } catch (e) { toast(e.message, true); }
+};
+
+$("#btn-cards-refresh").onclick = () => loadCards();
 
 // Boot straight through: the admin session cookie usually covers us, so the
 // password gate only appears when that fails. Nothing is shown while probing.

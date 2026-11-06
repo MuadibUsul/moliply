@@ -15,6 +15,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from core import card_pool, pipeline
 from core.browser_pool import BrowserPool
 from core.crypto import CryptoError, decrypt_blob
 from core.lifecycle import COOLDOWN, cooldown_until, sweep_reaperable
@@ -45,9 +47,13 @@ CLIENT_DIR = Path(os.environ.get("CCE_CLIENT_DIR", "data/clients"))
 ADMIN_TOKEN_ENV = "CCE_ADMIN_TOKEN"
 TUNNEL_HOST = os.environ.get("CCE_TUNNEL_HOST", "")
 TUNNEL_PORT = int(os.environ.get("CCE_TUNNEL_PORT", "8443"))
+logger = logging.getLogger("cce.api")
 # Seconds between cooldown and lease sweeps. Zero disables the task (tests drive
 # it by hand).
 REAPER_INTERVAL = float(os.environ.get("CCE_REAPER_INTERVAL", "30"))
+# Seconds between automated pipeline picks. 0 disables the worker (tests / manual
+# mode), which is the only way to keep an unattended box from running at all.
+WORKER_INTERVAL = float(os.environ.get("CCE_WORKER_INTERVAL", "20"))
 
 
 class ProfileCreate(BaseModel):
@@ -68,6 +74,29 @@ class BatchCreate(BaseModel):
 
 class ImportCredentials(BaseModel):
     path: str
+
+
+class AccountImport(BaseModel):
+    """Pasted rows of `email,app_password,ip[,proxy[,plan]]`."""
+
+    text: str = Field(min_length=3, max_length=200_000)
+    proxy_template: str = Field(default="", max_length=200)
+
+
+class CardIssue(BaseModel):
+    items: list[dict[str, Any]] = Field(min_length=1, max_length=200)
+
+
+class JobRun(BaseModel):
+    limit: int = Field(default=20, ge=1, le=100)
+    concurrency: int = Field(default=2, ge=1, le=5)
+
+
+class JobProxy(BaseModel):
+    """Correct a proxy/exit IP after import, then re-register the route."""
+
+    upstream_proxy_url: str = Field(min_length=8)
+    expected_ip: str = Field(min_length=3)
 
 
 class KeyIssue(BaseModel):
@@ -93,6 +122,7 @@ class State:
     pool: BrowserPool
     singbox: SingBoxManager
     reaper: asyncio.Task[None] | None = None
+    worker: asyncio.Task[None] | None = None
 
 
 state = State()
@@ -111,13 +141,16 @@ def _moliply_admin(cookie: str, bearer: str) -> bool:
     token = cookie or bearer
     if not token:
         return False
+    secret = os.environ.get("MOLIPLY_ADMIN_JWT_SECRET", "")
+    if not secret:
+        return False
     try:
-        from app.security import decode_admin_token
+        import jwt
 
-        decode_admin_token(token)
-        return True
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
     except Exception:  # noqa: BLE001
         return False
+    return payload.get("role") == "admin"
 
 
 def require_admin(
@@ -184,6 +217,28 @@ async def _reaper_loop(interval: float) -> None:
             pass
 
 
+async def _worker_loop(interval: float) -> None:
+    """Drain the account pipeline without anyone pressing a button.
+
+    One job at a time and a pause between them: each job is a full Camoufox
+    browser and the host has ~1.5 GB spare, so serial is the safe default. A
+    busy loop is skipped, not queued, because the pool already refuses a
+    profile that is under a browser.
+    """
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            if not await state.db.fetch_one(
+                "SELECT profile_id FROM account_jobs WHERE stage = 'queued' LIMIT 1"
+            ):
+                continue
+            await pipeline.run_pending(state.db, state.pool, limit=1, concurrency=1)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a bad run must not kill the loop
+            logger.exception("account worker iteration failed")
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Claude Cluster Engine", version="0.1.0", docs_url="/cce-docs", openapi_url="/openapi.json")
 
@@ -200,6 +255,8 @@ def create_app() -> FastAPI:
         await _export_secrets()
         if REAPER_INTERVAL > 0:
             state.reaper = asyncio.create_task(_reaper_loop(REAPER_INTERVAL))
+        if WORKER_INTERVAL > 0:
+            state.worker = asyncio.create_task(_worker_loop(WORKER_INTERVAL))
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -210,6 +267,13 @@ def create_app() -> FastAPI:
             except asyncio.CancelledError:
                 pass
             state.reaper = None
+        if state.worker is not None:
+            state.worker.cancel()
+            try:
+                await state.worker
+            except asyncio.CancelledError:
+                pass
+            state.worker = None
         await state.singbox.stop()
         await state.db.close()
 
@@ -414,7 +478,17 @@ def create_app() -> FastAPI:
     @app.get("/admin/profiles", dependencies=[admin])
     async def list_profiles(status_filter: str | None = None) -> dict[str, Any]:
         rows = await state.db.list_profiles(status_filter)
-        return {"profiles": [_public_profile(row) for row in rows]}
+        # The account pipeline annotates each row so one list is enough: the
+        # console must not show the same account twice under two statuses.
+        jobs = {job["profile_id"]: job for job in await pipeline.list_jobs(state.db)}
+        items = []
+        for row in rows:
+            item = _public_profile(row)
+            job = jobs.get(row["profile_id"])
+            item["job_stage"] = job["stage"] if job else None
+            item["email"] = job["email"] if job else ""
+            items.append(item)
+        return {"profiles": items}
 
     @app.get("/admin/profiles/{profile_id}", dependencies=[admin])
     async def get_profile(profile_id: str) -> dict[str, Any]:
@@ -466,6 +540,132 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
         blob = await state.pool.import_claude_credentials(profile_id, Path(body.path))
         return {"profile_id": profile_id, "bytes": len(blob)}
+
+    # -- account pipeline ---------------------------------------------------
+
+    @app.get("/admin/jobs", dependencies=[admin])
+    async def list_jobs() -> dict[str, Any]:
+        return {"jobs": await pipeline.list_jobs(state.db)}
+
+    @app.post("/admin/jobs/import", dependencies=[admin], status_code=201)
+    async def import_jobs(body: AccountImport) -> dict[str, Any]:
+        rows, errors = pipeline.parse_import(body.text, default_proxy_template=body.proxy_template)
+        created: list[str] = []
+        failed = list(errors)
+        for row in rows:
+            try:
+                job = await pipeline.create_job(state.db, state.profiles, row)
+                created.append(job["profile_id"])
+            except pipeline.PipelineError as exc:
+                failed.append(f"{row.email}：{exc}")
+        # New routes must be live in sing-box before any browser can use them.
+        for profile_id in created:
+            profile = await state.db.get_profile(profile_id)
+            if profile is not None:
+                state.singbox.register(
+                    profile_id, profile["local_proxy_port"], profile["upstream_proxy_url"]
+                )
+        if created and state.singbox.available:
+            try:
+                await state.singbox.reload()
+            except SingBoxError:
+                pass
+        if created and WORKER_INTERVAL > 0:
+            # Do not make the operator wait up to a full tick for the import to
+            # start moving.
+            asyncio.create_task(pipeline.run_pending(state.db, state.pool, limit=1, concurrency=1))
+        return {"created": len(created), "profile_ids": created, "failed": failed}
+
+    @app.post("/admin/jobs/run", dependencies=[admin])
+    async def run_jobs(body: JobRun) -> dict[str, Any]:
+        result = await pipeline.run_pending(
+            state.db, state.pool, limit=body.limit, concurrency=body.concurrency
+        )
+        return {**result, "jobs": await pipeline.list_jobs(state.db)}
+
+    @app.post("/admin/jobs/{profile_id}/run", dependencies=[admin])
+    async def run_one_job(profile_id: str) -> dict[str, Any]:
+        try:
+            job = await pipeline.run_job(state.db, state.pool, profile_id)
+        except pipeline.PipelineError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        return {"job": job}
+
+    @app.patch("/admin/jobs/{profile_id}/proxy", dependencies=[admin])
+    async def set_job_proxy(profile_id: str, body: JobProxy) -> dict[str, Any]:
+        profile = await state.db.get_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+        await state.db.execute(
+            "UPDATE profiles SET upstream_proxy_url = ?, expected_ip = ? WHERE profile_id = ?",
+            (body.upstream_proxy_url, body.expected_ip.strip(), profile_id),
+        )
+        state.singbox.register(profile_id, profile["local_proxy_port"], body.upstream_proxy_url)
+        if state.singbox.available:
+            try:
+                await state.singbox.reload()
+            except SingBoxError:
+                pass
+        # A parked profile may sit in AUTH_EXPIRED/PROXY_DEAD, and claim_session
+        # only takes IDLE, so it must be freed before it can resume.
+        await state.db.set_status(profile_id, "IDLE")
+        await state.db.execute(
+            "UPDATE account_jobs SET stage = 'queued', last_error = '', human_note = '',"
+            " updated_at = CURRENT_TIMESTAMP WHERE profile_id = ?",
+            (profile_id,),
+        )
+        return {"ok": True}
+
+    @app.post("/admin/jobs/{profile_id}/skip", dependencies=[admin])
+    async def skip_job(profile_id: str) -> dict[str, Any]:
+        """Retire a job the operator has dealt with outside the pipeline."""
+        row = await state.db.fetch_one("SELECT * FROM account_jobs WHERE profile_id = ?", (profile_id,))
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+        await state.db.execute(
+            "UPDATE account_jobs SET stage = 'ready', last_error = '', updated_at = CURRENT_TIMESTAMP"
+            " WHERE profile_id = ?",
+            (profile_id,),
+        )
+        return {"job": {"profile_id": profile_id, "stage": "ready"}}
+
+    @app.get("/admin/mail/check", dependencies=[admin])
+    async def mail_check(email: str, app_password: str) -> dict[str, Any]:
+        return await pipeline.check_mailbox(email, app_password)
+
+    @app.get("/admin/mail/app-password-hint", dependencies=[admin])
+    async def mail_hint() -> dict[str, Any]:
+        return {
+            "host": "imap.gmail.com",
+            "note": "Gmail 需开启两步验证后生成 16 位应用专用密码；账号密码不能用于 IMAP",
+        }
+
+    # -- subscription cards -------------------------------------------------
+
+    @app.get("/admin/cards", dependencies=[admin])
+    async def list_cards() -> dict[str, Any]:
+        return await card_pool.list_cards(state.db)
+
+    @app.post("/admin/cards", dependencies=[admin], status_code=201)
+    async def add_cards(body: CardIssue) -> dict[str, Any]:
+        created = 0
+        failed: list[str] = []
+        for index, item in enumerate(body.items, start=1):
+            try:
+                await card_pool.issue_card(
+                    state.db,
+                    pan=str(item.get("pan") or item.get("card_number") or ""),
+                    cvv=str(item.get("cvv") or ""),
+                    exp_month=str(item.get("exp_month") or item.get("month") or ""),
+                    exp_year=str(item.get("exp_year") or item.get("year") or ""),
+                    billing_zip=str(item.get("billing_zip") or item.get("zip") or ""),
+                    holder=str(item.get("holder") or ""),
+                    balance_usd=float(item.get("balance") or 0),
+                )
+                created += 1
+            except (card_pool.CardError, ValueError) as exc:
+                failed.append(f"第 {index} 张：{exc}")
+        return {"created": created, "failed": failed}
 
     @app.get("/admin/singbox", dependencies=[admin])
     async def singbox_state() -> dict[str, Any]:
