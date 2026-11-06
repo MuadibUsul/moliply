@@ -162,7 +162,12 @@ else
 fi
 
 UPSTREAM_READY=false
-if [ "$UPSTREAM_MODE" = "http" ] && [ -n "$UPSTREAM_BASE" ] && [ -n "$UPSTREAM_KEY" ]; then
+# Runtime settings win here: the API base/keys are normally saved through the
+# admin console and never appear in .env, so testing .env alone misreports the
+# channel as unconfigured.
+if [ "$RUNTIME_UPSTREAM_READY" = "true" ]; then
+  UPSTREAM_READY=true
+elif [ "$UPSTREAM_MODE" = "http" ] && [ -n "$UPSTREAM_BASE" ] && [ -n "$UPSTREAM_KEY" ]; then
   UPSTREAM_READY=true
 fi
 SELF_PROXY_READY=false
