@@ -30,7 +30,8 @@ from app.services import net_guard
 from app.services import runtime_settings as runtime
 from app.models import SkuType, VccCard, VccStatus
 from app.services import region_router
-from app.services.fulfillment import vcc_pool_scheduler
+from app.services.fulfillment import context_profile, vcc_pool_scheduler
+from app.services.fulfillment.context_profile import DEFAULT_UA, DEFAULT_VIEWPORT
 from app.services.crypto import decrypt_text
 from app.services.errors import RechargeError
 from app.services.imap_3ds_reader import Imap3dsReader
@@ -335,6 +336,7 @@ class PlaywrightCheckout:
         card: dict,
         proxy_url: str,
         on_state: Callable[[str], None] | None = None,
+        region: str | None = None,
     ) -> str:
         try:
             allowed = runtime.get_list(
@@ -353,20 +355,49 @@ class PlaywrightCheckout:
         except ImportError as exc:  # pragma: no cover - deployment guard
             raise SelfVccFailure("SELF_VCC_UNAVAILABLE", "自营通道浏览器组件未安装，任务已转人工处理", release_code=False) from exc
 
-        proxy = {"server": proxy_url} if proxy_url else None
+        # The proxy lives on the browser because Playwright cannot scope egress
+        # to a single context. One browser per checkout keeps the exit, the
+        # timezone and the locale exactly as the card declares them.
+        try:
+            parsed_proxy = context_profile.parse_proxy(proxy_url)
+        except ValueError as exc:
+            raise SelfVccFailure(
+                "PROXY_INVALID",
+                f"卡片住宅代理配置无效（{exc}），任务已转人工处理",
+                release_code=False,
+            ) from exc
+        if parsed_proxy is None:
+            raise SelfVccFailure(
+                "PROXY_NOT_CONFIGURED",
+                "该账单区未配置住宅代理，无法保证属地一致，任务已转人工处理",
+                release_code=False,
+            )
+        profile = context_profile.profile_for_card(card, region or context_profile.US)
+        logger.info(
+            "Checkout context: region=%s tz=%s locale=%s proxy=%s",
+            profile.region,
+            profile.timezone_id,
+            profile.locale,
+            context_profile.mask_proxy(parsed_proxy.server),
+        )
+
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
                 headless=self.headless,
-                proxy=proxy,
+                proxy=parsed_proxy.as_playwright(),
                 args=["--disable-blink-features=AutomationControlled"],
             )
             context = browser.new_context(
-                locale="en-US",
-                timezone_id=str(card.get("timezone") or "America/New_York"),
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                ),
+                locale=profile.locale,
+                timezone_id=profile.timezone_id,
+                user_agent=DEFAULT_UA,
+                viewport=DEFAULT_VIEWPORT,
+                # Matching locality on both JS-visible and header signals.
+                extra_http_headers={"Accept-Language": f"{profile.locale},en;q=0.9"},
+            )
+            # navigator.webdriver stays true in headless Chromium; Stripe watches it.
+            context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
             )
             page = context.new_page()
             submitted = False
@@ -567,7 +598,19 @@ def run_self_vcc_recharge(
         raise
 
     try:
-        message = PlaywrightCheckout().run(checkout_url, data, runtime.get("proxy_url", settings.proxy_url), on_state=on_state)
+        proxy_url, provenance = context_profile.resolve_card_proxy(
+            getattr(card, "proxy_url", None),
+            runtime.get("us_residential_proxy_url", runtime.get("proxy_url", settings.proxy_url)),
+        )
+        if provenance == "region":
+            check_proxy_health()
+        message = PlaywrightCheckout().run(
+            checkout_url,
+            data,
+            proxy_url or "",
+            on_state=on_state,
+            region=region_router.US,
+        )
     except SelfVccFailure as exc:
         if exc.card_id is None:
             exc.card_id = card_id

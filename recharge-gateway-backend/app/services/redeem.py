@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -27,6 +28,7 @@ from app.security import failure_tracker
 from app.services.code_generator import is_valid_code_format, normalize_code
 from app.services import channel_dispatcher
 from app.services import feishu
+from app.services import precheck as precheck_service
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.errors import RechargeError
 from app.services.locks import redis_lock
@@ -63,10 +65,16 @@ REDEEMABLE_SKUS = {
     SkuType.GPT_PRO_100,
     SkuType.GPT_PRO_200,
     SkuType.GPT_PRO_500,
+    # The icebreaker trial card is redeemed in the same wizard so a first-time
+    # buyer walks the exact flow they will use for a real top-up.
+    SkuType.GENERIC_DIGITAL,
 }
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
 # SMS reception needs a number, not an account: no Session pre-check at all.
 SMS_SKUS = {SkuType.CODEX_SMS_US}
+# The icebreaker trial card is redeemed to confirm the delivery chain; it has no
+# account to upgrade, so the wizard may skip the Session step entirely.
+NO_SESSION_SKUS = SMS_SKUS | {SkuType.GENERIC_DIGITAL}
 
 CODE_STATUS_LABELS = {
     "UNUSED": "未使用",
@@ -126,6 +134,25 @@ def _expected_session_kind(sku_type: SkuType) -> str:
     return "claude" if sku_type in CLAUDE_SKUS else "chatgpt"
 
 
+def _synthetic_session(code: ActivationCode) -> SessionInfo:
+    """Stand-in credential for SKUs that redeem without an account.
+
+    Nothing is charged against it, but the task, audit trail and retry path all
+    expect a ``SessionInfo``, so an opaque placeholder is used instead of
+    branching every downstream call.
+    """
+    seed = f"{code.code}:{code.sku_type.value}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:20]
+    return SessionInfo(
+        kind="chatgpt",
+        email=f"redeem-{digest}@session.moliply.local",
+        user_id="redeem-" + digest,
+        access_token=f"no-session-{digest}",
+        raw="no-session-required",
+        expires_at=utcnow() + timedelta(hours=1),
+    )
+
+
 def _sku_label(db: Session, code: ActivationCode) -> str:
     from app.models import SKU_LABELS
 
@@ -176,16 +203,22 @@ def verify_code(db: Session, raw_code: str, ip: str) -> dict:
         "status_label": CODE_STATUS_LABELS.get(code.status.value, code.status.value),
         "bound_email_masked": mask_email(code.bound_account_email) if code.bound_account_email else None,
         "session_kind": expected_kind,
+        "requires_session": code.sku_type not in NO_SESSION_SKUS,
         "redeemable": code.status == CodeStatus.UNUSED,
         "channel_mode": code.channel_mode.value,
     }
 
 
 def _prepare_session(code: ActivationCode, session: SessionInfo) -> AccountCheck:
-    if code.sku_type in SMS_SKUS:
-        return AccountCheck(True, session.plan, "接码服务无需账号预检")
-    expected_kind = _expected_session_kind(code.sku_type)
-    if session.kind != expected_kind:
+    """Legacy-shaped eligibility check over a parsed session.
+
+    The HTTP path goes through :mod:`app.services.precheck` because it also has
+    to validate the raw credential; this keeps the pure "is this account usable"
+    question available to callers that already hold a parsed SessionInfo.
+    """
+    if code.sku_type in NO_SESSION_SKUS:
+        return AccountCheck(True, session.plan, "本商品无需账号预检，核销后直接生效")
+    if session.kind != _expected_session_kind(code.sku_type):
         raise RedeemError(
             "SESSION_TYPE_MISMATCH",
             "Session 类型与商品不匹配，请按页面指引重新复制",
@@ -201,6 +234,7 @@ def _prepare_session(code: ActivationCode, session: SessionInfo) -> AccountCheck
 
 
 def parse_and_precheck(db: Session, raw_code: str, session_raw: str, ip: str) -> dict:
+    """Read-only pre-check. Never writes, so the code can never be consumed here."""
     _, code = _load_code(db, raw_code, ip)
     if code.sku_type not in REDEEMABLE_SKUS:
         raise RedeemError("SKU_NOT_REDEEMABLE", "该商品无需在线核销，请查看订单中的交付内容", 409)
@@ -211,27 +245,16 @@ def parse_and_precheck(db: Session, raw_code: str, session_raw: str, ip: str) ->
     if code.status == CodeStatus.LOCKED:
         raise RedeemError("CODE_IN_USE", "该激活码正在充能中，请勿重复提交", 409)
 
-    try:
-        session = parse_session(session_raw)
-    except SessionError as exc:
-        raise RedeemError(exc.code, exc.message, exc.status_code) from exc
+    result = precheck_service.precheck_session(code, session_raw)
+    if not result.ok:
+        # 409 for "the account is not eligible", 400 for "the credential is
+        # broken": the wizard renders the two differently.
+        raise RedeemError(result.verdict, result.message, precheck_service.status_for(result.verdict))
 
-    check = _prepare_session(code, session)
-    if not check.eligible:
-        raise RedeemError(
-            check.error_code or "ACCOUNT_NOT_ELIGIBLE",
-            check.message,
-            409,
-        )
-    return {
-        "eligible": True,
-        "account_email": session.masked_email,
-        "current_plan": check.current_plan,
-        "message": check.message,
-        "warning": check.warning,
-        "session_kind": session.kind,
-        "expires_at": session.expires_at.isoformat() + "Z",
-    }
+    return precheck_service.as_payload(
+        result,
+        expires_at=result.session.expires_at.isoformat() + "Z" if result.session else None,
+    )
 
 
 def _active_task(db: Session, code_id: int) -> RechargeTask | None:
@@ -258,13 +281,13 @@ def submit_recharge(db: Session, raw_code: str, session_raw: str, ip: str) -> Re
     if code.sku_type not in REDEEMABLE_SKUS:
         raise RedeemError("SKU_NOT_REDEEMABLE", "该商品无需在线核销", 409)
 
-    try:
-        session = parse_session(session_raw)
-    except SessionError as exc:
-        raise RedeemError(exc.code, exc.message, exc.status_code) from exc
-    check = _prepare_session(code, session)
-    if not check.eligible:
-        raise RedeemError(check.error_code or "ACCOUNT_NOT_ELIGIBLE", check.message, 409)
+    # The same deep gate the wizard already passed; re-run it here so a direct
+    # POST cannot skip it. Still no writes yet: a rejection below leaves the code
+    # UNUSED and unbound.
+    result = precheck_service.precheck_session(code, session_raw)
+    if not result.ok:
+        raise RedeemError(result.verdict, result.message, precheck_service.status_for(result.verdict))
+    session = result.session or _synthetic_session(code)
 
     with redis_lock(f"lock:redeem:{normalized}") as acquired:
         if not acquired:
@@ -287,7 +310,8 @@ def submit_recharge(db: Session, raw_code: str, session_raw: str, ip: str) -> Re
         if code.bound_account_email and code.bound_account_email.lower() != session.email.lower():
             raise RedeemError("CODE_BOUND_TO_OTHER_ACCOUNT", "该激活码已绑定其他账号", 409)
 
-        code.bound_account_email = code.bound_account_email or session.email
+        bind_email = None if code.sku_type in NO_SESSION_SKUS else session.email
+        code.bound_account_email = code.bound_account_email or bind_email
         code.status = CodeStatus.LOCKED
         task = RechargeTask(
             task_id=str(uuid.uuid4()),
@@ -494,6 +518,26 @@ def run_recharge_task(task_id: str) -> None:
                 return
             task.attempts += 1
             _set_state(db, task, RechargeState.CHECKING_ACCOUNT)
+
+            if code.sku_type in NO_SESSION_SKUS:
+                # Nothing to reconstruct and nothing to pre-check.
+                session = _synthetic_session(code)
+                try:
+                    outcome = channel_dispatcher.dispatch(db, task, code, session)
+                except RechargeError as exc:
+                    _finalize_failure(
+                        db,
+                        task,
+                        code,
+                        exc.code,
+                        exc.message,
+                        exc.release_code,
+                        error_detail=exc.error_detail,
+                        evidence_path=exc.artifact_path,
+                    )
+                    return
+                _finalize_success(db, task, code, outcome.message, outcome.upstream_order_no)
+                return
 
             try:
                 session = _reconstruct_session(task)

@@ -1,11 +1,22 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Radar } from "lucide-react";
 import { BrandTile } from "@/components/BrandTile";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Product } from "@/lib/types";
 
 export function ProductCard({ product }: { product: Product }) {
-  const outOfStock = product.stock !== null && product.stock <= 0;
+  // ``purchasable`` is the backend's verdict; fall back to raw stock for an
+  // older API that does not send it.
+  const restocking =
+    product.purchasable === false ||
+    (product.purchasable === undefined && product.stock !== null && product.stock <= 0);
+  const onBackorder = product.availability === "BACKORDER";
+  const note = restocking
+    ? "补货中 · 可咨询客服"
+    : onBackorder
+      ? "自动发放 MOLI 激活码 · 专属通道保障"
+      : product.delivery_note || "24 小时自动交付";
+
   return (
     <Link
       href={`/products/${product.slug}`}
@@ -28,21 +39,21 @@ export function ProductCard({ product }: { product: Product }) {
       </div>
 
       <div className="mt-auto flex items-end justify-between gap-3 pt-5">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-baseline gap-2">
             <span className="price text-[22px]">{formatMoney(product.price)}</span>
             {product.original_price && (
               <span className="text-[11px] text-slate-600 line-through">{formatMoney(product.original_price)}</span>
             )}
           </div>
-          <p className="mt-1.5 text-[10px] text-slate-500">
-            {outOfStock ? "补货中 · 可咨询客服" : product.delivery_note || "24 小时自动交付"}
+          <p className={`mt-1.5 line-clamp-2 text-[10px] ${restocking ? "text-amber-300/80" : "text-slate-500"}`}>
+            {note}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <span className="text-[10px] text-slate-600">已售 {formatNumber(product.sold_count)}</span>
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white shadow-glow-sm transition group-hover:bg-brand-500">
-            <ArrowUpRight size={16} />
+            {restocking ? <Radar size={16} /> : <ArrowUpRight size={16} />}
           </span>
         </div>
       </div>

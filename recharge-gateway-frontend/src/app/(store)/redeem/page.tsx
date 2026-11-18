@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Activity, Headphones, ShieldCheck, Zap } from "lucide-react";
 import { Suspense } from "react";
+import { LiveSupplyTelemetry } from "@/components/LiveSupplyTelemetry";
 import { RedeemWizard } from "@/components/RedeemWizard";
 
 const FEATURES = [
@@ -35,6 +36,7 @@ function RedeemContent() {
           </p>
         </div>
 
+        <LiveSupplyTelemetry className="mx-auto mt-8 max-w-3xl" />
         <RedeemWizard initialCode={code} />
 
         <div className="mt-8 grid gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.018] p-3 sm:grid-cols-2 lg:grid-cols-4">

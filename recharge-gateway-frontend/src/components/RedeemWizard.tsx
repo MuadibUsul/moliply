@@ -15,10 +15,12 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SessionExtractGuide } from "@/components/SessionExtractGuide";
 import { SessionGuideModal } from "@/components/SessionGuideModal";
 import { LAST_TASK_KEY } from "@/config/brand";
 import { api } from "@/lib/api";
+import { parseSessionLocally } from "@/lib/sessionParse";
 import type { RedeemPrecheck, RedeemTask, RedeemVerify } from "@/lib/types";
 
 const STEP_LABELS = ["验证激活码", "提交 Session", "自动充能", "充值完成"];
@@ -55,6 +57,14 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
   const [taskError, setTaskError] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
   const booted = useRef(false);
+
+  // Instant local verdict on the pasted credential; the backend repeats the
+  // full check on submit.
+  const localParse = useMemo(
+    () => parseSessionLocally(sessionRaw, verify?.session_kind || "chatgpt"),
+    [sessionRaw, verify?.session_kind],
+  );
+  const needsSession = verify?.requires_session !== false;
 
   const verifyCode = useCallback(
     async (raw?: string) => {
@@ -146,7 +156,7 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
 
   async function startRecharge() {
     if (!verify) return;
-    if (!sessionRaw.trim()) {
+    if (needsSession && !sessionRaw.trim()) {
       setSubmitError(verify.session_kind === "claude" ? "请先粘贴 Claude Session Key" : "请先粘贴 ChatGPT Session JSON");
       return;
     }
@@ -194,7 +204,7 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
       setStep(1);
       return;
     }
-    if (!sessionRaw.trim()) {
+    if (needsSession && !sessionRaw.trim()) {
       setStep(2);
       setSubmitError("Session 内容已不在本页，请重新粘贴后再次提交");
       return;
@@ -315,37 +325,64 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
                 <span className="ml-auto text-[10px] text-emerald-200/60">{verify.sku_label}</span>
               </div>
 
-              <div className="mt-5 flex items-center justify-between">
-                <label htmlFor="session-raw" className="text-[11px] text-slate-400">
-                  {verify.session_kind === "claude" ? "Claude Session Key" : "ChatGPT Session JSON"}
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setGuideOpen(true)}
-                  className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200"
-                >
-                  <FileJson size={12} />
-                  如何获取？
-                </button>
-              </div>
-              <textarea
-                id="session-raw"
-                value={sessionRaw}
-                onChange={(event) => setSessionRaw(event.target.value)}
-                placeholder={
-                  verify.session_kind === "claude"
-                    ? "sessionKey=sk-ant-..."
-                    : '{\n  "user": { "email": "user@example.com" },\n  "accessToken": "…",\n  "expires": "…"\n}'
-                }
-                className="field mt-2 min-h-[210px] resize-y font-mono text-[11px] leading-6"
-                spellCheck={false}
-              />
-              <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-600">
-                <span>凭证仅用于本次充值，加密保存并在任务结束后清除。</span>
-                <button type="button" onClick={() => setGuideOpen(true)} className="shrink-0 text-slate-500 hover:text-brand-300">
-                  查看图文指引
-                </button>
-              </div>
+              {needsSession ? (
+                <>
+                  <SessionExtractGuide kind={verify.session_kind} />
+
+                  <div className="mt-5 flex items-center justify-between">
+                    <label htmlFor="session-raw" className="text-[11px] text-slate-400">
+                      {verify.session_kind === "claude" ? "Claude Session Key" : "ChatGPT Session JSON"}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setGuideOpen(true)}
+                      className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200"
+                    >
+                      <FileJson size={12} />
+                      图文指引
+                    </button>
+                  </div>
+                  <textarea
+                    id="session-raw"
+                    value={sessionRaw}
+                    onChange={(event) => setSessionRaw(event.target.value)}
+                    placeholder={
+                      verify.session_kind === "claude"
+                        ? "sessionKey=sk-ant-..."
+                        : '{\n  "user": { "email": "user@example.com" },\n  "accessToken": "…",\n  "expires": "…"\n}'
+                    }
+                    className="field mt-2 min-h-[210px] resize-y font-mono text-[11px] leading-6"
+                    spellCheck={false}
+                  />
+                  <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-600">
+                    <span>凭证仅用于本次充值，加密保存并在任务结束后清除。</span>
+                    <button type="button" onClick={() => setGuideOpen(true)} className="shrink-0 text-slate-500 hover:text-brand-300">
+                      查看图文指引
+                    </button>
+                  </div>
+
+                  {sessionRaw.trim() && localParse.ok && (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/[0.08] p-3.5 text-[11px] leading-5 text-emerald-200">
+                      <CheckCircle2 size={15} className="mt-0.5 shrink-0" />
+                      <span>
+                        ✅ 已识别待充能账号
+                        {localParse.maskedEmail ? `：${localParse.maskedEmail}` : ""}
+                        （凭证格式正确，可点击下一步）
+                      </span>
+                    </div>
+                  )}
+                  {sessionRaw.trim() && !localParse.ok && (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3.5 text-[11px] leading-5 text-amber-200/90">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                      <span>{localParse.reason || "还在识别凭证，请继续粘贴完整内容"}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="mt-5 rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 text-[11px] leading-5 text-slate-500">
+                  本商品无需账号凭证，验证通过后直接提交即可完成核销。
+                </div>
+              )}
 
               {submitError && (
                 <div className="mt-4 flex items-start gap-2 rounded-xl border border-rose-400/20 bg-rose-400/[0.07] p-3.5 text-[11px] leading-5 text-rose-200">
@@ -355,7 +392,12 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
               )}
 
               <div className="mt-6 grid gap-2 sm:grid-cols-[1.4fr_0.8fr]">
-                <button type="button" onClick={() => void startRecharge()} disabled={submitting} className="btn-primary w-full">
+                <button
+                  type="button"
+                  onClick={() => void startRecharge()}
+                  disabled={submitting || (needsSession && !!sessionRaw.trim() && !localParse.ok)}
+                  className="btn-primary w-full"
+                >
                   {submitting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
                   {submitting ? "正在预检并创建任务..." : "提交并开始充能"}
                   {!submitting && <ArrowRight size={15} />}

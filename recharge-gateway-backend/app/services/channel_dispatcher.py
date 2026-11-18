@@ -25,7 +25,7 @@ from app.models import (
 from app.services import feishu
 from app.services import region_router
 from app.services import runtime_settings as runtime
-from app.services.fulfillment import self_vcc_circuit, stripe_playwright, vcc_pool_scheduler
+from app.services.fulfillment import context_profile, self_vcc_circuit, stripe_playwright, vcc_pool_scheduler
 from app.services.crypto import decrypt_text
 from app.services.errors import RechargeError
 from app.services.self_vcc_worker import SelfVccFailure
@@ -146,6 +146,40 @@ def _candidate_regions(preferred: RegionPreference, session: SessionInfo) -> lis
     return [region_router.PH, region_router.US]
 
 
+def _alert_card_declined(card, code: ActivationCode, region: str, reason: str) -> None:
+    """The card is already parked by the scheduler; the operator still needs to know."""
+    feishu.dispatch_event(
+        "vcc.card_declined",
+        "MOLIPLY 自营卡片拒付，已换卡重试",
+        {
+            "任务编号": getattr(code, "code", ""),
+            "卡片 ID": card.id,
+            "卡头 BIN": card.card_bin,
+            "区域": region,
+            "原因": reasoning(reason)[:160],
+            "处理": "该卡已进入冷却，任务改用下一张可用卡；无卡可用时走上游兜底",
+        },
+        severity="warning",
+        link_path="/admin/cards",
+    )
+
+
+def reasoning(text: str) -> str:
+    return (text or "拒付").strip()
+
+
+# A 3DS challenge that never produces a code leaves the payment *uncaptured*,
+# so another channel may still serve the order. An unknown outcome after a
+# completed submit may already be charged, which is the only case that must be
+# locked for a human.
+THREE_DS_CODES = {"AWAITING_3DS_CODE"}
+NETWORK_CODES = {"PROXY_UNAVAILABLE", "PROXY_INVALID", "PROXY_REGION_MISMATCH", "NETWORK_ERROR"}
+
+
+def card_retry_limit() -> int:
+    return max(1, runtime.get_int("vcc_card_retry_limit", settings.vcc_card_retry_limit))
+
+
 def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session: SessionInfo) -> DispatchOutcome:
     if not runtime.get_bool("self_vcc_enabled", settings.self_vcc_enabled):
         raise ChannelFallback("SELF_VCC_DISABLED", "自营通道未启用", notify=False)
@@ -168,122 +202,169 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
 
     last_error: ChannelFallback | None = None
     for region in _candidate_regions(code.preferred_region, session):
-        card = None
-        reserved = False
-        try:
-            proxy = region_router.proxy_for(region)
-            currency, amount = region_router.amount_for(region, code.sku_type)
-            card = vcc_pool_scheduler.acquire_card(db, region, amount=region_router.cost_usd_for(region, code.sku_type))
-            if card is None:
-                raise ChannelFallback("NO_ACTIVE_VCC_IN_POOL", f"{region} 卡池暂无可用卡片")
-            reserved = True
-            billing = region_router.billing_for(card, region)
-            card_id = card.id
-            task.vcc_card_id = card_id
-            task.executed_channel = SELF_VCC
-            task.executed_region = region
-            task.billed_currency = currency
-            task.billed_amount = amount
-            db.add(task)
-            db.commit()
-
-            _set_state(db, task, RechargeState.CREATING_CHECKOUT)
-            checkout_url = region_router.create_checkout_url(session, region, code.sku_type)
-            _set_state(db, task, RechargeState.PAYING)
-            card_data = {
-                "number": decrypt_text(card.card_number_enc),
-                "cvv": decrypt_text(card.cvv_enc),
-                "exp_month": card.exp_month,
-                "exp_year": card.exp_year,
-                "holder_name": card.holder_name,
-                "billing": billing,
-                "three_ds_email": card.three_ds_email_account,
-                "timezone": "Asia/Manila" if region == region_router.PH else "America/New_York",
-            }
-
-            def on_state(value: str) -> None:
-                if value == "AWAITING_3DS":
-                    _set_state(db, task, RechargeState.AWAITING_3DS)
-
-            message = stripe_playwright.checkout_and_cancel_autorenew(
-                checkout_url,
-                card_data,
-                proxy,
-                on_state=on_state,
-            )
-            vcc_pool_scheduler.mark_success(db, card, region, charged=region_router.cost_usd_for(region, code.sku_type))
+        # Several cards may be tried in one region before giving up on it; a
+        # declined card is a card problem, not a region problem.
+        for attempt in range(card_retry_limit()):
+            card = None
             reserved = False
-            self_vcc_circuit.reset()
-            return DispatchOutcome(
-                channel=SELF_VCC,
-                region=region,
-                currency=currency,
-                amount=amount,
-                message=message,
-            )
-        except ChannelFallback as exc:
-            if reserved and card is not None:
-                vcc_pool_scheduler.release_reservation(db, card)
+            try:
+                # A card carries its own sticky exit; the region-wide proxy is
+                # only the fallback. The region proxy is optional here so a
+                # fully proxy-bound pool keeps working without one.
+                try:
+                    region_proxy = region_router.proxy_for(region)
+                except region_router.RegionError:
+                    region_proxy = ""
+                currency, amount = region_router.amount_for(region, code.sku_type)
+                card = vcc_pool_scheduler.acquire_card(
+                    db, region, amount=region_router.cost_usd_for(region, code.sku_type)
+                )
+                if card is None:
+                    # A drained pool must not hide an earlier decline: that is
+                    # what the customer and the operator need to see.
+                    if last_error is not None and last_error.code != "NO_ACTIVE_VCC_IN_POOL":
+                        break
+                    raise ChannelFallback("NO_ACTIVE_VCC_IN_POOL", f"{region} 卡池暂无可用卡片")
+                # Now that the row is locked, honour the card's own egress/timezone.
+                proxy, _provenance = context_profile.resolve_card_proxy(card.proxy_url, region_proxy)
+                profile = context_profile.profile_for_card(
+                    {"timezone": card.timezone_id, "locale": card.locale}, region
+                )
+                reserved = True
+                billing = region_router.billing_for(card, region)
+                task.vcc_card_id = card.id
+                task.executed_channel = SELF_VCC
+                task.executed_region = region
+                task.billed_currency = currency
+                task.billed_amount = amount
+                db.add(task)
+                db.commit()
+
+                _set_state(db, task, RechargeState.CREATING_CHECKOUT)
+                checkout_url = region_router.create_checkout_url(session, region, code.sku_type)
+                _set_state(db, task, RechargeState.PAYING)
+                card_data = {
+                    "number": decrypt_text(card.card_number_enc),
+                    "cvv": decrypt_text(card.cvv_enc),
+                    "exp_month": card.exp_month,
+                    "exp_year": card.exp_year,
+                    "holder_name": card.holder_name,
+                    "billing": billing,
+                    "three_ds_email": card.three_ds_email_account,
+                    "timezone": profile.timezone_id,
+                    "locale": profile.locale,
+                }
+
+                def on_state(value: str) -> None:
+                    if value == "AWAITING_3DS":
+                        _set_state(db, task, RechargeState.AWAITING_3DS)
+
+                message = stripe_playwright.checkout_and_cancel_autorenew(
+                    checkout_url,
+                    card_data,
+                    proxy or "",
+                    on_state=on_state,
+                    region=region,
+                )
+                vcc_pool_scheduler.mark_success(
+                    db, card, region, charged=region_router.cost_usd_for(region, code.sku_type)
+                )
                 reserved = False
-            last_error = exc
-            if exc.can_fallback:
-                # Region-specific failure: let the outer loop try the other region.
-                continue
-            raise
-        except SelfVccFailure as exc:
-            detail = _failure_detail(exc)
-            # ``CARD_DECLINED`` is itself decisive, so old raise sites that only
-            # set the code keep working.
-            declined = exc.is_explicit_decline or exc.code == "CARD_DECLINED"
-            if reserved and card is not None:
-                if declined:
-                    vcc_pool_scheduler.record_failure(db, card, exc.message)
-                else:
+                self_vcc_circuit.reset()
+                return DispatchOutcome(
+                    channel=SELF_VCC,
+                    region=region,
+                    currency=currency,
+                    amount=amount,
+                    message=message,
+                )
+            except ChannelFallback as exc:
+                if reserved and card is not None:
                     vcc_pool_scheduler.release_reservation(db, card)
-                reserved = False
+                    reserved = False
+                last_error = exc
+                if exc.can_fallback:
+                    # Region unusable for now: move on to the next region.
+                    break
+                raise
+            except SelfVccFailure as exc:
+                detail = _failure_detail(exc)
+                # ``CARD_DECLINED`` is itself decisive, so old raise sites that only
+                # set the code keep working.
+                declined = exc.is_explicit_decline or exc.code == "CARD_DECLINED"
+                if reserved and card is not None:
+                    if declined:
+                        vcc_pool_scheduler.record_failure(db, card, exc.message)
+                        _alert_card_declined(card, code, region, exc.message)
+                    else:
+                        vcc_pool_scheduler.release_reservation(db, card)
+                    reserved = False
 
-            if declined:
-                # Stripe refused the card, so nothing was charged; the card is
-                # parked but the customer can still be served upstream.
-                last_error = ChannelFallback(
-                    exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
-                )
-                continue
-            if not exc.payment_submitted:
-                # Nothing was charged: a broken page or a dead proxy, so count
-                # it toward the breaker and let the other region try.
+                if declined:
+                    # Stripe refused the card, so nothing was charged. Park the
+                    # card and try the next one in this region; when the pool runs
+                    # dry the outer loop falls through to upstream.
+                    last_error = ChannelFallback(
+                        exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
+                    )
+                    continue
+
+                if exc.code in THREE_DS_CODES:
+                    # The challenge never completed, so nothing was captured.
+                    # Switching channel is safe and much faster than a human.
+                    self_vcc_circuit.record_failure(exc.code)
+                    feishu.dispatch_event(
+                        "channel.fallback",
+                        "MOLIPLY 3DS 验证超时，已切上游兜底",
+                        {"任务编号": task.task_id, "城市": region, "说明": detail[:160]},
+                        severity="warning",
+                        link_path="/admin/tasks",
+                    )
+                    raise ChannelFallback(
+                        "AWAITING_3DS_CODE",
+                        "银行 3DS 验证超时，已自动切换专属通道继续处理",
+                        can_fallback=True,
+                        notify=False,
+                        error_detail=exc.error_detail,
+                        artifact_path=exc.artifact_path,
+                    ) from exc
+
+                if exc.code in NETWORK_CODES or not exc.payment_submitted:
+                    # Nothing was charged: a broken page, a dead proxy. Retrying
+                    # the same page conditions burns another minute, so count it
+                    # against the breaker and move straight to the other region.
+                    self_vcc_circuit.record_failure(exc.code)
+                    last_error = ChannelFallback(
+                        exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
+                    )
+                    break
+
+                # Submitted with an unknown outcome: a second region, and a later
+                # upstream retry, could both charge. Lock for a human instead.
+                raise ChannelFallback(
+                    "PAYMENT_OUTCOME_UNKNOWN",
+                    detail,
+                    can_fallback=False,
+                    error_detail=exc.error_detail,
+                    artifact_path=exc.artifact_path,
+                ) from exc
+            except region_router.RegionError as exc:
+                if reserved and card is not None:
+                    vcc_pool_scheduler.release_reservation(db, card)
+                    reserved = False
                 self_vcc_circuit.record_failure(exc.code)
-                last_error = ChannelFallback(
-                    exc.code, detail, error_detail=exc.error_detail, artifact_path=exc.artifact_path
-                )
-                continue
-
-            # Submitted with an unknown outcome: a second region, and a later
-            # upstream retry, could both charge. Lock for a human instead.
-            raise ChannelFallback(
-                "PAYMENT_OUTCOME_UNKNOWN",
-                detail,
-                can_fallback=False,
-                error_detail=exc.error_detail,
-                artifact_path=exc.artifact_path,
-            ) from exc
-        except region_router.RegionError as exc:
-            if reserved and card is not None:
-                vcc_pool_scheduler.release_reservation(db, card)
-                reserved = False
-            self_vcc_circuit.record_failure(exc.code)
-            last_error = ChannelFallback(exc.code, exc.message)
-            continue
-        except RechargeError:
-            if reserved and card is not None:
-                vcc_pool_scheduler.release_reservation(db, card)
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if reserved and card is not None:
-                vcc_pool_scheduler.release_reservation(db, card)
-            logger.warning("Self-VCC unexpected failure: %s", exc.__class__.__name__)
-            self_vcc_circuit.record_failure(exc.__class__.__name__)
-            raise ChannelFallback("SELF_VCC_ERROR", "自营通道执行异常，已转人工处理", can_fallback=False) from exc
+                last_error = ChannelFallback(exc.code, exc.message)
+                break
+            except RechargeError:
+                if reserved and card is not None:
+                    vcc_pool_scheduler.release_reservation(db, card)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if reserved and card is not None:
+                    vcc_pool_scheduler.release_reservation(db, card)
+                logger.warning("Self-VCC unexpected failure: %s", exc.__class__.__name__)
+                self_vcc_circuit.record_failure(exc.__class__.__name__)
+                raise ChannelFallback("SELF_VCC_ERROR", "自营通道执行异常，已转人工处理", can_fallback=False) from exc
 
     if last_error:
         raise last_error

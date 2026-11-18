@@ -14,7 +14,9 @@ class CodeRequest(StrictModel):
 
 
 class SessionRequest(CodeRequest):
-    session_raw: str = Field(min_length=8, max_length=262_144)
+    # Empty is allowed: some SKUs (icebreaker trial, SMS receipt) redeem
+    # without any account credential.
+    session_raw: str = Field(default="", max_length=262_144)
 
 
 class OrderItemIn(StrictModel):
@@ -133,6 +135,11 @@ class VccCardCreateRequest(StrictModel):
     three_ds_email_account: str | None = Field(default=None, max_length=128)
     available_balance: float = Field(ge=0, le=100_000)
     max_bind_count: int = Field(default=2, ge=1, le=2)
+    # Sticky per-card egress. Accepts http(s):// and socks5:// with optional
+    # inline credentials; empty falls back to the region-wide proxy.
+    proxy_url: str | None = Field(default=None, max_length=255)
+    timezone_id: str | None = Field(default=None, max_length=64)
+    locale: str | None = Field(default=None, max_length=16)
 
     @field_validator("exp_month", "exp_year")
     @classmethod
@@ -140,6 +147,16 @@ class VccCardCreateRequest(StrictModel):
         if not value.isdigit():
             raise ValueError("有效期必须为数字")
         return value
+
+    @field_validator("proxy_url")
+    @classmethod
+    def proxy_scheme(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        scheme = value.split("://", 1)[0].lower() if "://" in value else ""
+        if scheme not in {"http", "https", "socks5", "socks5h"}:
+            raise ValueError("代理地址必须以 http://、https:// 或 socks5:// 开头")
+        return value.strip()
 
 
 class VccCardBatchImportRequest(StrictModel):
@@ -171,15 +188,27 @@ class VccCardUpdateRequest(StrictModel):
     status: Literal["ACTIVE", "SUSPENDED", "EXHAUSTED", "CLOSED"] | None = None
     available_balance: float | None = Field(default=None, ge=0, le=100_000)
     reset_failed_count: bool = False
+    proxy_url: str | None = Field(default=None, max_length=255)
+    timezone_id: str | None = Field(default=None, max_length=64)
+    locale: str | None = Field(default=None, max_length=16)
 
 
 class ProductUpdateRequest(StrictModel):
     active: bool | None = None
     price: float | None = Field(default=None, ge=0, le=100_000)
     badge: str | None = Field(default=None, max_length=32)
+    base_sales_count: int | None = Field(default=None, ge=0, le=10_000_000)
+    fulfillment_strategy: Literal["STOCK", "JIT_ACCOUNT_RECHARGE"] | None = None
 
 
 class AccountImportRequest(StrictModel):
+    product_id: int
+    text: str = Field(min_length=3, max_length=200_000)
+
+
+class FreeAccountImportRequest(StrictModel):
+    """One free account per line: ``email----password----recovery[----session]``."""
+
     product_id: int
     text: str = Field(min_length=3, max_length=200_000)
 

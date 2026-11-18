@@ -154,7 +154,7 @@ def _fake_self_success(monkeypatch, *, fail_with: SelfVccFailure | None = None):
     monkeypatch.setattr(region_router, "proxy_for", lambda region: "http://127.0.0.1:7890")
     monkeypatch.setattr(region_router, "create_checkout_url", lambda session, region, sku: "https://checkout.test/session")
 
-    def checkout(url, card, proxy, on_state=None):
+    def checkout(url, card, proxy, on_state=None, region=None):
         if fail_with is not None:
             raise fail_with
         if on_state:
@@ -743,16 +743,29 @@ class _FakeLocator:
 
 
 class _FakeContext:
+    def __init__(self):
+        self.init_scripts: list[str] = []
+        self.kwargs: dict = {}
+
     def new_page(self):
         return _FakePage()
+
+    def add_init_script(self, script: str):
+        self.init_scripts.append(script)
+        return None
 
     def close(self):
         return None
 
 
 class _FakeBrowser:
-    def new_context(self, **_kwargs):
-        return _FakeContext()
+    def __init__(self):
+        self.context = _FakeContext()
+        self.launch_kwargs: dict = {}
+
+    def new_context(self, **kwargs):
+        self.context.kwargs = kwargs
+        return self.context
 
     def close(self):
         return None

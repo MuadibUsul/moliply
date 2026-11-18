@@ -74,7 +74,18 @@ export default function ProductDetailPage() {
 
   const currentPrice = variant?.price ?? product?.price ?? 0;
   const originalPrice = variant?.original_price ?? product?.original_price ?? null;
-  const outOfStock = product?.stock !== null && product?.stock !== undefined && product.stock <= 0;
+  const restocking =
+    product?.purchasable === false ||
+    (product?.purchasable === undefined &&
+      product?.stock !== null &&
+      product?.stock !== undefined &&
+      product.stock <= 0);
+  const onBackorder = product?.availability === "BACKORDER";
+  const availabilityNote = restocking
+    ? "暂时缺货"
+    : onBackorder
+      ? "自动发放 MOLI 激活码 · 专属通道保障"
+      : null;
 
   function cartPayload() {
     if (!product) return null;
@@ -101,7 +112,7 @@ export default function ProductDetailPage() {
 
   function buyNow() {
     if (!product) return;
-    if (outOfStock) {
+    if (restocking) {
       router.push("/help#contact");
       return;
     }
@@ -261,9 +272,15 @@ export default function ProductDetailPage() {
                 <Check size={12} className="text-emerald-300" />
                 {product.delivery_type === "ACTIVATION_CODE" ? "免密自助充能" : "账密直发"}
               </span>
-              {outOfStock && (
-                <span className="inline-flex items-center gap-2 rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-[11px] text-amber-300">
-                  暂时缺货
+              {availabilityNote && (
+                <span
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px] ${
+                    restocking
+                      ? "border-amber-400/25 bg-amber-400/10 text-amber-300"
+                      : "border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-300"
+                  }`}
+                >
+                  {availabilityNote}
                 </span>
               )}
             </div>
@@ -293,11 +310,11 @@ export default function ProductDetailPage() {
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[1.4fr_1fr]">
-            <button type="button" onClick={buyNow} disabled={outOfStock} className="btn-primary w-full">
-              {outOfStock ? "暂时缺货 · 咨询客服" : "立即购买"}
-              {!outOfStock && <ArrowUpRight size={16} />}
+            <button type="button" onClick={buyNow} disabled={restocking} className="btn-primary w-full">
+              {restocking ? "暂时缺货 · 咨询客服" : "立即购买"}
+              {!restocking && <ArrowUpRight size={16} />}
             </button>
-            <button type="button" onClick={addToCart} disabled={outOfStock} className="btn-secondary w-full">
+            <button type="button" onClick={addToCart} disabled={restocking} className="btn-secondary w-full">
               <ShoppingBag size={15} />
               加入购物车
             </button>

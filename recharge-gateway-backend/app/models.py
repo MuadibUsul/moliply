@@ -149,6 +149,47 @@ class VccStatus(str, enum.Enum):
     CLOSED = "CLOSED"
 
 
+class ProductAvailability(str, enum.Enum):
+    """Derived, not stored: what the buy button may do right now.
+
+    ``BACKORDER`` is the difference between "the shop is empty" and "the shop
+    is closed". A product with no local stock stays purchasable when an
+    automated upstream channel or the manual ticket desk can still deliver it.
+    """
+
+    IN_STOCK = "IN_STOCK"
+    BACKORDER = "BACKORDER"
+    RESTOCKING = "RESTOCKING"
+
+
+AVAILABILITY_LABELS: dict[str, str] = {
+    "IN_STOCK": "自动发货",
+    "BACKORDER": "自动发放 MOLI 激活码 · 专属通道保障",
+    "RESTOCKING": "补货中 · 可咨询客服",
+}
+
+
+class FulfillmentStrategy(str, enum.Enum):
+    """How a paid order for this product is satisfied."""
+
+    STOCK = "STOCK"
+    JIT_ACCOUNT_RECHARGE = "JIT_ACCOUNT_RECHARGE"
+
+
+class FreeAccountStatus(str, enum.Enum):
+    AVAILABLE = "AVAILABLE"
+    LOCKED = "LOCKED"
+    SOLD = "SOLD"
+    INVALID = "INVALID"
+
+
+class JitJobState(str, enum.Enum):
+    PENDING = "PENDING"
+    RECHARGING = "RECHARGING"
+    DELIVERED = "DELIVERED"
+    FAILED = "FAILED"
+
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -164,7 +205,11 @@ class Product(Base):
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
     original_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # Real completed units. New sites start at zero, which reads as an empty
+    # shop, so ``base_sales_count`` carries a per-product social-proof offset
+    # that the storefront adds on top of this number.
     sold_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    base_sales_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     warranty: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     delivery_note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -173,6 +218,12 @@ class Product(Base):
     faq: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # ``STOCK`` ships what is already in inventory; ``JIT_ACCOUNT_RECHARGE``
+    # locks a free account and upgrades it only after the order is paid, so a
+    # finished account never sits in stock burning subscription days.
+    fulfillment_strategy: Mapped[FulfillmentStrategy] = mapped_column(
+        enum_column(FulfillmentStrategy, 32), nullable=False, default=FulfillmentStrategy.STOCK
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
     variants: Mapped[list["ProductVariant"]] = relationship(
@@ -315,6 +366,54 @@ class AccountInventory(Base):
     sold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class FreeAccountPool(Base):
+    """Nurtured free accounts waiting for a just-in-time upgrade.
+
+    A finished account left in inventory burns a paid month every day it is not
+    sold. A free account costs nothing, so the pool holds those instead and the
+    paid upgrade only happens after an order is paid.
+    """
+
+    __tablename__ = "free_account_pool"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    password_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    recovery_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The pre-extracted ChatGPT Session JSON (encrypted). Captured when the
+    # account is parked; re-extracted by the worker if it went stale.
+    session_raw_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[FreeAccountStatus] = mapped_column(
+        enum_column(FreeAccountStatus, 16), nullable=False, default=FreeAccountStatus.AVAILABLE, index=True
+    )
+    order_item_id: Mapped[int | None] = mapped_column(ForeignKey("order_items.id"), nullable=True, index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+
+class JitAccountJob(Base):
+    """One paid order item on its way through the JIT upgrade pipeline."""
+
+    __tablename__ = "jit_account_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_item_id: Mapped[int] = mapped_column(ForeignKey("order_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    free_account_id: Mapped[int | None] = mapped_column(ForeignKey("free_account_pool.id"), nullable=True)
+    recharge_task_id: Mapped[str | None] = mapped_column(ForeignKey("recharge_tasks.task_id"), nullable=True)
+    state: Mapped[JitJobState] = mapped_column(
+        enum_column(JitJobState, 16), nullable=False, default=JitJobState.PENDING, index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class OrderDelivery(Base):
     __tablename__ = "order_deliveries"
 
@@ -390,6 +489,12 @@ class VccCard(Base):
     holder_name: Mapped[str] = mapped_column(String(64), nullable=False)
     billing_address_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     ph_billing_address_json: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # Egress bound to *this card*. A checkout is only credible when the card's
+    # domicile, the billing address and the exit IP all agree, so the proxy
+    # travels with the card instead of with the region.
+    proxy_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    timezone_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
     three_ds_email_account: Mapped[str | None] = mapped_column(String(128), nullable=True)
     available_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     # Amount currently promised to in-flight checkouts. ``available_balance``
@@ -455,13 +560,19 @@ __all__ = [
     "AccountInventory",
     "ActivationCode",
     "AuditLog",
+    "AVAILABILITY_LABELS",
     "CATEGORY_LABELS",
     "ChannelMode",
     "CodeStatus",
     "Coupon",
     "DELIVERY_LABELS",
     "DeliveryType",
+    "FreeAccountPool",
+    "FreeAccountStatus",
+    "FulfillmentStrategy",
     "InventoryStatus",
+    "JitAccountJob",
+    "JitJobState",
     "Order",
     "OrderDelivery",
     "OrderItem",
@@ -470,6 +581,7 @@ __all__ = [
     "PaymentEvent",
     "PlatformSetting",
     "Product",
+    "ProductAvailability",
     "ProductCategory",
     "ProductVariant",
     "RechargeState",

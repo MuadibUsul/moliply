@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     allow_mock_payment_in_production: bool = False
     order_expire_minutes: int = 15
     enforce_stock: bool = True
+    # When a shelf is empty, keep the product sellable if the operator's desk can
+    # still fill it. Off means an empty shelf always greys the buy button out.
+    manual_backorder_enabled: bool = True
     # The descriptor sent to the gateway; keep it free of platform/brand words.
     official_payment_subject_prefix: str = "MOLIPLY-技术开发与算力服务"
     alipay_app_id: str = ""
@@ -212,6 +215,9 @@ class Settings(BaseSettings):
     vcc_max_consecutive_failures: int = 3
     vcc_cooldown_minutes: int = 30
     vcc_pool_watermark: int = 5
+    # How many different cards one order may burn through in a region before the
+    # dispatcher gives up on the self-owned channel.
+    vcc_card_retry_limit: int = 2
     proxy_url: str = ""
     ph_residential_proxy_url: str = ""
     us_residential_proxy_url: str = ""

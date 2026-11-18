@@ -17,5 +17,6 @@ def checkout_and_cancel_autorenew(
     card: dict,
     proxy_url: str,
     on_state: Callable[[str], None] | None = None,
+    region: str | None = None,
 ) -> str:
-    return PlaywrightCheckout().run(checkout_url, card, proxy_url, on_state=on_state)
+    return PlaywrightCheckout().run(checkout_url, card, proxy_url, on_state=on_state, region=region)

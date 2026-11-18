@@ -15,8 +15,16 @@ def execute_recharge_task(self, task_id: str) -> None:
     redeem_service.run_recharge_task(task_id)
 
 
-@celery_app.task(name="app.tasks.celery_worker.cleanup_tokens_task")
-def cleanup_tokens_task() -> int:
+@celery_app.task(name="app.tasks.celery_worker.execute_jit_job", bind=True)
+def execute_jit_job(self, job_id: int) -> None:
+    """Upgrade a locked free account for a paid JIT order, then deliver it."""
+    from app.services.fulfillment import jit_delivery
+
+    logger.info("Celery picked up JIT job %s", job_id)
+    jit_delivery.run_jit_job(job_id)
+
+
+@celery_app.task(name="app.tasks.celery_worker.cleanup_tokens_task")def cleanup_tokens_task() -> int:
     db = SessionLocal()
     try:
         cleared = redeem_service.cleanup_sensitive_tokens(db)

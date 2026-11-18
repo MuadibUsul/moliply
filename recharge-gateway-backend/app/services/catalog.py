@@ -10,13 +10,16 @@ from sqlalchemy.orm import Session
 from app.models import (
     AccountInventory,
     ActivationCode,
+    AVAILABILITY_LABELS,
     CATEGORY_LABELS,
     ChannelMode,
     CodeStatus,
     DELIVERY_LABELS,
+    FulfillmentStrategy,
     InventoryStatus,
     OrderItem,
     Product,
+    ProductAvailability,
     ProductCategory,
     ProductVariant,
     SkuType,
@@ -70,6 +73,65 @@ def available_stock(db: Session, product: Product) -> int:
     )
 
 
+def available_account_stock(db: Session, product: Product) -> int:
+    """Stock of a credential product: finished accounts, or the free pool for JIT."""
+    if product.fulfillment_strategy == FulfillmentStrategy.JIT_ACCOUNT_RECHARGE:
+        from app.services.fulfillment import jit_delivery
+
+        if jit_delivery.jit_enabled():
+            from app.models import FreeAccountPool, FreeAccountStatus
+
+            return (
+                db.query(func.count(FreeAccountPool.id))
+                .filter(
+                    FreeAccountPool.product_id == product.id,
+                    FreeAccountPool.status == FreeAccountStatus.AVAILABLE,
+                )
+                .scalar()
+                or 0
+            )
+    return available_stock(db, product)
+
+
+def secondary_market_ready() -> bool:
+    """True when *something* can still deliver a product with an empty shelf.
+
+    Either the automated upstream channel has credentials, or the operator
+    handles it by hand. The manual desk is assumed available unless explicitly
+    switched off, because a human reading the Feishu alert is the last resort.
+    """
+    from app.services import channel_dispatcher
+    from app.services import runtime_settings as runtime
+
+    if channel_dispatcher.upstream_configured():
+        return True
+    return runtime.get_bool("manual_backorder_enabled", True)
+
+
+def product_availability(db: Session | None, product: Product) -> str:
+    """What the buy button may do: sell now, sell on backorder, or restock.
+
+    The distinction matters commercially. A full shelf sells normally; an empty
+    shelf with a fallback channel stays purchasable (the customer gets a MOLI
+    code and the order routes upstream/手动); only a truly stranded product is
+    greyed out.
+    """
+    if db is None:
+        return ProductAvailability.IN_STOCK.value
+    stock = available_account_stock(db, product)
+    if stock > 0:
+        return ProductAvailability.IN_STOCK.value
+    if secondary_market_ready():
+        return ProductAvailability.BACKORDER.value
+    return ProductAvailability.RESTOCKING.value
+
+
+def purchasable(db: Session | None, product: Product) -> bool:
+    if db is None:
+        return True
+    return product_availability(db, product) != ProductAvailability.RESTOCKING.value
+
+
 def serialize_variant(variant: ProductVariant) -> dict:
     return {
         "id": variant.id,
@@ -85,6 +147,10 @@ def serialize_variant(variant: ProductVariant) -> dict:
 
 
 def serialize_product(db: Session | None, product: Product, include_stock: bool = True) -> dict:
+    stock = available_account_stock(db, product) if (db is not None and include_stock) else None
+    availability = (
+        product_availability(db, product) if (db is not None and include_stock) else ProductAvailability.IN_STOCK.value
+    )
     return {
         "id": product.id,
         "slug": product.slug,
@@ -100,7 +166,11 @@ def serialize_product(db: Session | None, product: Product, include_stock: bool 
         "tags": product.tags or [],
         "price": money(product.price),
         "original_price": money(product.original_price) if product.original_price else None,
-        "sold_count": product.sold_count,
+        # Social proof is the offset plus the units actually sold; the raw
+        # counter stays available for the admin console.
+        "sold_count": (product.base_sales_count or 0) + (product.sold_count or 0),
+        "real_sold_count": product.sold_count or 0,
+        "base_sales_count": product.base_sales_count or 0,
         "warranty": product.warranty,
         "delivery_note": product.delivery_note,
         "description": product.description,
@@ -108,8 +178,12 @@ def serialize_product(db: Session | None, product: Product, include_stock: bool 
         "features": product.features or [],
         "faq": product.faq or [],
         "active": product.active,
+        "fulfillment_strategy": product.fulfillment_strategy.value,
         "variants": [serialize_variant(v) for v in product.variants if v.active],
-        "stock": available_stock(db, product) if (db is not None and include_stock) else None,
+        "stock": stock,
+        "availability": availability,
+        "availability_label": AVAILABILITY_LABELS.get(availability, ""),
+        "purchasable": availability != ProductAvailability.RESTOCKING.value,
     }
 
 

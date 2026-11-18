@@ -19,6 +19,9 @@ from app.models import (
     CodeStatus,
     Coupon,
     DeliveryType,
+    FreeAccountPool,
+    FreeAccountStatus,
+    FulfillmentStrategy,
     InventoryStatus,
     Product,
     ProductCategory,
@@ -59,6 +62,7 @@ def _product(
     faq: list[dict],
     variants: list[dict],
     sort_order: int,
+    base_sales_count: int = 0,
 ) -> Product:
     product = Product(
         slug=slug,
@@ -71,6 +75,7 @@ def _product(
         price=Decimal(price),
         original_price=Decimal(original_price),
         sold_count=sold_count,
+        base_sales_count=base_sales_count,
         badge=badge,
         tags=tags,
         warranty=warranty,
@@ -95,6 +100,87 @@ def _product(
             )
         )
     return product
+
+
+def build_icebreaker() -> Product:
+    """Low-threshold trial card: cheapest possible first order."""
+    return _product(
+        slug="ai-icebreaker-trial",
+        name="[新人破冰] AI 极速充能体验卡",
+        subtitle="临时会话权益 · 3 分钟上手 · MOLI 激活码",
+        category=ProductCategory.DIGITAL,
+        brand="MOLIPLY",
+        logo_key="default",
+        delivery_type=DeliveryType.ACTIVATION_CODE,
+        price="3.90",
+        original_price="19.90",
+        sold_count=0,
+        base_sales_count=320,
+        badge="新人首选",
+        tags=["低门槛体验", "自动发码", "核销即生效"],
+        warranty="核销到账保障 · 单次权益",
+        delivery_note="付款后立即发放 MOLI 激活码，核销即生效",
+        description=(
+            "一杯奶茶钱以内，先体验一次完整的 MOLIPLY 充能流程。"
+            "付款后系统自动发放 MOLI 激活码，到免密自助充能中心核销即可，全程无需提交密码。\n\n"
+            "体验卡提供临时会话权益，适合先小额试单、确认交付链路顺畅，再升级到 Plus / Pro 正式套餐。"
+        ),
+        usage_steps=[
+            "下单并完成支付",
+            "在订单交付页复制 MOLI 激活码",
+            "打开免密自助充能中心核销",
+            "按页面提示确认权益到账",
+        ],
+        faq=[
+            {"q": "体验卡和正式套餐有什么区别？", "a": "体验卡是单次临时会话权益，价格低、核销最简；正式套餐是完整一个月的会员订阅。"},
+            {"q": "体验卡需要提交 Session 吗？", "a": "不需要，核销即生效，直接进入权益发放。"},
+            {"q": "可以先买体验卡再补差价升级吗？", "a": "体验卡为独立权益，升级时正常购买正式套餐即可，两者不冲突。"},
+        ],
+        variants=[
+            {"label": "单次体验", "months": 1, "price": "3.90", "original_price": "19.90", "sku_type": "GENERIC_DIGITAL"}
+        ],
+        sort_order=0,
+    )
+
+
+def build_jit_account() -> Product:
+    """Finished account upgraded only after payment, so it never ages in stock."""
+    return _product(
+        slug="chatgpt-plus-jit-account",
+        name="ChatGPT Plus 满月成品号",
+        subtitle="下单即充 · 交付起算满 30 天",
+        category=ProductCategory.AI_MEMBERSHIP,
+        brand="ChatGPT",
+        logo_key="gpt",
+        delivery_type=DeliveryType.ACCOUNT_CREDENTIALS,
+        price="198.00",
+        original_price="228.00",
+        sold_count=0,
+        base_sales_count=86,
+        badge="足月交付",
+        tags=["下单即充", "满 30 天", "独享账号"],
+        warranty="自交付起 30 天质保 · 掉会员按天折算赔付",
+        delivery_note="付款后实时升级并交付账密，订阅从交付时刻起算满 30 天",
+        description=(
+            "成品号现充现发：付款后系统锁定一个干净的免费账号并即时升级为 Plus，"
+            "确认订阅生效后才把账号密码交付给你，订阅期从交付时刻开始计算满 30 天。\n\n"
+            "因为备货的是零月租的免费号，不会出现“库存放了两周才卖出”的掉期损耗，"
+            "到手的订阅天数始终是完整的 30 天。"
+        ),
+        usage_steps=[
+            "下单并完成支付",
+            "等待 1–3 分钟自动升级完成",
+            "在订单详情复制账号与辅助邮箱信息",
+            "首次登录后立即修改密码并保留辅助邮箱",
+        ],
+        faq=[
+            {"q": "为什么叫下单即充？", "a": "账号在付款后才升级，订阅期从交付时刻开始，不会白跑库存时间。"},
+            {"q": "需要等多久？", "a": "通常 1–3 分钟；高峰期顺延，失败会自动转人工处理。"},
+            {"q": "质保如何计算？", "a": "自交付起 30 天内非买家原因掉会员，按剩余天数折算赔付或补发。"},
+        ],
+        variants=[{"label": "1个月（下单即充）", "months": 1, "price": "198.00", "original_price": "228.00"}],
+        sort_order=4,
+    )
 
 
 def seed_demo_data(db: Session) -> None:
@@ -129,9 +215,10 @@ def seed_demo_data(db: Session) -> None:
         brand="ChatGPT",
         logo_key="gpt",
         delivery_type=DeliveryType.ACTIVATION_CODE,
-        price="158.00",
+        price="133.00",
         original_price="199.00",
         sold_count=2368,
+        base_sales_count=312,
         badge="热销",
         tags=["免密代充", "自动核销", "24小时自动发货"],
         warranty="充值到账保障 · 不包个人违规封号",
@@ -150,8 +237,8 @@ def seed_demo_data(db: Session) -> None:
         ],
         faq=chatgpt_recharge_faq,
         variants=[
-            {"label": "1个月", "months": 1, "price": "158.00", "original_price": "199.00", "sku_type": "CHATGPT_PLUS_1M"},
-            {"label": "3个月", "months": 3, "price": "435.00", "original_price": "597.00", "sku_type": "CHATGPT_PLUS_3M"},
+            {"label": "1个月", "months": 1, "price": "133.00", "original_price": "199.00", "sku_type": "CHATGPT_PLUS_1M"},
+            {"label": "3个月", "months": 3, "price": "399.00", "original_price": "597.00", "sku_type": "CHATGPT_PLUS_3M"},
             {"label": "12个月", "months": 12, "price": "1588.00", "original_price": "2388.00", "sku_type": "CHATGPT_PLUS_12M"},
         ],
         sort_order=1,
@@ -167,6 +254,7 @@ def seed_demo_data(db: Session) -> None:
         price="188.00",
         original_price="218.00",
         sold_count=1268,
+        base_sales_count=268,
         badge="推荐",
         tags=["独享账号", "满月质保", "自动发货"],
         warranty="30 天质保 · 掉会员按天折算赔付",
@@ -201,6 +289,7 @@ def seed_demo_data(db: Session) -> None:
         price="188.00",
         original_price="218.00",
         sold_count=986,
+        base_sales_count=214,
         badge="新品",
         tags=["独享账号", "满月质保", "自动发货"],
         warranty="30 天质保 · 掉会员按天折算赔付",
@@ -232,9 +321,10 @@ def seed_demo_data(db: Session) -> None:
         brand="Claude",
         logo_key="claude",
         delivery_type=DeliveryType.ACTIVATION_CODE,
-        price="168.00",
+        price="166.00",
         original_price="198.00",
         sold_count=864,
+        base_sales_count=176,
         badge="热门",
         tags=["免密代充", "自动核销", "24小时自动发货"],
         warranty="充值到账保障",
@@ -257,7 +347,7 @@ def seed_demo_data(db: Session) -> None:
             {"q": "充值失败怎么办？", "a": "可恢复失败会自动释放激活码，重试即可；如持续失败请联系在线客服。"},
         ],
         variants=[
-            {"label": "1个月", "months": 1, "price": "168.00", "original_price": "198.00", "sku_type": "CLAUDE_PRO_1M"}
+            {"label": "1个月", "months": 1, "price": "166.00", "original_price": "198.00", "sku_type": "CLAUDE_PRO_1M"}
         ],
         sort_order=4,
     )
@@ -269,9 +359,10 @@ def seed_demo_data(db: Session) -> None:
         brand="ChatGPT",
         logo_key="gpt",
         delivery_type=DeliveryType.ACTIVATION_CODE,
-        price="182.00",
+        price="153.00",
         original_price="218.00",
         sold_count=532,
+        base_sales_count=138,
         badge="质保",
         tags=["30天质保", "正规卡源", "免密代充"],
         warranty="30 天卡源质保 · 掉会员全额重充或按天退款",
@@ -293,7 +384,7 @@ def seed_demo_data(db: Session) -> None:
             {"q": "如何申请质保？", "a": "凭订单号联系在线客服，核实掉会员原因后按政策重充或退款。"},
         ],
         variants=[
-            {"label": "1个月", "months": 1, "price": "182.00", "original_price": "218.00", "sku_type": "CHATGPT_PLUS_1M"}
+            {"label": "1个月", "months": 1, "price": "153.00", "original_price": "218.00", "sku_type": "CHATGPT_PLUS_1M"}
         ],
         sort_order=5,
     )
@@ -308,6 +399,7 @@ def seed_demo_data(db: Session) -> None:
         price="118.00",
         original_price="148.00",
         sold_count=432,
+        base_sales_count=148,
         badge=None,
         tags=["开发工具", "自动发货"],
         warranty="首登保障",
@@ -405,10 +497,13 @@ def seed_demo_data(db: Session) -> None:
         sort_order=10,
     )
 
+    icebreaker = build_icebreaker()
     products = [
+        icebreaker,
         chatgpt_recharge,
         claude_account,
         chatgpt_account,
+        build_jit_account(),
         claude_recharge,
         warranty_recharge,
         cursor,
@@ -432,6 +527,7 @@ def seed_demo_data(db: Session) -> None:
             SkuType.CHATGPT_PLUS_12M: 12,
             SkuType.CLAUDE_PRO_1M: 60,
             SkuType.API_CREDIT_100: 30,
+            SkuType.GENERIC_DIGITAL: 200,
         }
         seen: set[str] = set()
         for sku, count in stock_plan.items():
@@ -476,6 +572,22 @@ def seed_demo_data(db: Session) -> None:
                 )
         account_count = len(account_products) * 6
 
+        # The JIT product stocks free accounts (zero monthly cost) instead of
+        # finished ones; the upgrade happens after each order is paid.
+        jit_product = next(item for item in products if item.slug == "chatgpt-plus-jit-account")
+        jit_product.fulfillment_strategy = FulfillmentStrategy.JIT_ACCOUNT_RECHARGE
+        for index in range(1, 4):
+            email = f"free.chatgpt.{index:03d}@moliply.test"
+            db.add(
+                FreeAccountPool(
+                    product_id=jit_product.id,
+                    email=email,
+                    password_enc=encrypt_text("FreeDemoPass!2026"),
+                    recovery_enc=encrypt_text(f"backup.free.{index:03d}@moliply.test"),
+                    status=FreeAccountStatus.AVAILABLE,
+                )
+            )
+
         db.add_all(
             [
                 Coupon(code="MOLI10", amount=Decimal("10.00"), min_amount=Decimal("100.00"), active=True),
@@ -497,24 +609,27 @@ GPT_PRO_PRODUCTS = [
         "slug": "gpt-pro-100",
         "name": "GPT Pro 100",
         "subtitle": "OpenAI Pro 额度 · 100 美元档",
-        "price": "649.00",
+        "price": "786.00",
         "sku_type": SkuType.GPT_PRO_100,
+        "base_sales_count": 96,
         "sort": 30,
     },
     {
         "slug": "gpt-pro-200",
         "name": "GPT Pro 200",
         "subtitle": "OpenAI Pro 额度 · 200 美元档",
-        "price": "1249.00",
+        "price": "1499.00",
         "sku_type": SkuType.GPT_PRO_200,
+        "base_sales_count": 74,
         "sort": 31,
     },
     {
         "slug": "gpt-pro-500",
         "name": "GPT Pro 500",
         "subtitle": "OpenAI Pro 额度 · 500 美元档",
-        "price": "2999.00",
+        "price": "3599.00",
         "sku_type": SkuType.GPT_PRO_500,
+        "base_sales_count": 52,
         "sort": 32,
     },
     {
@@ -523,6 +638,7 @@ GPT_PRO_PRODUCTS = [
         "subtitle": "美区号码代收验证码 · 单次",
         "price": "5.49",
         "sku_type": SkuType.CODEX_SMS_US,
+        "base_sales_count": 188,
         "sort": 33,
     },
 ]
@@ -548,6 +664,7 @@ def upsert_gpt_pro_products(db: Session) -> int:
             logo_key="gpt",
             delivery_type=DeliveryType.ACTIVATION_CODE,
             price=Decimal(spec["price"]),
+            base_sales_count=spec.get("base_sales_count", 0),
             badge="上新" if not sms else None,
             tags=["自动发货", "美区"] if sms else ["自动发货"],
             warranty="到账保障" if not sms else "单次有效",

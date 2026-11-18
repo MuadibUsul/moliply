@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
+import { LiveSupplyTelemetry } from "@/components/LiveSupplyTelemetry";
 import { ProductCard } from "@/components/ProductCard";
 import { ASSURANCES, BRAND, CATEGORY_CARDS } from "@/config/brand";
 import { api } from "@/lib/api";
@@ -201,6 +202,7 @@ export default function HomePage() {
 
       {/* Hot products */}
       <section className="container-page section-space pt-2">
+        <LiveSupplyTelemetry className="mb-7" />
         <div className="mb-7 flex items-end justify-between gap-4">
           <div>
             <p className="eyebrow">HANDPICKED FOR YOU</p>

@@ -33,7 +33,10 @@ export type Product = {
   tags: string[];
   price: number;
   original_price: number | null;
+  /** Seed offset plus real sales; already summed by the API. */
   sold_count: number;
+  real_sold_count?: number;
+  base_sales_count?: number;
   warranty: string;
   delivery_note: string;
   description: string;
@@ -41,8 +44,12 @@ export type Product = {
   features: ProductFeature[];
   faq: ProductFaq[];
   active: boolean;
+  fulfillment_strategy?: "STOCK" | "JIT_ACCOUNT_RECHARGE";
   variants: ProductVariant[];
   stock: number | null;
+  availability?: "IN_STOCK" | "BACKORDER" | "RESTOCKING";
+  availability_label?: string;
+  purchasable?: boolean;
 };
 
 export type CategoryOption = {
@@ -175,17 +182,22 @@ export type RedeemVerify = {
   status_label: string;
   bound_email_masked: string | null;
   session_kind: "chatgpt" | "claude";
+  requires_session?: boolean;
   redeemable: boolean;
   channel_mode: string;
 };
 
 export type RedeemPrecheck = {
   eligible: boolean;
+  verdict?: string;
   account_email: string;
   current_plan: string;
   message: string;
   warning: string | null;
   session_kind: "chatgpt" | "claude";
+  requires_session?: boolean;
+  plan_expires_at?: string | null;
+  session_expires_at?: string | null;
   expires_at: string;
 };
 

@@ -21,6 +21,7 @@ from app.schemas import CouponValidateRequest, OrderCreateRequest, PaymentCreate
 from app.security import client_ip, create_user_token, limiter
 from app.services import accounts
 from app.services import orders as order_service
+from app.services import telemetry
 from app.services.chains import crypto_watcher
 from app.services.catalog import list_categories, money, serialize_product
 from app.services.payments import masked_order_title
@@ -28,8 +29,12 @@ from app.services.payments import masked_order_title
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/store", tags=["store"])
 
+# "Popular" ranks on what the customer sees, so the seed offset counts too;
+# otherwise every new product would sit behind the pre-existing catalogue.
+DISPLAY_SOLD = func.coalesce(Product.base_sales_count, 0) + func.coalesce(Product.sold_count, 0)
+
 SORT_OPTIONS = {
-    "popular": (Product.sold_count.desc(), Product.sort_order.asc()),
+    "popular": (DISPLAY_SOLD.desc(), Product.sort_order.asc()),
     "price-asc": (Product.price.asc(), Product.id.asc()),
     "price-desc": (Product.price.desc(), Product.id.asc()),
     "newest": (Product.created_at.desc(), Product.id.desc()),
@@ -40,6 +45,13 @@ SORT_OPTIONS = {
 @router.get("/categories")
 def categories(db: Session = Depends(get_db)) -> dict:
     return {"items": list_categories(db)}
+
+
+@router.get("/live-telemetry")
+@limiter.limit(settings.lookup_rate_limit)
+def live_telemetry(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Anonymous supply-health strip shown on the home and redeem pages."""
+    return telemetry.live_telemetry(db)
 
 
 @router.get("/products")

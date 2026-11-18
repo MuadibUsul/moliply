@@ -61,7 +61,7 @@ def test_order_payment_delivery_and_account_management(client):
     assert data["account_created"] is True
     assert data["user_email"] == "buyer@example.com"
     assert order["status"] == "PENDING"
-    assert order["amount"] == 148.0
+    assert order["amount"] == 123.0
     assert order["discount_amount"] == 10.0
     assert order["items"][0]["deliveries"] == []
 
@@ -192,7 +192,7 @@ def test_new_gpt_products_are_visible_and_priced(client, db):
     from app.seed import upsert_gpt_pro_products
 
     upsert_gpt_pro_products(db)
-    expected = {"gpt-pro-100": "649.00", "gpt-pro-200": "1249.00", "gpt-pro-500": "2999.00", "codex-sms-us": "5.49"}
+    expected = {"gpt-pro-100": "786.00", "gpt-pro-200": "1499.00", "gpt-pro-500": "3599.00", "codex-sms-us": "5.49"}
     for slug, price in expected.items():
         body = client.get(f"/api/v1/store/products/{slug}").json()["product"]
         assert body["price"] == float(price)

@@ -22,6 +22,7 @@ from app.models import (
     CodeStatus,
     Coupon,
     DeliveryType,
+    FulfillmentStrategy,
     InventoryStatus,
     Order,
     OrderDelivery,
@@ -33,6 +34,7 @@ from app.models import (
 )
 from app.services import feishu
 from app.services import runtime_settings as runtime
+from app.services.fulfillment import jit_delivery
 from app.services.catalog import available_sku_stock, available_stock, money
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.mailer import send_delivery_email
@@ -151,7 +153,17 @@ def create_order(
                 else available_stock(db, product)
             )
             if stock < requested.quantity:
-                raise OrderError("OUT_OF_STOCK", f"{product.name} 暂时缺货，请选择其他商品或稍后再试", 409)
+                from app.services.catalog import secondary_market_ready
+
+                # An empty shelf only blocks the order when nothing can serve it.
+                # With an upstream channel or the manual desk behind the shop the
+                # item stays sellable and lands in ``stock_pending``.
+                if not secondary_market_ready():
+                    raise OrderError(
+                        "OUT_OF_STOCK",
+                        f"{product.name} 暂时缺货，请选择其他商品或稍后再试",
+                        409,
+                    )
 
         line_total = unit_price * requested.quantity
         subtotal += line_total
@@ -554,6 +566,7 @@ def fulfill_order(db: Session, order: Order) -> Order:
     was_delivered = order.status == OrderStatus.DELIVERED
     was_stock_pending = order.stock_pending
     pending = False
+    jit_items: list[OrderItem] = []
     for item in order.items:
         missing = item.quantity - len(item.deliveries)
         if missing <= 0:
@@ -585,6 +598,12 @@ def fulfill_order(db: Session, order: Order) -> Order:
                 missing -= 1
             if missing > 0:
                 pending = True
+        elif _is_jit_item(db, item):
+            # The account is upgraded after payment, so nothing is delivered at
+            # this point; the job writes the credentials when the subscription is
+            # confirmed. A missing pool is an operator problem, not a crash.
+            pending = pending or True
+            jit_items.append(item)
         else:
             accounts = (
                 db.query(AccountInventory)
@@ -675,7 +694,69 @@ def fulfill_order(db: Session, order: Order) -> Order:
             severity="warning",
             link_path=f"/admin/orders?q={order.order_no}",
         )
+    for item in jit_items:
+        try:
+            jit_delivery.start_jit_delivery(db, item)
+        except Exception:  # noqa: BLE001 - never fail the payment callback
+            logger.exception("Could not queue JIT delivery for order item %s", item.id)
+            feishu.dispatch_event(
+                "recharge.manual_review",
+                "MOLIPLY JIT 交付未能排队",
+                {"订单号": order.order_no, "订单条目": item.id},
+                severity="error",
+                link_path=f"/admin/orders?q={order.order_no}",
+            )
     return order
+
+
+def _is_jit_item(db: Session, item: OrderItem) -> bool:
+    """JIT only when the product asks for it *and* the engine is switched on.
+
+    Turning the switch off degrades the product back to ordinary account stock,
+    which is what an operator wants during a Playwright outage.
+    """
+    if not jit_delivery.jit_enabled():
+        return False
+    product = db.get(Product, item.product_id)
+    return bool(product and product.fulfillment_strategy == FulfillmentStrategy.JIT_ACCOUNT_RECHARGE)
+
+
+def finalize_pending_order_if_delivered(db: Session, order_item_id: int) -> None:
+    """Close an order once its last pending line has been delivered.
+
+    JIT deliveries arrive asynchronously long after the payment callback, so the
+    order cannot be marked DELIVERED there. This re-checks the whole order and
+    flips it only when every line is complete.
+    """
+    order = (
+        db.query(Order)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(OrderItem.id == order_item_id)
+        .first()
+    )
+    if order is None:
+        return
+    # Count through fresh queries: the caller just committed a delivery in this
+    # same session, so the relationship collections can still be stale.
+    db.expire_all()
+    lines = db.query(OrderItem.id, OrderItem.quantity).filter(OrderItem.order_id == order.id).all()
+    delivered = {
+        item_id: count
+        for item_id, count in (
+            db.query(OrderDelivery.order_item_id, func.count(OrderDelivery.id))
+            .filter(OrderDelivery.order_item_id.in_([line[0] for line in lines]))
+            .group_by(OrderDelivery.order_item_id)
+            .all()
+        )
+    }
+    complete = all(delivered.get(item_id, 0) >= quantity for item_id, quantity in lines)
+    if not complete:
+        return
+    order.status = OrderStatus.DELIVERED
+    order.delivered_at = order.delivered_at or utcnow()
+    order.stock_pending = False
+    db.add(order)
+    db.commit()
 
 
 def settle_mock_order(db: Session, order: Order, channel: str = "wechat") -> Order:

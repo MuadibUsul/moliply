@@ -47,6 +47,7 @@ BOOL_KEYS = {
     "self_vcc_dry_run",
     "smtp_use_ssl",
     "enforce_stock",
+    "manual_backorder_enabled",
     "feishu_enabled",
     "feishu_mention_all",
     "self_vcc_headless",
@@ -70,6 +71,7 @@ INT_KEYS = {
     "vcc_max_consecutive_failures",
     "vcc_cooldown_minutes",
     "vcc_pool_watermark",
+    "vcc_card_retry_limit",
 }
 
 FLOAT_KEYS = {
@@ -153,6 +155,7 @@ ENV_DEFAULTS = {
     "vcc_max_consecutive_failures": lambda: settings.vcc_max_consecutive_failures,
     "vcc_cooldown_minutes": lambda: settings.vcc_cooldown_minutes,
     "vcc_pool_watermark": lambda: settings.vcc_pool_watermark,
+    "vcc_card_retry_limit": lambda: settings.vcc_card_retry_limit,
     "ph_plus_amount_php": lambda: settings.ph_plus_amount_php,
     "ph_pro_100_amount_php": lambda: settings.ph_pro_100_amount_php,
     "ph_pro_200v2_amount_php": lambda: settings.ph_pro_200v2_amount_php,
@@ -194,6 +197,7 @@ ENV_DEFAULTS = {
     "smtp_use_ssl": lambda: settings.smtp_use_ssl,
     "order_expire_minutes": lambda: settings.order_expire_minutes,
     "enforce_stock": lambda: settings.enforce_stock,
+    "manual_backorder_enabled": lambda: settings.manual_backorder_enabled,
     "feishu_enabled": lambda: settings.feishu_enabled,
     "feishu_events": lambda: DEFAULT_FEISHU_EVENTS,
     "feishu_low_stock_threshold": lambda: settings.feishu_low_stock_threshold,

@@ -98,6 +98,14 @@ def ensure_schema_compatibility() -> None:
     add_column("vcc_cards", "is_locked", "BOOLEAN NOT NULL DEFAULT FALSE")
     add_column("vcc_cards", "locked_at", "TIMESTAMP")
     add_column("vcc_cards", "total_used_count", "INTEGER NOT NULL DEFAULT 0")
+    # f1a2b3c4d5e6: card-scoped egress, social proof, JIT strategy. Repeated here
+    # so a database that reached head through the compatibility fallback is
+    # still complete on the next boot.
+    add_column("vcc_cards", "proxy_url", "VARCHAR(255)")
+    add_column("vcc_cards", "timezone_id", "VARCHAR(64)")
+    add_column("vcc_cards", "locale", "VARCHAR(16)")
+    add_column("products", "base_sales_count", "INTEGER NOT NULL DEFAULT 0")
+    add_column("products", "fulfillment_strategy", "VARCHAR(32) NOT NULL DEFAULT 'STOCK'")
 
     if "vcc_cards" in inspector.get_table_names():
         _backfill_card_fingerprints()
@@ -111,6 +119,18 @@ def ensure_schema_compatibility() -> None:
                     "AND CAST(ph_billing_address_json AS TEXT) = 'null'"
                 )
             )
+
+    # Whole tables rather than columns, so only create what is missing.
+    table_names = set(inspect(engine).get_table_names())
+    missing_tables = [
+        table
+        for name, table in Base.metadata.tables.items()
+        if name in {"free_account_pool", "jit_account_jobs"} and name not in table_names
+    ]
+    if missing_tables:
+        with engine.begin() as connection:
+            Base.metadata.create_all(connection, tables=missing_tables)
+        logger.info("Schema compatibility: created %s", ", ".join(t.name for t in missing_tables))
 
 
 def _alembic_config():

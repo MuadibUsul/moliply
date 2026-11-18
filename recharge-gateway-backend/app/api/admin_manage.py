@@ -15,6 +15,9 @@ from app.models import (
     AuditLog,
     ChannelMode,
     CodeStatus,
+    FreeAccountPool,
+    FreeAccountStatus,
+    FulfillmentStrategy,
     InventoryStatus,
     Order,
     OrderStatus,
@@ -37,6 +40,7 @@ from app.schemas import (
     CodeGenerateRequest,
     CodeImportRequest,
     CodeStatusRequest,
+    FreeAccountImportRequest,
     ProductUpdateRequest,
     SettingsUpdateRequest,
     SupplierConfigRequest,
@@ -822,6 +826,9 @@ def _create_vcc_card(
         three_ds_email_account=payload.three_ds_email_account,
         available_balance=Decimal(str(payload.available_balance)),
         max_bind_count=payload.max_bind_count,
+        proxy_url=payload.proxy_url,
+        timezone_id=payload.timezone_id,
+        locale=payload.locale,
         status=VccStatus.ACTIVE,
     )
     db.add(card)
@@ -831,7 +838,7 @@ def _create_vcc_card(
             action="vcc.add",
             entity_type="vcc_card",
             entity_id=digits[-4:],
-            detail=f"bin={card.card_bin} ph={bool(card.ph_billing_address_json)}",
+            detail=f"bin={card.card_bin} ph={bool(card.ph_billing_address_json)} proxy={bool(card.proxy_url)}",
             ip=ip,
         )
     )
@@ -858,6 +865,9 @@ def admin_cards(db: Session = Depends(get_db)) -> dict:
                 "exp_year": card.exp_year,
                 "holder_name": card.holder_name,
                 "has_ph_billing": bool(card.ph_billing_address_json),
+                "proxy_bound": bool(card.proxy_url),
+                "timezone_id": card.timezone_id,
+                "locale": card.locale,
                 "three_ds_email_masked": mask_email(card.three_ds_email_account) if card.three_ds_email_account else None,
                 "available_balance": money(card.available_balance),
                 "reserved_balance": money(card.reserved_balance or 0),
@@ -1152,6 +1162,12 @@ def admin_update_card(
         card.available_balance = Decimal(str(payload.available_balance))
     if payload.reset_failed_count:
         card.failed_count = 0
+    if payload.proxy_url is not None:
+        card.proxy_url = payload.proxy_url or None
+    if payload.timezone_id is not None:
+        card.timezone_id = payload.timezone_id or None
+    if payload.locale is not None:
+        card.locale = payload.locale or None
     db.add(card)
     db.add(
         AuditLog(
@@ -1159,7 +1175,7 @@ def admin_update_card(
             action="vcc.update",
             entity_type="vcc_card",
             entity_id=str(card.id),
-            detail=f"status={card.status.value}",
+            detail=f"status={card.status.value} proxy={bool(card.proxy_url)}",
         )
     )
     db.commit()
@@ -1202,6 +1218,10 @@ def admin_update_product(
         product.price = Decimal(str(payload.price))
     if payload.badge is not None:
         product.badge = payload.badge or None
+    if payload.base_sales_count is not None:
+        product.base_sales_count = payload.base_sales_count
+    if payload.fulfillment_strategy is not None:
+        product.fulfillment_strategy = FulfillmentStrategy(payload.fulfillment_strategy)
     db.add(product)
     db.add(
         AuditLog(
@@ -1209,11 +1229,102 @@ def admin_update_product(
             action="product.update",
             entity_type="product",
             entity_id=str(product.id),
-            detail=f"active={product.active}",
+            detail=(
+                f"active={product.active} base_sales={product.base_sales_count} "
+                f"strategy={product.fulfillment_strategy.value}"
+            ),
         )
     )
     db.commit()
     return {"item": serialize_product(db, product)}
+
+
+@protected.post("/free-accounts/import")
+def admin_import_free_accounts(
+    payload: FreeAccountImportRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Park nurtured free accounts for JIT upgrades.
+
+    Line format: ``email----password----recovery[----session json]``. Nothing is
+    charged yet; these accounts cost nothing until an order claims one.
+    """
+    product = db.get(Product, payload.product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    if product.fulfillment_strategy != FulfillmentStrategy.JIT_ACCOUNT_RECHARGE:
+        raise HTTPException(
+            status_code=409,
+            detail="该商品的履约策略不是 JIT_ACCOUNT_RECHARGE，请先切换策略",
+        )
+    lines = [line.strip() for line in payload.text.splitlines() if line.strip()]
+    created = 0
+    skipped = 0
+    for line in lines:
+        parts = [part.strip() for part in line.split("----")]
+        email = parts[0]
+        if "@" not in email:
+            skipped += 1
+            continue
+        if db.query(FreeAccountPool.id).filter(FreeAccountPool.email == email).first():
+            skipped += 1
+            continue
+        recovery = parts[2] if len(parts) > 2 and parts[2] else None
+        session = parts[3] if len(parts) > 3 and parts[3] else None
+        db.add(
+            FreeAccountPool(
+                product_id=product.id,
+                email=email,
+                password_enc=encrypt_text(parts[1] if len(parts) > 1 and parts[1] else ""),
+                recovery_enc=encrypt_text(recovery) if recovery else None,
+                session_raw_enc=encrypt_text(session) if session else None,
+                status=FreeAccountStatus.AVAILABLE,
+            )
+        )
+        created += 1
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="free_accounts.import",
+            entity_type="product",
+            entity_id=str(product.id),
+            detail=f"created={created} skipped={skipped}",
+        )
+    )
+    db.commit()
+    return {"created": created, "skipped": skipped}
+
+
+@protected.get("/free-accounts")
+def admin_free_accounts(
+    product_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    query = db.query(FreeAccountPool).order_by(FreeAccountPool.id.desc())
+    if product_id is not None:
+        query = query.filter(FreeAccountPool.product_id == product_id)
+    rows = query.limit(500).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "product_id": row.product_id,
+                "email": row.email,
+                "status": row.status.value,
+                "has_session": bool(row.session_raw_enc),
+                "has_recovery": bool(row.recovery_enc),
+                "order_item_id": row.order_item_id,
+                "note": row.note,
+                "created_at": row.created_at.isoformat() + "Z",
+            }
+            for row in rows
+        ],
+        "available": db.query(func.count(FreeAccountPool.id))
+        .filter(FreeAccountPool.status == FreeAccountStatus.AVAILABLE)
+        .scalar()
+        or 0,
+    }
 
 
 @protected.post("/accounts/import")
