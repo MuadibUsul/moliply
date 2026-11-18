@@ -35,6 +35,21 @@ def execute_jit_job(self, job_id: int) -> None:
         db.close()
 
 
+@celery_app.task(name="app.tasks.celery_worker.sweep_sms_tasks_task")
+def sweep_sms_tasks_task() -> int:
+    """Expire overdue SMS tasks: cancel upstream and release the code."""
+    from app.services import sms as sms_service
+
+    db = SessionLocal()
+    try:
+        expired = sms_service.sweep_expired(db)
+        if expired:
+            logger.info("Expired %s SMS tasks", expired)
+        return expired
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.celery_worker.scan_direct_crypto_payments_task")
 def scan_direct_crypto_payments_task() -> int:
     from app.services import crypto_watcher

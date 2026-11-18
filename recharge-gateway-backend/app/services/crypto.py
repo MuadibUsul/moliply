@@ -109,3 +109,11 @@ def card_fingerprint(digits: str) -> str:
     import hashlib
 
     return hashlib.sha256("".join(ch for ch in digits if ch.isdigit()).encode("utf-8")).hexdigest()
+
+
+def mask_phone(number: str | None) -> str:
+    """Keep the dialling prefix and last two digits, hide the rest."""
+    digits = "".join(ch for ch in (number or "") if ch.isdigit())
+    if len(digits) < 6:
+        return "***"
+    return f"+{digits[:2]}******{digits[-2:]}"

@@ -183,6 +183,8 @@ export type RedeemVerify = {
   bound_email_masked: string | null;
   session_kind: "chatgpt" | "claude";
   requires_session?: boolean;
+  /** SMS codes open the receipt workbench instead of the charge wizard. */
+  sms?: boolean;
   redeemable: boolean;
   channel_mode: string;
 };

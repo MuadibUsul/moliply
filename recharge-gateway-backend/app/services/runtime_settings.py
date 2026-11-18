@@ -36,6 +36,8 @@ SECRET_KEYS = {
     "smtp_password",
     "feishu_webhook_url",
     "feishu_secret",
+    "smspool_api_key",
+    "fivesim_api_key",
     "ph_residential_proxy_url",
     "us_residential_proxy_url",
 }
@@ -72,6 +74,10 @@ INT_KEYS = {
     "vcc_cooldown_minutes",
     "vcc_pool_watermark",
     "vcc_card_retry_limit",
+    "sms_receive_window_seconds",
+    "sms_cancel_min_seconds",
+    "sms_weight_smspool",
+    "sms_weight_fivesim",
 }
 
 FLOAT_KEYS = {
@@ -181,6 +187,11 @@ ENV_DEFAULTS = {
     "proxy_health_url": lambda: settings.proxy_health_url,
     "proxy_required_country": lambda: settings.proxy_required_country,
     "us_bin_allowlist": lambda: settings.us_bin_allowlist,
+    "sms_receive_window_seconds": lambda: settings.sms_receive_window_seconds,
+    "sms_cancel_min_seconds": lambda: settings.sms_cancel_min_seconds,
+    "sms_default_provider": lambda: settings.sms_default_provider,
+    "sms_weight_smspool": lambda: settings.sms_weight_smspool,
+    "sms_weight_fivesim": lambda: settings.sms_weight_fivesim,
     "rdvcc_imap_host": lambda: settings.rdvcc_imap_host,
     "rdvcc_imap_port": lambda: settings.rdvcc_imap_port,
     "rdvcc_imap_user": lambda: settings.rdvcc_imap_user,

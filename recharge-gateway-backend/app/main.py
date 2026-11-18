@@ -17,6 +17,7 @@ from app.services import redeem as redeem_service
 from app.services import runtime_settings as runtime
 from app.services.orders import OrderError
 from app.services.redeem import RedeemError
+from app.services.sms.service import SmsError
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -99,6 +100,11 @@ async def redeem_error_handler(_: Request, exc: RedeemError) -> JSONResponse:
     )
 
 
+@app.exception_handler(SmsError)
+async def sms_error_handler(_: Request, exc: SmsError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message, "code": exc.code})
+
+
 @app.exception_handler(OrderError)
 async def order_error_handler(_: Request, exc: OrderError) -> JSONResponse:
     return JSONResponse(
@@ -156,11 +162,12 @@ def brand() -> dict:
     }
 
 
-from app.api import admin_manage, auth, payments, public_redeem, store  # noqa: E402
+from app.api import admin_manage, auth, payments, public_redeem, sms, store  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(store.router)
 app.include_router(public_redeem.router)
+app.include_router(sms.router)
 app.include_router(payments.router)
 app.include_router(admin_manage.router)
 app.include_router(admin_manage.protected)

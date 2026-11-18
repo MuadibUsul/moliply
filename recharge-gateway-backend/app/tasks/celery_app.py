@@ -27,6 +27,11 @@ celery_app.conf.update(
             "task": "app.tasks.celery_worker.cleanup_tokens_task",
             "schedule": crontab(minute="*"),
         },
+        # Every 20s: the window is 120s, so a task is refunded at most 20s late.
+        "sweep-sms-tasks": {
+            "task": "app.tasks.celery_worker.sweep_sms_tasks_task",
+            "schedule": 20.0,
+        },
         "scan-direct-crypto-payments": {
             "task": "app.tasks.celery_worker.scan_direct_crypto_payments_task",
             "schedule": crontab(minute="*"),

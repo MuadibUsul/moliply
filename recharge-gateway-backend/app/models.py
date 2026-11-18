@@ -70,6 +70,28 @@ class CodeStatus(str, enum.Enum):
     LOCKED = "LOCKED"
     USED = "USED"
     DISABLED = "DISABLED"
+    # SMS receipt: the code is held while a number is live, but nothing has been
+    # delivered yet. It returns to UNUSED on a free number change and only
+    # becomes USED once an OTP actually arrives, so a failed receipt costs the
+    # customer nothing.
+    LOCKED_WAITING_OTP = "LOCKED_WAITING_OTP"
+
+
+class SmsTaskStatus(str, enum.Enum):
+    WAITING = "WAITING"
+    RECEIVED = "RECEIVED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+SMS_STATUS_LABELS: dict[str, str] = {
+    "WAITING": "等待验证码",
+    "RECEIVED": "已收到验证码",
+    "EXPIRED": "超时未收到，已退回",
+    "CANCELLED": "已取消换号",
+    "FAILED": "取号失败",
+}
 
 
 class ChannelMode(str, enum.Enum):
@@ -97,9 +119,20 @@ class SkuType(str, enum.Enum):
     GPT_PRO_200 = "GPT_PRO_200"
     GPT_PRO_500 = "GPT_PRO_500"
     CODEX_SMS_US = "CODEX_SMS_US"
+    SMS_VERIFY = "SMS_VERIFY"
     API_CREDIT_100 = "API_CREDIT_100"
     GENERIC_DIGITAL = "GENERIC_DIGITAL"
 
+
+# SKUs delivered by leasing a number instead of upgrading an account.
+SMS_SKUS: frozenset[str] = frozenset({"CODEX_SMS_US", "SMS_VERIFY"})
+
+
+def _is_sms(self: "SkuType") -> bool:
+    return self.value in SMS_SKUS
+
+
+SkuType.is_sms = property(_is_sms)  # type: ignore[attr-defined]
 
 SKU_LABELS: dict[str, str] = {
     "CHATGPT_PLUS_1M": "ChatGPT Plus · 1 个月",
@@ -112,6 +145,7 @@ SKU_LABELS: dict[str, str] = {
     "GPT_PRO_200": "GPT Pro · 200",
     "GPT_PRO_500": "GPT Pro · 500",
     "CODEX_SMS_US": "Codex 美区 · 接码",
+    "SMS_VERIFY": "海外实体卡 · 自助接码",
     "API_CREDIT_100": "API 额度 · 100",
     "GENERIC_DIGITAL": "通用数字权益",
 }
@@ -394,6 +428,38 @@ class FreeAccountPool(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
 
+class SmsVerificationTask(Base):
+    """One live number leased from an upstream SMS provider.
+
+    The row is the customer-facing handle: it carries the number to display and
+    the countdown deadline, and it is the only place the upstream order id is
+    kept. A task in ``WAITING`` holds its activation code at
+    ``LOCKED_WAITING_OTP``; ending without an OTP releases both.
+    """
+
+    __tablename__ = "sms_verification_tasks"
+
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code_id: Mapped[int] = mapped_column(ForeignKey("activation_codes.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    upstream_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    service_name: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    country_code: Mapped[str] = mapped_column(String(4), nullable=False, default="US")
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    otp_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    raw_sms: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[SmsTaskStatus] = mapped_column(
+        enum_column(SmsTaskStatus, 16), nullable=False, default=SmsTaskStatus.WAITING, index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    client_ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class JitAccountJob(Base):
     """One paid order item on its way through the JIT upgrade pipeline."""
 
@@ -589,6 +655,9 @@ __all__ = [
     "RegionPreference",
     "SKU_LABELS",
     "SkuType",
+    "SMS_STATUS_LABELS",
+    "SmsTaskStatus",
+    "SmsVerificationTask",
     "User",
     "VccCard",
     "VccStatus",

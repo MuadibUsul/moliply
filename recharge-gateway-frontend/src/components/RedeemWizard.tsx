@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SessionExtractGuide } from "@/components/SessionExtractGuide";
 import { SessionGuideModal } from "@/components/SessionGuideModal";
+import { SmsWorkbench } from "@/components/SmsWorkbench";
 import { LAST_TASK_KEY } from "@/config/brand";
 import { api } from "@/lib/api";
 import { parseSessionLocally } from "@/lib/sessionParse";
@@ -64,7 +65,7 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
     () => parseSessionLocally(sessionRaw, verify?.session_kind || "chatgpt"),
     [sessionRaw, verify?.session_kind],
   );
-  const needsSession = verify?.requires_session !== false;
+  const needsSession = verify?.requires_session !== false && !verify?.sms;
 
   const verifyCode = useCallback(
     async (raw?: string) => {
@@ -88,8 +89,8 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
           setVerifyError(
             data.status === "USED"
               ? "该激活码已完成核销。如需再次充值，请重新购买。"
-              : data.status === "LOCKED"
-                ? "该激活码正在充能中，请稍后在订单中查看进度。"
+              : data.status === "LOCKED" || data.status === "LOCKED_WAITING_OTP"
+                ? "该激活码正在取号/充能中，请稍后在订单中查看进度。"
                 : "该激活码当前不可用，请联系客服。",
           );
           return;
@@ -309,14 +310,20 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
 
           {step === 2 && verify && (
             <div className="animate-fade-up">
-              <p className="eyebrow">STEP 02 / SESSION VERIFICATION</p>
+              <p className="eyebrow">STEP 02 / {verify.sms ? "SMS RECEIPT" : "SESSION VERIFICATION"}</p>
               <h2 className="mt-3 text-xl font-semibold text-slate-50">
-                {verify.session_kind === "claude" ? "提交 Claude Session Key" : "提交 Session JSON"}
+                {verify.sms
+                  ? "自助取号收码"
+                  : verify.session_kind === "claude"
+                    ? "提交 Claude Session Key"
+                    : "提交 Session JSON"}
               </h2>
               <p className="mt-2 text-xs leading-6 text-slate-500">
-                {verify.session_kind === "claude"
-                  ? "按指引粘贴 Claude sessionKey，由上游通道完成账户核验与充值。"
-                  : "按照指引粘贴 ChatGPT Session JSON，由后台进行账号状态预检。"}
+                {verify.sms
+                  ? "取号后把号码填入目标平台，验证码到达会自动显示；收不到可免费换号。"
+                  : verify.session_kind === "claude"
+                    ? "按指引粘贴 Claude sessionKey，由上游通道完成账户核验与充值。"
+                    : "按照指引粘贴 ChatGPT Session JSON，由后台进行账号状态预检。"}
               </p>
 
               <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-3.5 py-3 text-[11px]">
@@ -325,7 +332,11 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
                 <span className="ml-auto text-[10px] text-emerald-200/60">{verify.sku_label}</span>
               </div>
 
-              {needsSession ? (
+              {verify.sms ? (
+                <div className="mt-5">
+                  <SmsWorkbench code={verify.code} />
+                </div>
+              ) : needsSession ? (
                 <>
                   <SessionExtractGuide kind={verify.session_kind} />
 
@@ -392,16 +403,18 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
               )}
 
               <div className="mt-6 grid gap-2 sm:grid-cols-[1.4fr_0.8fr]">
-                <button
-                  type="button"
-                  onClick={() => void startRecharge()}
-                  disabled={submitting || (needsSession && !!sessionRaw.trim() && !localParse.ok)}
-                  className="btn-primary w-full"
-                >
-                  {submitting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                  {submitting ? "正在预检并创建任务..." : "提交并开始充能"}
-                  {!submitting && <ArrowRight size={15} />}
-                </button>
+                {!verify.sms && (
+                  <button
+                    type="button"
+                    onClick={() => void startRecharge()}
+                    disabled={submitting || (needsSession && !!sessionRaw.trim() && !localParse.ok)}
+                    className="btn-primary w-full"
+                  >
+                    {submitting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    {submitting ? "正在预检并创建任务..." : "提交并开始充能"}
+                    {!submitting && <ArrowRight size={15} />}
+                  </button>
+                )}
                 <button type="button" onClick={() => { setStep(1); setSubmitError(null); }} className="btn-secondary w-full">
                   返回修改激活码
                 </button>

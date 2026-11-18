@@ -16,13 +16,15 @@ import logging
 
 from app.database import SessionLocal, init_db
 from app.models import FulfillmentStrategy, Product
-from app.seed import build_icebreaker, build_jit_account
+from app.seed import build_icebreaker, build_jit_account, build_sms_ai, build_sms_universal
 
 logging.basicConfig(level="INFO")
 
 NEW_PRODUCTS = (
     ("ai-icebreaker-trial", build_icebreaker),
     ("chatgpt-plus-jit-account", build_jit_account),
+    ("sms-ai-verify", build_sms_ai),
+    ("sms-universal-verify", build_sms_universal),
 )
 
 

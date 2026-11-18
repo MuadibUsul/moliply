@@ -182,6 +182,86 @@ def build_jit_account() -> Product:
         sort_order=4,
     )
 
+def build_sms_ai() -> Product:
+    """Receipt for Claude/ChatGPT signups: the volume SKU of this category."""
+    return _product(
+        slug="sms-ai-verify",
+        name="[秒发] Claude / ChatGPT 海外实体卡自助接码",
+        subtitle="100% Non-VoIP 实体卡号段 · 收不到码不扣次数",
+        category=ProductCategory.DIGITAL,
+        brand="MOLIPLY",
+        logo_key="default",
+        delivery_type=DeliveryType.ACTIVATION_CODE,
+        price="8.80",
+        original_price="15.00",
+        sold_count=0,
+        base_sales_count=286,
+        badge="秒发",
+        tags=["Non-VoIP", "实体卡号段", "换号不扣次"],
+        warranty="收不到码免费换号 · 收到码才核销",
+        delivery_note="付款后立即发放接码激活码，取号即显示完整海外号码",
+        description=(
+            "为 Claude / ChatGPT 注册准备一个干净的海外实体卡号码，取号后号码直接显示，短信到达后自动高亮验证码。\n\n"
+            "120 秒内没收到短信可以免费换号，上游同步取消退款，激活码不扣次数；只有真正收到验证码才核销。"
+        ),
+        usage_steps=[
+            "下单并完成支付",
+            "在订单页面复制接码激活码",
+            "打开接码工作台，验证激活码并选择平台与地区",
+            "把分配的号码填入目标平台",
+            "收到短信后复制高亮验证码",
+        ],
+        faq=[
+            {"q": "什么是 Non-VoIP？", "a": "号码来自真实移动运营商的实体卡号段，不是网络电话，注册通过率明显更高。"},
+            {"q": "收不到码会扣次数吗？", "a": "不会。120 秒未收到可免费换号，激活码回到可用状态。"},
+            {"q": "同一个号码能收多次码吗？", "a": "一次取号对应一条验证短信；收到码后本次即完成核销。"},
+        ],
+        variants=[
+            {"label": "单次接码", "months": 1, "price": "8.80", "original_price": "15.00", "sku_type": "SMS_VERIFY"}
+        ],
+        sort_order=0,
+    )
+
+
+def build_sms_universal() -> Product:
+    """Same engine, priced for one-off Google/Apple/Telegram verification."""
+    return _product(
+        slug="sms-universal-verify",
+        name="[通用] Google / Apple ID / TG 海外纯净接码",
+        subtitle="24H 全自动取号收码 · 通用平台",
+        category=ProductCategory.DIGITAL,
+        brand="MOLIPLY",
+        logo_key="default",
+        delivery_type=DeliveryType.ACTIVATION_CODE,
+        price="4.90",
+        original_price="9.90",
+        sold_count=0,
+        base_sales_count=342,
+        badge="通用",
+        tags=["全自动", "24H", "多平台"],
+        warranty="收不到码免费换号 · 收到码才核销",
+        delivery_note="付款后立即发放接码激活码，工作台内自助取号",
+        description=(
+            "Google、Apple ID、Telegram 等平台的验证短信代收，24 小时全自动，无需人工排队。\n\n"
+            "同样支持 120 秒内免费换号，收不到码不扣次数，适合批量注册与低频验证。"
+        ),
+        usage_steps=[
+            "下单并完成支付",
+            "复制接码激活码",
+            "在工作台选择平台与地区并取号",
+            "把号码填入目标平台",
+            "收到短信后复制验证码",
+        ],
+        faq=[
+            {"q": "支持哪些平台？", "a": "Google、Apple ID、Telegram 等常见平台；Claude / ChatGPT 建议购买专用档位成功率更高。"},
+            {"q": "收不到码怎么办？", "a": "45 秒后可点免费换号，不扣激活码次数。"},
+        ],
+        variants=[
+            {"label": "单次接码", "months": 1, "price": "4.90", "original_price": "9.90", "sku_type": "SMS_VERIFY"}
+        ],
+        sort_order=0,
+    )
+
 
 def seed_demo_data(db: Session) -> None:
     if db.query(Product.id).first():
@@ -500,6 +580,8 @@ def seed_demo_data(db: Session) -> None:
     icebreaker = build_icebreaker()
     products = [
         icebreaker,
+        build_sms_ai(),
+        build_sms_universal(),
         chatgpt_recharge,
         claude_account,
         chatgpt_account,
@@ -528,6 +610,7 @@ def seed_demo_data(db: Session) -> None:
             SkuType.CLAUDE_PRO_1M: 60,
             SkuType.API_CREDIT_100: 30,
             SkuType.GENERIC_DIGITAL: 200,
+            SkuType.SMS_VERIFY: 80,
         }
         seen: set[str] = set()
         for sku, count in stock_plan.items():

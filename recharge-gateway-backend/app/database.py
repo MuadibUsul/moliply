@@ -125,7 +125,7 @@ def ensure_schema_compatibility() -> None:
     missing_tables = [
         table
         for name, table in Base.metadata.tables.items()
-        if name in {"free_account_pool", "jit_account_jobs"} and name not in table_names
+        if name in {"free_account_pool", "jit_account_jobs", "sms_verification_tasks"} and name not in table_names
     ]
     if missing_tables:
         with engine.begin() as connection:

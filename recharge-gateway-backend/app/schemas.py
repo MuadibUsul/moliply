@@ -19,6 +19,18 @@ class SessionRequest(CodeRequest):
     session_raw: str = Field(default="", max_length=262_144)
 
 
+class SmsLeaseRequest(CodeRequest):
+    service: str = Field(default="claude", min_length=2, max_length=24)
+    country: str = Field(default="US", min_length=2, max_length=2)
+
+
+class SmsChangeRequest(StrictModel):
+    # Reserved for a future explicit region switch; the current flow keeps the
+    # same service and country, so an empty body is valid.
+    service: str | None = Field(default=None, max_length=24)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+
+
 class OrderItemIn(StrictModel):
     product_id: int
     variant_id: int | None = None
@@ -77,6 +89,7 @@ class CodeGenerateRequest(StrictModel):
         "GPT_PRO_200",
         "GPT_PRO_500",
         "CODEX_SMS_US",
+        "SMS_VERIFY",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"
@@ -100,6 +113,7 @@ class CodeImportRequest(StrictModel):
         "GPT_PRO_200",
         "GPT_PRO_500",
         "CODEX_SMS_US",
+        "SMS_VERIFY",
         "API_CREDIT_100",
         "GENERIC_DIGITAL",
     ] = "CHATGPT_PLUS_1M"

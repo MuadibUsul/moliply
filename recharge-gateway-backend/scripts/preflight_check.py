@@ -330,11 +330,35 @@ def check_crypto_rules() -> None:
             record(FAIL, section, "NOWPayments 凭证已配置", "已开启但缺少 API key")
 
 
+def check_sms() -> None:
+    from app.services import sms as sms_service
+
+    section = "接码通道"
+    ready = sms_service.available_providers()
+    if ready:
+        record(PASS, section, "接码上游已配置", "、".join(ready))
+    else:
+        record(WARN, section, "接码上游已配置", "SMSPOOL/FIVESIM 均未配置，接码商品无法取号")
+
+    weights = {name: sms_service.build_provider(name).configured() for name in sms_service.available_providers()}
+    if len(weights) == 1:
+        record(WARN, section, "接码上游有冗余", "只有一家，单点故障无兜底")
+    elif len(weights) > 1:
+        record(PASS, section, "接码上游有冗余", "")
+
+    window = sms_service.window_seconds()
+    if 60 <= window <= 300:
+        record(PASS, section, "收码窗口在合理区间", f"{window} 秒")
+    else:
+        record(WARN, section, "收码窗口在合理区间", f"{window} 秒，建议 60–300")
+
+
 SECTIONS = (
     ("核心密钥", check_secrets),
     ("支付通道", check_payment),
     ("履约库存", check_fulfilment),
     ("基础履约提醒", check_crypto_rules),
+    ("接码通道", check_sms),
     ("基础设施", check_infra),
 )
 

@@ -68,10 +68,12 @@ REDEEMABLE_SKUS = {
     # The icebreaker trial card is redeemed in the same wizard so a first-time
     # buyer walks the exact flow they will use for a real top-up.
     SkuType.GENERIC_DIGITAL,
+    # SMS SKUs redeem into the receipt workbench rather than the charge wizard.
+    SkuType.SMS_VERIFY,
 }
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
 # SMS reception needs a number, not an account: no Session pre-check at all.
-SMS_SKUS = {SkuType.CODEX_SMS_US}
+SMS_SKUS = {SkuType.CODEX_SMS_US, SkuType.SMS_VERIFY}
 # The icebreaker trial card is redeemed to confirm the delivery chain; it has no
 # account to upgrade, so the wizard may skip the Session step entirely.
 NO_SESSION_SKUS = SMS_SKUS | {SkuType.GENERIC_DIGITAL}
@@ -81,6 +83,7 @@ CODE_STATUS_LABELS = {
     "LOCKED": "充能执行中",
     "USED": "已核销",
     "DISABLED": "已作废",
+    "LOCKED_WAITING_OTP": "取号中 · 等待验证码",
 }
 
 STATE_PROGRESS = {
@@ -204,7 +207,12 @@ def verify_code(db: Session, raw_code: str, ip: str) -> dict:
         "bound_email_masked": mask_email(code.bound_account_email) if code.bound_account_email else None,
         "session_kind": expected_kind,
         "requires_session": code.sku_type not in NO_SESSION_SKUS,
-        "redeemable": code.status == CodeStatus.UNUSED,
+        # SMS codes are used by the receipt workbench; the charge wizard must
+        # hand them over instead of asking for a Session.
+        "sms": code.sku_type.is_sms,
+        # A number already leased is a live state, not a dead end: the workbench
+        # picks the existing task back up instead of refusing the code.
+        "redeemable": code.status in {CodeStatus.UNUSED, CodeStatus.LOCKED_WAITING_OTP},
         "channel_mode": code.channel_mode.value,
     }
 

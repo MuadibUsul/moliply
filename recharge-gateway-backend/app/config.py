@@ -241,6 +241,20 @@ class Settings(BaseSettings):
     rdvcc_3ds_code_window_seconds: int = 90
 
     # ------------------------------------------------------------------
+    # Self-service SMS verification (Non-VoIP numbers)
+    # ------------------------------------------------------------------
+    # ``sms_receive_window_seconds`` is the free re-lease window: a number that
+    # receives nothing inside it is cancelled upstream and the code is released.
+    sms_receive_window_seconds: int = 120
+    sms_cancel_min_seconds: int = 45
+    sms_default_provider: str = ""
+    smspool_api_key: str = ""
+    fivesim_api_key: str = ""
+    # Split of traffic between suppliers; 0 disables a driver entirely.
+    sms_weight_smspool: int = 50
+    sms_weight_fivesim: int = 50
+
+    # ------------------------------------------------------------------
     # Outbound delivery email (optional)
     # ------------------------------------------------------------------
     smtp_host: str = ""
