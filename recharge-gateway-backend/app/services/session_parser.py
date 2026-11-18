@@ -66,6 +66,11 @@ class SessionInfo:
     # JSON carrying it, and rejects accessToken on its own.
     session_token: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    # End of the *current paid window* when the payload declares one, and the
+    # explicit "is paid" flag when one exists. Both come from the session JSON;
+    # the remote account check can refine them.
+    plan_expires_at: datetime | None = None
+    plan_active_flag: bool | None = None
 
     @property
     def masked_email(self) -> str:
@@ -83,6 +88,104 @@ class AccountCheck:
     message: str
     error_code: str | None = None
     warning: str | None = None
+
+
+ALREADY_SUBSCRIBED_MESSAGE = (
+    "检测到该账号当前已有生效中的会员订阅，官方机制不支持有效期内叠加充值。"
+    "请等待到期后再使用，或更换其他免费账号（您的 MOLI 激活码未被消耗，依然有效）"
+)
+
+# Where a paid window may be declared. The session JSON is not a billing
+# document, so every plausible shape is read and the *last* one that parses
+# wins only when it is a real timestamp.
+EXPIRY_KEYS = (
+    "plan_expires_at",
+    "plan_expires",
+    "subscription_expires_at",
+    "subscription_expires",
+    "active_until",
+    "paid_until",
+    "current_period_end",
+    "renews_at",
+)
+# Inside a subscription/entitlement container a bare ``expires_at`` is the paid
+# window; at the top level it can mean the session itself, so it is only used
+# there via the plan-specific keys above.
+CONTAINER_EXPIRY_KEYS = EXPIRY_KEYS + ("expires_at", "expires", "end", "until")
+SUBSCRIPTION_CONTAINERS = ("account", "subscription", "entitlement", "entitlements", "billing")
+PAID_FLAG_KEYS = ("is_paid_subscription_active", "has_active_subscription", "paid")
+
+
+def _first_expiry(container: dict[str, Any], keys: tuple[str, ...] = EXPIRY_KEYS) -> datetime | None:
+    for key in keys:
+        parsed = _parse_iso(container.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def entitlement_expiry(data: dict[str, Any] | None) -> datetime | None:
+    """The end of the current paid window, if the payload declares one.
+
+    A ``plus`` plan whose window already closed must stay redeemable, so this is
+    what separates "subscribed" from "subscribed and still valid".
+    """
+    if not data:
+        return None
+    candidates: list[datetime] = []
+    for container_key in SUBSCRIPTION_CONTAINERS:
+        container = data.get(container_key)
+        items = container if isinstance(container, list) else [container]
+        for item in items:
+            if isinstance(item, dict):
+                parsed = _first_expiry(item, CONTAINER_EXPIRY_KEYS)
+                if parsed is not None:
+                    candidates.append(parsed)
+    direct = _first_expiry(data)
+    if direct is not None:
+        candidates.append(direct)
+    return max(candidates) if candidates else None
+
+
+def _explicit_paid_flag(data: dict[str, Any] | None) -> bool | None:
+    if not data:
+        return None
+    containers = [data]
+    for container_key in SUBSCRIPTION_CONTAINERS:
+        container = data.get(container_key)
+        if isinstance(container, dict):
+            containers.append(container)
+        elif isinstance(container, list):
+            containers.extend(item for item in container if isinstance(item, dict))
+    for container in containers:
+        for key in PAID_FLAG_KEYS:
+            value = container.get(key)
+            if isinstance(value, bool):
+                return value
+    return None
+
+
+def plan_is_currently_active(session: "SessionInfo") -> bool:
+    """True only for a paid plan whose window has not already closed.
+
+    The paid plan name alone is not enough: renewal-cancelled accounts sit at
+    ``plus`` until the period ends, and a stale copy keeps saying ``plus`` after
+    that. An expired window means the account is redeemable again.
+    """
+    plan = (session.plan or "").lower()
+    if plan not in ACTIVE_PLAN_TOKENS and plan not in PLAN_LABELS:
+        return False
+    if plan in {"free", "basic", "unknown", ""}:
+        return False
+    expires = session.plan_expires_at
+    if expires is None:
+        # No window declared: trust the flag when one is present, else trust the
+        # paid plan name so a real subscriber is still blocked.
+        flag = session.plan_active_flag
+        if flag is not None:
+            return flag
+        return True
+    return expires > datetime.utcnow()
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -241,6 +344,8 @@ def parse_session(raw: str) -> SessionInfo:
         plan=plan,
         display_name=str(user.get("name") or ""),
         currency_hint=currency_hint,
+        plan_expires_at=entitlement_expiry(data),
+        plan_active_flag=_explicit_paid_flag(data),
     )
 
 
@@ -271,18 +376,19 @@ def _scan_plan_payload(payload: Any) -> tuple[bool, str]:
 def check_account(session: SessionInfo) -> AccountCheck:
     """Zero-cost plan pre-check.
 
-    A locally-declared Plus/Pro plan is rejected immediately. The optional
-    remote check catches stale local JSON where the account was upgraded after
-    the session was copied.
+    A locally-declared Plus/Pro plan *inside its paid window* is rejected
+    immediately; an expired one is allowed through. The optional remote check
+    catches stale local JSON where the account was upgraded after the session
+    was copied.
     """
     if session.kind != "chatgpt":
         return AccountCheck(True, "unknown", "Claude Session 已接收，将由上游通道完成核验与充值")
 
-    if session.plan in ACTIVE_PLAN_TOKENS:
+    if plan_is_currently_active(session):
         return AccountCheck(
             False,
             session.plan,
-            "该账号当前已是会员，无需重复充值，激活码未锁定",
+            ALREADY_SUBSCRIBED_MESSAGE,
             error_code="ALREADY_SUBSCRIBED",
         )
 
@@ -311,11 +417,16 @@ def check_account(session: SessionInfo) -> AccountCheck:
         if response.status_code >= 400:
             raise RuntimeError(f"OpenAI account check returned {response.status_code}")
         active, plan = _scan_plan_payload(response.json())
-        if active or plan in ACTIVE_PLAN_TOKENS:
+        payload = response.json()
+        remote_expiry = entitlement_expiry(payload if isinstance(payload, dict) else None)
+        if remote_expiry is not None:
+            session.plan_expires_at = remote_expiry
+            active = remote_expiry > datetime.utcnow()
+        if active or (plan in ACTIVE_PLAN_TOKENS and session.plan_expires_at is None):
             return AccountCheck(
                 False,
                 plan,
-                "该账号当前已是会员，无需重复充值，激活码未锁定",
+                ALREADY_SUBSCRIBED_MESSAGE,
                 error_code="ALREADY_SUBSCRIBED",
             )
         return AccountCheck(True, plan, "账号状态正常，可立即通过模力补给升级 Plus")

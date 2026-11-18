@@ -12,3 +12,11 @@ class RechargeError(Exception):
         # Operator-facing diagnostics; never shown to the customer.
         self.error_detail = ""
         self.artifact_path: str | None = None
+
+
+class PrecheckError(RechargeError):
+    """A rejected pre-check. Nothing was spent, so the code stays untouched."""
+
+    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+        super().__init__(code, message, release_code=True)
+        self.status_code = status_code
