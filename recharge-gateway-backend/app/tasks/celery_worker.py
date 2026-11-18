@@ -24,7 +24,8 @@ def execute_jit_job(self, job_id: int) -> None:
     jit_delivery.run_jit_job(job_id)
 
 
-@celery_app.task(name="app.tasks.celery_worker.cleanup_tokens_task")def cleanup_tokens_task() -> int:
+@celery_app.task(name="app.tasks.celery_worker.cleanup_tokens_task")
+def cleanup_tokens_task() -> int:
     db = SessionLocal()
     try:
         cleared = redeem_service.cleanup_sensitive_tokens(db)

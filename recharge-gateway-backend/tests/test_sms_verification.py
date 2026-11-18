@@ -378,3 +378,10 @@ def test_resuming_a_held_code_returns_the_same_number(db, fake):
     assert again.task_id == first.task_id
     assert again.phone_number == first.phone_number
     assert len(fake.leased) == 1
+
+
+def test_celery_worker_registers_the_sms_sweep():
+    """A broken decorator line once shipped to prod; import the module for real."""
+    import app.tasks.celery_worker as worker
+
+    assert "app.tasks.celery_worker.sweep_sms_tasks_task" in worker.celery_app.tasks
