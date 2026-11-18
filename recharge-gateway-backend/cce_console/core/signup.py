@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from core.cloudflare import open_with_challenge_retry
 from core.mail_reader import GmailReader, MailError
 
 logger = logging.getLogger(__name__)
@@ -144,16 +145,16 @@ async def run_signup(
     reader = GmailReader(email, gmail_app_password)
     started = datetime.utcnow()
 
+    # The interstitial needs a reload to clear; a plain wait never does it.
     try:
-        await page.goto(SIGNUP_URL, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+        await open_with_challenge_retry(page, SIGNUP_URL, timeout_ms=int(timeout * 1000))
     except Exception as exc:  # noqa: BLE001
-        return SignupOutcome("failed", f"打不开注册页：{exc.__class__.__name__}")
+        return SignupOutcome("needs_human", f"打不开注册页：{exc}", url=page.url, retryable=True)
 
     await asyncio.sleep(3.0)
 
-    # Cloudflare challenge: it usually clears itself, and the marker text is the
-    # only signal we get. Wait it out before touching the form.
-    for _ in range(6):
+    # Anything the challenge left behind (a captcha widget) still gets a chance.
+    for _ in range(2):
         body = ""
         try:
             body = (await page.inner_text("body"))[:400].lower()

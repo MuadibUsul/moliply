@@ -514,6 +514,14 @@ npm run build
 7. 配置支付回调、上游 API、SMTP、监控与数据库备份；
 8. 用小额真实订单跑通支付 → 发码 → 核销 → 售后闭环。
 
+切到 `PAYMENT_MODE=live` 之前，先跑一遍只读自检，把报告的 `[FAIL]` 全部清零：
+
+```bash
+cd recharge-gateway-backend && python scripts/preflight_check.py            # --strict 连 WARN 也判失败
+```
+
+它会检查核心密钥是否仍是示例值、支付宝/微信密钥能否真正签名、本地卡池或上游是否至少有一条可用、迁移是否在 head、Redis/Celery 是否应答；不打印任何密钥内容。
+
 备份重点：Postgres 数据 + `.env`（尤其 `MASTER_AES_KEY`）+ Nginx 证书。
 
 ---
@@ -570,6 +578,8 @@ npm run build
 - [共享服务器隔离部署](deploy/README.md)
 - [开业上线清单](deploy/GO-LIVE.md)
 - [自建上游渠道教程](docs/self-hosted-upstream.md)
+- [谷歌账号自动化供给方案](docs/GOOGLE-ACCOUNT-SIGNUP.md)
+- [Gmail 号工厂：批量注册与稳定存货](docs/GMAIL-ACCOUNT-FACTORY.md)
 - [独角数卡主题与支付插件](archive/storefront-theme-moliply/README.md)
 - [后端说明](recharge-gateway-backend/README.md)
 - [前端说明](recharge-gateway-frontend/README.md)

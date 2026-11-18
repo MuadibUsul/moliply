@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from core.cloudflare import open_with_challenge_retry
+
 logger = logging.getLogger(__name__)
 
 PLANS_URL = "https://claude.ai/upgrade"
@@ -134,9 +136,9 @@ async def run_subscribe(
 ) -> SubscribeOutcome:
     """Upgrade the logged-in account on this page to a paid plan."""
     try:
-        await page.goto(PLANS_URL, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+        await open_with_challenge_retry(page, PLANS_URL, timeout_ms=int(timeout * 1000))
     except Exception as exc:  # noqa: BLE001
-        return SubscribeOutcome("failed", f"打不开升级页：{exc.__class__.__name__}")
+        return SubscribeOutcome("needs_human", f"打不开升级页：{exc}", url=page.url)
 
     await asyncio.sleep(2.5)
     if "login" in page.url:

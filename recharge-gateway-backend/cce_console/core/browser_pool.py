@@ -32,6 +32,14 @@ class BrowserPoolError(RuntimeError):
 
 
 class BrowserPool:
+    """Owns browser launches.
+
+    ``headless`` defaults to ``"virtual"``: a real Xvfb window rather than the
+    Firefox headless build. claude.ai's Cloudflare rule treats plain headless as
+    a bot — the challenge never resolves — while the same profile and exit IP
+    pass under a virtual display.
+    """
+
     def __init__(
         self,
         database: Database,
@@ -39,7 +47,7 @@ class BrowserPool:
         inspector: ProxyInspector,
         *,
         max_concurrent: int = 5,
-        headless: bool = True,
+        headless: bool | str = "virtual",
     ) -> None:
         self._db = database
         self._profiles = profiles
@@ -54,7 +62,7 @@ class BrowserPool:
 
     @asynccontextmanager
     async def acquire_context(
-        self, profile_id: str, *, headless: bool | None = None, start_url: str | None = None
+        self, profile_id: str, *, headless: bool | str | None = None, start_url: str | None = None
     ) -> AsyncIterator[Any]:
         """Yield a persistent, fingerprinted BrowserContext, or raise.
 
@@ -108,7 +116,7 @@ class BrowserPool:
 
     async def verify_stealth(self, profile_id: str) -> dict[str, Any]:
         """Open ipinfo inside the real browser and report observed vs. stored."""
-        async with self.acquire_context(profile_id, headless=True) as context:
+        async with self.acquire_context(profile_id) as context:
             page = await context.new_page()
             await page.goto(STEALTH_URL, wait_until="domcontentloaded")
             body = await page.inner_text("body")

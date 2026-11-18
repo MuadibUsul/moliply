@@ -76,6 +76,8 @@ MOLIPLY 是一个「数字权益发卡 + AI 会员自动代充 + Claude 账号�
 ├── deploy/docker-compose.server.yml   # 生产隔离拓扑（Caddy 前置）
 ├── docs/self-hosted-upstream.md       # 上游契约逐字说明
 ├── docs/GO-LIVE-CHANNELS.md           # 双通道渐进式实盘切换 SOP
+├── docs/GOOGLE-ACCOUNT-SIGNUP.md      # CCE 邮箱供给：Workspace/Gmail 方案与成本
+├── docs/GMAIL-ACCOUNT-FACTORY.md      # Gmail 售卖站：原料、产线、存货与良率
 ├── archive/storefront-theme-moliply/  # 独角数卡主题 + PHP 支付插件（可选）
 ├── design/*.png                       # 17 张设计稿（被 .gitignore 排除）
 ├── .env.example                       # 237 行环境变量模板

@@ -230,7 +230,7 @@ async def run_job(db: Database, pool: Any, profile_id: str) -> dict[str, Any]:
     email = job["email"]
 
     try:
-        async with pool.acquire_context(profile_id, headless=True) as context:
+        async with pool.acquire_context(profile_id) as context:
             page = await context.new_page()
             return await _drive(db, pool, profile_id, job, email, password, app_password, page)
     except ProxyKillSwitchError as exc:

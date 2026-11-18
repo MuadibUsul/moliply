@@ -1,0 +1,227 @@
+{
+ "log": {
+  "level": "warn"
+ },
+ "inbounds": [
+  {
+   "type": "mixed",
+   "tag": "p-10101",
+   "listen": "127.0.0.1",
+   "listen_port": 10101
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10102",
+   "listen": "127.0.0.1",
+   "listen_port": 10102
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10103",
+   "listen": "127.0.0.1",
+   "listen_port": 10103
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10104",
+   "listen": "127.0.0.1",
+   "listen_port": 10104
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10105",
+   "listen": "127.0.0.1",
+   "listen_port": 10105
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10106",
+   "listen": "127.0.0.1",
+   "listen_port": 10106
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10107",
+   "listen": "127.0.0.1",
+   "listen_port": 10107
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10108",
+   "listen": "127.0.0.1",
+   "listen_port": 10108
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10109",
+   "listen": "127.0.0.1",
+   "listen_port": 10109
+  },
+  {
+   "type": "mixed",
+   "tag": "p-10110",
+   "listen": "127.0.0.1",
+   "listen_port": 10110
+  }
+ ],
+ "outbounds": [
+  {
+   "type": "socks",
+   "tag": "up-10101",
+   "server": "45.38.107.97",
+   "server_port": 6014,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10102",
+   "server": "64.137.96.74",
+   "server_port": 6641,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10103",
+   "server": "198.23.243.226",
+   "server_port": 6361,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10104",
+   "server": "38.154.185.97",
+   "server_port": 6370,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10105",
+   "server": "84.247.60.125",
+   "server_port": 6095,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10106",
+   "server": "191.96.254.138",
+   "server_port": 6185,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10107",
+   "server": "198.46.161.42",
+   "server_port": 5092,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10108",
+   "server": "64.137.10.153",
+   "server_port": 5803,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10109",
+   "server": "104.164.49.38",
+   "server_port": 7693,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "socks",
+   "tag": "up-10110",
+   "server": "23.26.71.145",
+   "server_port": 5628,
+   "version": "5",
+   "username": "nvvctlro",
+   "password": "eabxdl4ee7nj"
+  },
+  {
+   "type": "direct",
+   "tag": "direct"
+  }
+ ],
+ "route": {
+  "rules": [
+   {
+    "inbound": [
+     "p-10101"
+    ],
+    "outbound": "up-10101"
+   },
+   {
+    "inbound": [
+     "p-10102"
+    ],
+    "outbound": "up-10102"
+   },
+   {
+    "inbound": [
+     "p-10103"
+    ],
+    "outbound": "up-10103"
+   },
+   {
+    "inbound": [
+     "p-10104"
+    ],
+    "outbound": "up-10104"
+   },
+   {
+    "inbound": [
+     "p-10105"
+    ],
+    "outbound": "up-10105"
+   },
+   {
+    "inbound": [
+     "p-10106"
+    ],
+    "outbound": "up-10106"
+   },
+   {
+    "inbound": [
+     "p-10107"
+    ],
+    "outbound": "up-10107"
+   },
+   {
+    "inbound": [
+     "p-10108"
+    ],
+    "outbound": "up-10108"
+   },
+   {
+    "inbound": [
+     "p-10109"
+    ],
+    "outbound": "up-10109"
+   },
+   {
+    "inbound": [
+     "p-10110"
+    ],
+    "outbound": "up-10110"
+   }
+  ]
+ }
+}
