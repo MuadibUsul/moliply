@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: recharge-gateway-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: recharge-gateway-backend/requirements.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  upstream-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: upstream-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest httpx
+      - run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: recharge-gateway-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: recharge-gateway-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  ops-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell script syntax
+        run: |
+          for f in deploy/*.sh upstream-service/deploy/*.sh; do
+            bash -n "$f"
+          done
+      - name: Verify rotate_secrets.py runs cleanly
+        run: |
+          pip install pyotp
+          python3 scripts/rotate_secrets.py --quiet > /dev/null

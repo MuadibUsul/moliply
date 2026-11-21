@@ -22,7 +22,7 @@ rm -rf "$REL/.git"
 mv "$REL/upstream-service" "$UP_DIR/pkg.$RELEASE"
 rm -rf "$REL"
 ln -sfn "pkg.$RELEASE" "$UP_DIR/current"
-echo "staged $UP_DIR/tmp.$RELEASE"
+echo "staged $UP_DIR/pkg.$RELEASE"
 
 # Preserve keys across deploys.
 if [ ! -f "$UP_DIR/.env" ]; then
@@ -54,24 +54,29 @@ path, domain, port = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(path, encoding="utf-8", newline="").read()
 marker = f"{domain} {{"
 start = text.index(marker)
-# insert right before the site's final `handle {` block
-handle = text.index("    handle {", start)
 block = (
-    "    # moliply-upstream
-"
-    "    handle_path /upstream/* {
-"
-    f"        reverse_proxy 172.18.0.1:{port}
-"
-    "    }
-"
+    "    # moliply-upstream\n"
+    "    handle_path /upstream/* {\n"
+    f"        reverse_proxy 172.18.0.1:{port}\n"
+    "    }\n"
 )
-open(path, "w", encoding="utf-8", newline="").write(text[:handle] + block + text[handle:])
+# Insert before `handle {` if present, otherwise before `reverse_proxy` inside the domain block.
+idx = text.find("    handle {", start)
+if idx == -1:
+    idx = text.index("    reverse_proxy ", start)
+open(path, "w", encoding="utf-8", newline="").write(text[:idx] + block + text[idx:])
 print("inserted /upstream handler")
 PYEOF
-  docker exec "$CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile
-  docker exec "$CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile
+  if ! docker exec "$CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    echo "Caddyfile validation failed; restoring backup" >&2
+    sudo cp "$CADDYFILE.bak.$RELEASE" "$CADDYFILE"
+    exit 1
+  fi
+  docker exec "$CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
   echo "caddy reloaded"
 fi
+
+# Prune old releases, keeping the latest 5.
+ls -1dt "$UP_DIR"/pkg.* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 
 echo "done. base URL: https://$DOMAIN/upstream"

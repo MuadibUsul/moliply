@@ -3,6 +3,7 @@
 # Real inventory and real orders are never matched by these predicates.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="${MOLIPLY_BASE:-/opt/moliply}"
 ENV_FILE="$BASE/.env"
 DB_CONTAINER="${MOLIPLY_DB_CONTAINER:-moliply-db-1}"
@@ -21,7 +22,7 @@ done
 
 if [ "$CONFIRMED" -ne 1 ]; then
   echo "Usage: $0 --yes [--allow-empty]" >&2
-  echo "This deletes demo codes/accounts/coupons and sets SEED_DEMO_INVENTORY=false." >&2
+  echo "This deletes demo codes/accounts/coupons and disables demo seeding in .env." >&2
   exit 1
 fi
 
@@ -38,7 +39,9 @@ if [ "${real_codes:-0}" -eq 0 ] && [ "${real_accounts:-0}" -eq 0 ] && [ "$ALLOW_
 fi
 
 echo "Creating a backup before purging demo fixtures..."
-MOLIPLY_BASE="$BASE" "$BASE/backup-db.sh"
+BACKUP_SCRIPT="$SCRIPT_DIR/backup-db.sh"
+[ -x "$BACKUP_SCRIPT" ] || BACKUP_SCRIPT="$BASE/backup-db.sh"
+MOLIPLY_BASE="$BASE" bash "$BACKUP_SCRIPT"
 
 docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
 BEGIN;
@@ -66,9 +69,16 @@ COMMIT;
 SQL
 
 cp "$ENV_FILE" "$ENV_FILE.bak-demo-purge"
-sed -i 's/^SEED_DEMO_INVENTORY=.*/SEED_DEMO_INVENTORY=false/' "$ENV_FILE"
+chmod 600 "$ENV_FILE.bak-demo-purge"
+for key in SEED_DEMO_INVENTORY SEED_DEMO_DATA; do
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s/^${key}=.*/${key}=false/" "$ENV_FILE"
+  else
+    printf '\n%s=false\n' "$key" >> "$ENV_FILE"
+  fi
+done
 chmod 600 "$ENV_FILE"
 
-echo "Demo fixtures removed; SEED_DEMO_INVENTORY=false written to .env."
+echo "Demo fixtures removed; SEED_DEMO_INVENTORY=false and SEED_DEMO_DATA=false written to .env."
 echo "Remaining real codes: ${real_codes:-0}; real accounts: ${real_accounts:-0}"
-echo "Run $BASE/preflight.sh to verify launch readiness."
+echo "Restart the api container and run $SCRIPT_DIR/preflight.sh to verify launch readiness."

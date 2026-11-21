@@ -1,13 +1,13 @@
 # Deployment for a shared host with an existing Caddy front proxy.
 # This stack is intentionally isolated from other projects:
 #   - project name: moliply
-#   - no host port for API/DB/Redis
+#   - no host port for DB/Redis/Worker/Beat
 #   - web binds only to 127.0.0.1:18088 for local verification
 #   - web joins the existing external "web" Docker network so the host Caddy
 #     can reverse_proxy moliply-web:3000 for the public domain.
 #
-# Usage (from the deployment directory):
-#   docker compose -f docker-compose.server.yml --env-file .env up -d --build
+# Usage (from deploy/ or via deploy/release.sh):
+#   docker compose -f deploy/docker-compose.server.yml --env-file /path/to/.env up -d --build
 
 name: moliply
 
@@ -56,8 +56,9 @@ services:
       - internal
 
   api:
+    image: moliply-api:${MOLIPLY_IMAGE_TAG:-latest}
     build:
-      context: ./current/recharge-gateway-backend
+      context: ../recharge-gateway-backend
       dockerfile: Dockerfile
       args:
         INSTALL_BROWSER: "false"
@@ -66,40 +67,37 @@ services:
     pids_limit: 256
     security_opt:
       - no-new-privileges:true
-    env_file: .env
+    env_file: ${MOLIPLY_ENV_FILE:-../.env}
     environment:
       APP_ENV: production
       DEBUG: "false"
       TASK_MODE: celery
+      LOG_FORMAT: json
       DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
       REDIS_URL: redis://redis:6379/0
       PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
       PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
       API_BASE_URL: ${PUBLIC_STORE_URL}
       CORS_ORIGINS: ${PUBLIC_STORE_URL}
-      # Console state must survive restarts.
       CCE_DB_PATH: /data/cce.sqlite3
       CCE_CLIENT_DIR: /data/clients
-      # Console endpoints also accept this token for scripted access; the
-      # admin session cookie is the normal path.
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
       CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      MOLIPLY_ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-}
       ARTIFACT_DIR: /artifacts
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Host-side only: Caddy proxies /cce here (the console lives in this app).
     ports:
-      - "172.18.0.1:18080:8000"
+      - "${MOLIPLY_API_BIND_IP:-172.18.0.1}:18080:8000"
     volumes:
       - moliply_console_data:/data
-      # Checkout failure screenshots are written by the worker and served by the
-      # API, so both containers need the same volume.
       - moliply_artifacts:/artifacts
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -109,8 +107,9 @@ services:
       - internal
 
   worker:
+    image: moliply-worker:${MOLIPLY_IMAGE_TAG:-latest}
     build:
-      context: ./current/recharge-gateway-backend
+      context: ../recharge-gateway-backend
       dockerfile: Dockerfile
       args:
         INSTALL_BROWSER: "true"
@@ -118,17 +117,22 @@ services:
     mem_limit: 2g
     pids_limit: 1024
     shm_size: 1gb
-    env_file: .env
+    security_opt:
+      - no-new-privileges:true
+    env_file: ${MOLIPLY_ENV_FILE:-../.env}
     environment:
       APP_ENV: production
       DEBUG: "false"
       TASK_MODE: celery
+      LOG_FORMAT: json
       DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
       REDIS_URL: redis://redis:6379/0
       PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
       PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
       API_BASE_URL: ${PUBLIC_STORE_URL}
       CORS_ORIGINS: ${PUBLIC_STORE_URL}
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
       ARTIFACT_DIR: /artifacts
     depends_on:
       db:
@@ -136,6 +140,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - moliply_console_data:/data
       - moliply_artifacts:/artifacts
     command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "--concurrency=2"]
     healthcheck:
@@ -149,8 +154,9 @@ services:
       - internal
 
   beat:
+    image: moliply-api:${MOLIPLY_IMAGE_TAG:-latest}
     build:
-      context: ./current/recharge-gateway-backend
+      context: ../recharge-gateway-backend
       dockerfile: Dockerfile
       args:
         INSTALL_BROWSER: "false"
@@ -159,18 +165,23 @@ services:
     pids_limit: 128
     security_opt:
       - no-new-privileges:true
-    env_file: .env
+    env_file: ${MOLIPLY_ENV_FILE:-../.env}
     environment:
       APP_ENV: production
       DEBUG: "false"
       TASK_MODE: celery
+      LOG_FORMAT: json
       DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
       REDIS_URL: redis://redis:6379/0
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - moliply_console_data:/data
     command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "beat", "-l", "INFO"]
     healthcheck:
       disable: true
@@ -179,8 +190,9 @@ services:
       - internal
 
   web:
+    image: moliply-web:${MOLIPLY_IMAGE_TAG:-latest}
     build:
-      context: ./current/recharge-gateway-frontend
+      context: ../recharge-gateway-frontend
       dockerfile: Dockerfile
       args:
         API_PROXY_TARGET: http://api:8000
@@ -201,6 +213,12 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:18088:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     logging: *logging
     networks:
       internal:

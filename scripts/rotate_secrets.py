@@ -28,14 +28,19 @@ import pyotp
 
 # Rendered in the same order the operator should paste them.
 SECRETS = (
+    ("POSTGRES_PASSWORD", "PostgreSQL database password (also update DATABASE_URL)"),
+    ("SECRET_KEY", "main store general secret key"),
     ("MASTER_AES_KEY", "main store: card PAN/CVV, sessions, delivered payloads"),
     ("CCE_MASTER_KEY", "CCE: subscription cards, Claude credential blobs"),
+    ("ADMIN_PASSWORD", "admin login password"),
     ("ADMIN_JWT_SECRET", "admin console JWT"),
     ("MOLIPLY_ADMIN_JWT_SECRET", "same value as ADMIN_JWT_SECRET, read by /cce"),
     ("USER_JWT_SECRET", "customer order-account JWT"),
     ("CCE_ADMIN_TOKEN", "CCE scripted admin access (x-admin-token)"),
-    ("UPSTREAM_KEY", "store -> upstream-service merchant key"),
-    ("UPSTREAM_SECRET", "store -> upstream-service HMAC secret"),
+    ("UPSTREAM_API_KEY", "store backend -> upstream-service merchant key"),
+    ("UPSTREAM_API_SECRET", "store backend -> upstream-service HMAC secret"),
+    ("UPSTREAM_KEY", "upstream-service side merchant key (same value as UPSTREAM_API_KEY)"),
+    ("UPSTREAM_SECRET", "upstream-service side HMAC secret (same value as UPSTREAM_API_SECRET)"),
     ("UPSTREAM_ADMIN_TOKEN", "upstream-service operator console"),
     ("ADMIN_TOTP_SECRET", "admin Google Authenticator seed"),
 )
@@ -55,15 +60,22 @@ def hex_secret(bytes_: int) -> str:
 
 def build() -> dict[str, str]:
     admin_jwt = text_secret()
+    upstream_key = hex_secret(16)
+    upstream_secret = hex_secret(32)
     return {
+        "POSTGRES_PASSWORD": hex_secret(24),
+        "SECRET_KEY": text_secret(),
         "MASTER_AES_KEY": aes256_key(),
         "CCE_MASTER_KEY": aes256_key(),
+        "ADMIN_PASSWORD": text_secret(18),
         "ADMIN_JWT_SECRET": admin_jwt,
         "MOLIPLY_ADMIN_JWT_SECRET": admin_jwt,
         "USER_JWT_SECRET": text_secret(),
         "CCE_ADMIN_TOKEN": hex_secret(32),
-        "UPSTREAM_KEY": hex_secret(16),
-        "UPSTREAM_SECRET": hex_secret(32),
+        "UPSTREAM_API_KEY": upstream_key,
+        "UPSTREAM_API_SECRET": upstream_secret,
+        "UPSTREAM_KEY": upstream_key,
+        "UPSTREAM_SECRET": upstream_secret,
         "UPSTREAM_ADMIN_TOKEN": hex_secret(24),
         "ADMIN_TOTP_SECRET": pyotp.random_base32(),
     }

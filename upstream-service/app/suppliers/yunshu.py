@@ -94,7 +94,14 @@ class YunshuSupplier:
         except Exception as exc:  # noqa: BLE001
             raise SupplierRejected("上游报价异常") from exc
 
-    def deliver(self, sku: str, session_raw: str, request_no: str, contact: str) -> SupplierResult:
+    def deliver(
+        self,
+        sku: str,
+        session_raw: str,
+        request_no: str,
+        contact: str,
+        on_order_created=None,
+    ) -> SupplierResult:
         code = self._code(sku)
         order = self._post(
             "/order",
@@ -108,13 +115,25 @@ class YunshuSupplier:
             # Paid but unusable: do not release, the balance is likely spent.
             raise SupplierUncertain("下单成功但缺少 tradeNo/secret")
 
+        # Persist tradeNo + secret immediately after /order debits our balance so
+        # a subsequent /check, /redeem, or /result timeout never orphans the funds.
+        if on_order_created is not None:
+            try:
+                on_order_created(trade_no, secret)
+            except Exception:  # noqa: BLE001
+                logger.warning("on_order_created callback failed for %s", trade_no)
+
         if str(order.get("status") or "").lower() not in SUCCESS_STATES | PENDING_STATES:
             logger.warning("Yunshu order %s status=%s", trade_no, order.get("status"))
 
-        check = self._post("/check", {"tradeNo": trade_no, "code": code, "secret": secret,
-                                      "session": session_raw})
+        try:
+            check = self._post("/check", {"tradeNo": trade_no, "code": code, "secret": secret,
+                                          "session": session_raw})
+        except SupplierRejected as exc:
+            # /order already debited merchant balance; park for operator review instead of silent loss.
+            raise SupplierUncertain(f"已下单({trade_no})但预检失败：{exc}") from exc
         if str(check.get("status") or "").lower() in FAILED_STATES:
-            raise SupplierRejected(str(check.get("message") or "上游预检未通过"))
+            raise SupplierUncertain(f"已下单({trade_no})但上游预检未通过：{check.get('message') or ''}")
 
         self._post("/redeem", {"tradeNo": trade_no, "code": code, "secret": secret,
                                "session": session_raw})
@@ -133,7 +152,7 @@ class YunshuSupplier:
             status = str(data.get("status") or "").lower()
             message = str(data.get("message") or "")
             if status in SUCCESS_STATES:
-                return SupplierResult("success", message or "上游已核销", trade_no)
+                return SupplierResult("success", message or "上游已核销", trade_no, secret)
             if status in FAILED_STATES:
-                return SupplierResult("failed", message or "上游核销失败", trade_no)
-        return SupplierResult("pending", "上游仍在处理", trade_no)
+                return SupplierResult("failed", message or "上游核销失败", trade_no, secret)
+        return SupplierResult("pending", "上游仍在处理", trade_no, secret)

@@ -314,7 +314,8 @@ class Database:
         """Resolve a key that is active *and* unexpired, joined with its profile."""
         return await self.fetch_one(
             "SELECT d.*, p.local_proxy_port, p.expected_ip, p.os_type, p.noise_seed,"
-            " p.fingerprint_json, p.geo_json, p.status AS profile_status, p.active_session_id"
+            " p.fingerprint_json, p.geo_json, p.claude_credentials_enc,"
+            " p.status AS profile_status, p.active_session_id"
             " FROM delivery_keys d JOIN profiles p ON p.profile_id = d.profile_id"
             " WHERE d.card_key = ? AND d.is_active = 1 AND d.expires_at > ?",
             (card_key, now_iso),

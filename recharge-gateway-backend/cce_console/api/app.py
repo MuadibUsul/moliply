@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import io
 import json
 import logging
@@ -99,6 +100,13 @@ class JobProxy(BaseModel):
     expected_ip: str = Field(min_length=3)
 
 
+class ProxyProbe(BaseModel):
+    """A candidate proxy to grade before use; the IP is discovered when absent."""
+
+    upstream_proxy_url: str = Field(min_length=8)
+    expected_ip: str = ""
+
+
 class KeyIssue(BaseModel):
     profile_id: str
     plan_tier: str = Field(pattern=r"^(pro|max_5x|max_20x|env_only)$")
@@ -141,7 +149,7 @@ def _moliply_admin(cookie: str, bearer: str) -> bool:
     token = cookie or bearer
     if not token:
         return False
-    secret = os.environ.get("MOLIPLY_ADMIN_JWT_SECRET", "")
+    secret = os.environ.get("MOLIPLY_ADMIN_JWT_SECRET") or os.environ.get("ADMIN_JWT_SECRET", "")
     if not secret:
         return False
     try:
@@ -174,7 +182,7 @@ def require_admin(
     expected = os.environ.get(ADMIN_TOKEN_ENV, "")
     if not expected:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "admin token not configured")
-    if x_admin_token != expected:
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad admin token")
 
 
@@ -191,9 +199,11 @@ async def _launcher_key(
     row = await state.db.active_delivery_key(card_key, _now_iso())
     if row is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "card key invalid, revoked or expired")
-    if row["tunnel_secret"] != (x_tunnel_secret or ""):
+    if not hmac.compare_digest(str(row["tunnel_secret"]), x_tunnel_secret or ""):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tunnel secret mismatch")
-    if request.url.path != "/launcher/session":
+    path = request.url.path.rstrip("/")
+    pre_session = path.endswith("/launcher/session") or "/launcher/client/" in path
+    if not pre_session:
         if row["profile_status"] != "BUSY" or not x_session_id or row["active_session_id"] != x_session_id:
             raise HTTPException(status.HTTP_409_CONFLICT, "session is not active")
     return row
@@ -242,6 +252,33 @@ async def _worker_loop(interval: float) -> None:
 def create_app() -> FastAPI:
     app = FastAPI(title="Claude Cluster Engine", version="0.1.0", docs_url="/cce-docs", openapi_url="/openapi.json")
 
+    async def _requeue_orphans() -> int:
+        """Put jobs left mid-flight by the last process back in the queue.
+
+        The worker only drains `queued`, and a restart kills the browser under
+        any `registering`/`registered`/`subscribing` job. Without this the job
+        stays in a stage nothing advances and the account is silently lost
+        until someone notices. Only safe at startup: no browser owns them yet.
+        """
+        rows = await state.db.fetch_all(
+            "SELECT profile_id FROM account_jobs WHERE stage IN ('registering', 'registered', 'subscribing')"
+        )
+        for row in rows:
+            # The interrupted attempt already counted in `attempts`, so this is
+            # a straight re-run rather than a retry decision.
+            await state.db.execute(
+                "UPDATE account_jobs SET stage = 'queued', updated_at = CURRENT_TIMESTAMP"
+                " WHERE profile_id = ? AND stage <> 'queued'",
+                (row["profile_id"],),
+            )
+            # A killed browser leaves the row BUSY; claim_session only takes IDLE.
+            await state.db.set_status(row["profile_id"], "IDLE")
+        # Also release any subscription cards stranded in_use by the crashed process.
+        await state.db.execute(
+            "UPDATE subscription_cards SET status = 'available' WHERE status = 'in_use'"
+        )
+        return len(rows)
+
     @app.on_event("startup")
     async def _startup() -> None:
         state.db = Database(DB_PATH)
@@ -252,6 +289,9 @@ def create_app() -> FastAPI:
         state.pool = BrowserPool(state.db, state.profiles, state.inspector)
         await _restore_routes()
         await sweep_reaperable(state.db)
+        requeued = await _requeue_orphans()
+        if requeued:
+            logger.warning("%d job(s) left mid-flight were requeued", requeued)
         await _export_secrets()
         if REAPER_INTERVAL > 0:
             state.reaper = asyncio.create_task(_reaper_loop(REAPER_INTERVAL))
@@ -504,6 +544,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such file: {safe}")
         return FileResponse(_client_files()[safe], filename=safe)
 
+    @app.get("/launcher/client/{name}")
+    async def launcher_download_client(
+        name: str,
+        _row: Annotated[dict[str, Any], Depends(_launcher_key)],
+    ) -> FileResponse:
+        """Customer-authenticated client & CA download (never requires admin token)."""
+        safe = Path(name).name
+        if safe not in _client_files():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such file: {safe}")
+        return FileResponse(_client_files()[safe], filename=safe)
+
     @app.post("/admin/batches", dependencies=[admin], status_code=201)
     async def create_batch(body: BatchCreate) -> dict[str, Any]:
         await state.db.create_batch(body.batch_id, body.bin_prefix, body.billing_country.upper(), body.max_accounts)
@@ -598,6 +649,29 @@ def create_app() -> FastAPI:
         geo = await state.inspector.verify_and_inspect(profile_id)
         return {"profile_id": profile_id, "ok": True, "geo": geo.to_json()}
 
+    @app.post("/admin/profiles/{profile_id}/proxy-check", dependencies=[admin])
+    async def proxy_check(profile_id: str, body: JobProxy | None = None) -> dict[str, Any]:
+        """Check the proxy without launching a browser, so a parked row works too.
+
+        `stealth-check` needs a browser, and the pool only hands out IDLE rows --
+        which is exactly the state a PROXY_DEAD profile is not in. This is the
+        button that still answers "is this proxy any good?" when things are
+        broken. Passing a body lets the operator test a candidate URL *before*
+        saving it.
+        """
+        profile = await state.db.get_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+        url = body.upstream_proxy_url if body else profile["upstream_proxy_url"]
+        # Only enforce the stored IP when testing the stored URL; a pasted
+        # candidate is expected to differ.
+        return await state.inspector.diagnose(url, None if body else profile["expected_ip"])
+
+    @app.post("/admin/proxy-check", dependencies=[admin])
+    async def check_candidate_proxy(body: ProxyProbe) -> dict[str, Any]:
+        """Grade an arbitrary proxy before it is imported or saved."""
+        return await state.inspector.diagnose(body.upstream_proxy_url, body.expected_ip or None)
+
     @app.post("/admin/profiles/{profile_id}/stealth-check", dependencies=[admin])
     async def stealth_check(profile_id: str) -> dict[str, Any]:
         return await state.pool.verify_stealth(profile_id)
@@ -627,6 +701,15 @@ def create_app() -> FastAPI:
         created: list[str] = []
         failed = list(errors)
         for row in rows:
+            if not row.ip:
+                # The row carried a proxy but no IP. Probing here keeps the
+                # wizard to two columns instead of making the operator look up
+                # a value the proxy already knows.
+                probe = await state.inspector.diagnose(row.proxy_url)
+                if not probe.get("ip"):
+                    failed.append(f"{row.email}：识别不到出口 IP（{probe.get('detail', '')}）")
+                    continue
+                row.ip = probe["ip"]
             try:
                 job = await pipeline.create_job(state.db, state.profiles, row)
                 created.append(job["profile_id"])

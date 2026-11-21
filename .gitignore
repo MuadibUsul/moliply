@@ -42,5 +42,14 @@ upstream-service/**/__pycache__/
 # fresh checkout still has a template to copy.
 prod.env
 *.env.prod
+.env.*
+!.env.example
 *.secrets
+*.pem
+*.key
+*.dump
+*.tgz
+.tmp_*
+*proxies*.txt
 recharge-gateway-backend/artifacts/
+recharge-gateway-backend/data/

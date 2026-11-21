@@ -16,7 +16,7 @@ import httpx
 from core.secret_export import export_secrets
 from db.database import Database
 
-GEO_ENDPOINT = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,lat,lon,timezone,query"
+GEO_ENDPOINT = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,lat,lon,timezone,query,isp,as,org,proxy,hosting"
 
 # country -> BCP 47 locale, used for navigator.language / Accept-Language.
 # Deliberately a small explicit table: guessing region variants produces
@@ -83,9 +83,73 @@ class ProxyGeoInfo:
     locale: str
     region: str = ""
     city: str = ""
+    isp: str = ""
+    asn: str = ""
+    is_proxy: bool = False
+    is_hosting: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# Hosting/cloud ASNs and wording, as a second opinion next to the `hosting`
+# flag: `ip-api` marks plenty of resold datacenter space as clean.
+HOSTING_MARKERS = (
+    "hosting", "datacenter", "data center", "cloud", "vps", "server", "colo", "amazon", "digitalocean",
+)
+# Resold space is announced by a wildcard APNIC/RIPE aggregate (`...-RIPE`,
+# `AFRINIC-ERX-...`) instead of the ISP itself. Not disqualified -- just not
+# the same thing as an address the ISP hands to a subscriber.
+WHOLE_BLOCK_MARKERS = ("AFRINIC-ERX", "-RIPE", "-APNIC")
+
+
+def grade_proxy(geo: ProxyGeoInfo) -> dict[str, Any]:
+    """Turn the raw signals into a verdict a non-specialist can act on.
+
+    Deliberately advisory: it never blocks, because the only real test of a
+    proxy is whether the target site accepts it. Signals rank from decisive
+    (it is a datacenter) to weak (no reverse DNS anywhere, including on real
+    consumer lines).
+    """
+    reasons: list[str] = []
+    score = 100
+    haystack = f"{geo.isp} {geo.asn}".lower()
+    # Being flagged as hosting is decisive on its own: no combination of good
+    # news turns a datacenter address into a home line, so it also floors the
+    # grade instead of being another weighted deduction.
+    is_datacenter = geo.is_hosting
+
+    if geo.is_hosting:
+        score -= 50
+        reasons.append("被标记为机房/云（最不适合开号）")
+    if any(marker in haystack for marker in HOSTING_MARKERS):
+        if not geo.is_hosting:
+            score -= 25
+        reasons.append("名称像机房服务商")
+
+    if geo.is_proxy:
+        score -= 20
+        reasons.append("已在公共代理库里（被扫用过，风控更熟）")
+
+    if geo.country_code and geo.country_code.upper() != "US":
+        score -= 10
+        reasons.append(f"出口在 {geo.country_code}，不是美国")
+    if not geo.timezone:
+        score -= 10
+        reasons.append("拿不到时区，指纹会和出口对不上")
+
+    if any(marker in geo.asn.upper() for marker in WHOLE_BLOCK_MARKERS):
+        reasons.append("ASN 是整块转租段（非运营商直售，可接受但要观察）")
+
+    grade = "good" if score >= 80 else "ok" if score >= 55 else "bad"
+    if is_datacenter:
+        grade = "bad"
+    verdict = {
+        "good": "可以用",
+        "ok": "能用，但有缺点",
+        "bad": "不建议用",
+    }[grade]
+    return {"grade": grade, "score": max(0, score), "verdict": verdict, "reasons": reasons}
 
 
 def locale_for_country(country_code: str | None) -> str:
@@ -140,6 +204,10 @@ class ProxyInspector:
             locale=locale_for_country(payload.get("countryCode")),
             region=str(payload.get("regionName") or ""),
             city=str(payload.get("city") or ""),
+            isp=str(payload.get("isp") or ""),
+            asn=str(payload.get("as") or ""),
+            is_proxy=bool(payload.get("proxy")),
+            is_hosting=bool(payload.get("hosting")),
         )
 
     async def verify_and_inspect(self, profile_id: str) -> ProxyGeoInfo:
@@ -158,6 +226,56 @@ class ProxyInspector:
 
         await self._db.save_geo(profile_id, _json_dumps(geo.to_json()))
         return geo
+
+    async def diagnose(self, proxy_url: str, expected_ip: str | None = None) -> dict[str, Any]:
+        """Inspect without raising, so a parked profile can still be diagnosed.
+
+        `verify_and_inspect` is the kill switch: it raises and parks the row.
+        The console needs the opposite -- a verdict for a proxy that may well
+        be broken, delivered without touching the stored status.
+        """
+        try:
+            # Always probe without expected_ip so a reachable proxy whose exit IP
+            # changed still reports its real IP and reason="ip_drift" below.
+            geo = await self.inspect(proxy_url, None)
+        except ProxyKillSwitchError as exc:
+            return {
+                "ok": False,
+                "reason": exc.reason,
+                "detail": _human_error(exc),
+                "grade": "unreachable",
+                "score": 0,
+                "verdict": "连不上",
+                "reasons": ["代理不通，先确认地址/账号密码/端口"],
+                "ip": "",
+                "expected_ip": expected_ip or "",
+            }
+        drifted = bool(expected_ip) and geo.ip != expected_ip.strip()
+        return {
+            "ok": True,
+            "reason": "ip_drift" if drifted else "ok",
+            "detail": "" if not drifted else f"出口是 {geo.ip}，不是登记的 {expected_ip}",
+            "ip": geo.ip,
+            "expected_ip": expected_ip or "",
+            "isp": geo.isp,
+            "asn": geo.asn,
+            "country": geo.country_code,
+            "city": geo.city,
+            "timezone": geo.timezone,
+            **grade_proxy(geo),
+        }
+
+
+def _human_error(exc: ProxyKillSwitchError) -> str:
+    """Reason codes are stable; the wording is for whoever reads the console."""
+    return {
+        "timeout": "连接超时，代理没响应",
+        "unreachable": "连不上代理（地址/端口/账号密码可能有错）",
+        "geo_failed": "代理通了，但探测接口拒绝返回信息（常被限流，隔几秒重试）",
+        "no_ip": "代理通了，但拿不到出口 IP",
+        "bad_payload": "探测接口返回异常，隔几秒重试",
+        "no_timezone": "拿不到时区，可能是便宜代理",
+    }.get(exc.reason, str(exc))
 
 
 def _json_dumps(value: Any) -> str:

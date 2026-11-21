@@ -293,3 +293,36 @@ def test_admin_lockout_after_five_bad_tokens(service):
         headers={**admin_headers(), "x-forwarded-for": "203.0.113.9"},
     )
     assert ok.status_code == 200
+
+
+def test_admin_page_is_html_and_escapes_xss(service):
+    client, _ = service
+    res = client.get("/admin")
+    assert res.status_code == 200
+    assert "text/html" in res.headers.get("content-type", "")
+    assert "const esc=" in res.text
+
+
+def test_supplier_disabled_flag_is_respected(service, monkeypatch):
+    client, module = service
+    monkeypatch.setattr(module, "SUPPLIER_NAME", "yunshu")
+    signed(client, "/api/v1/supplier", json.dumps({"token": "ysu_off", "sku_map": "A=B", "enabled": False}))
+    assert module.build_supplier() is None
+    signed(client, "/api/v1/supplier", json.dumps({"enabled": True}))
+    assert module.build_supplier() is not None
+
+
+def test_persist_supplier_saves_secret_for_repoll(service):
+    _, module = service
+    from app.suppliers.base import SupplierResult
+
+    with module.db() as conn:
+        conn.execute(
+            "INSERT INTO orders(order_no, status, sku, session_fp, session_tail, created_at, updated_at) "
+            "VALUES('UP-SECRET-1', 'pending', 'CHATGPT_PLUS_1M', 'fp1', 'tail', 1, 1)"
+        )
+    module.persist_supplier("UP-SECRET-1", SupplierResult("pending", "waiting", "TR-99", "SEC-XYZ"))
+    with module.db() as conn:
+        row = conn.execute("SELECT supplier_ref, supplier_secret FROM orders WHERE order_no='UP-SECRET-1'").fetchone()
+    assert row["supplier_ref"] == "TR-99"
+    assert row["supplier_secret"] == "SEC-XYZ"

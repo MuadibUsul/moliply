@@ -30,8 +30,9 @@ from app.suppliers.base import SupplierRejected, SupplierUncertain, SupplierUnav
 from app.suppliers.yunshu import YunshuSupplier
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("upstream")
@@ -93,6 +94,8 @@ CREATE TABLE IF NOT EXISTS supplier_config (
 def db() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(DB_PATH, timeout=15)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=5000")
     try:
         yield connection
         connection.commit()
@@ -176,6 +179,8 @@ def build_supplier():
     if SUPPLIER_NAME != "yunshu":
         return None
     row = supplier_config(SUPPLIER_NAME)
+    if row is not None and not int(row.get("enabled", 1)):
+        return None
     token = (row or {}).get("token") or os.environ.get("YUNSHU_TOKEN", "")
     if not token:
         return None
@@ -213,7 +218,7 @@ def save_supplier_config(name: str, values: dict[str, Any]) -> dict[str, Any]:
         "sku_map": values.get("sku_map", current.get("sku_map", "")),
         "catalog_race": values.get("catalog_race", current.get("catalog_race", "")),
         "sku_options": values.get("sku_options", current.get("sku_options", "")),
-        "enabled": int(bool(values.get("enabled", current.get("enabled", 0)))),
+        "enabled": int(bool(values.get("enabled", current.get("enabled", 1)))),
     }
     with db() as connection:
         connection.execute(
@@ -228,16 +233,20 @@ def save_supplier_config(name: str, values: dict[str, Any]) -> dict[str, Any]:
 
 
 def claim_stock(connection: sqlite3.Connection, sku: str, order_no: str) -> Claim:
-    """Take one available code for the SKU and bind it to this order."""
-    row = connection.execute(
-        "SELECT id, payload FROM stock WHERE sku=? AND status='available' ORDER BY id ASC LIMIT 1", (sku,)
-    ).fetchone()
-    if row is None:
-        return Claim(False)
-    connection.execute(
-        "UPDATE stock SET status='used', order_no=? WHERE id=? AND status='available'", (order_no, row["id"])
-    )
-    return Claim(True, row["payload"])
+    """Take one available code for the SKU atomically and bind it to this order."""
+    with _lock:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT id, payload FROM stock WHERE sku=? AND status='available' ORDER BY id ASC LIMIT 1", (sku,)
+        ).fetchone()
+        if row is None:
+            return Claim(False)
+        cursor = connection.execute(
+            "UPDATE stock SET status='used', order_no=? WHERE id=? AND status='available'", (order_no, row["id"])
+        )
+        if cursor.rowcount != 1:
+            return Claim(False)
+        return Claim(True, row["payload"])
 
 
 def settle(order_no: str, status: str, message: str = "") -> None:
@@ -264,8 +273,21 @@ def run_fulfillment(order_no: str, payload: RechargeIn) -> None:
             settle(order_no, "pending", "上游未配置，转人工")
             return
         contact = payload.merchant or "MOLIPLY"
+
+        def _save_ref(trade_no: str, secret: str) -> None:
+            persist_supplier_ref(order_no, trade_no, secret)
+
         try:
-            result = supplier.deliver(payload.sku_type, payload.session_raw, order_no, contact)
+            try:
+                result = supplier.deliver(
+                    payload.sku_type,
+                    payload.session_raw,
+                    order_no,
+                    contact,
+                    on_order_created=_save_ref,
+                )
+            except TypeError:
+                result = supplier.deliver(payload.sku_type, payload.session_raw, order_no, contact)
         except SupplierRejected as exc:
             settle(order_no, "failed", str(exc))
             return
@@ -292,13 +314,18 @@ def run_fulfillment(order_no: str, payload: RechargeIn) -> None:
     settle(order_no, "pending", "等待人工处理")
 
 
-def persist_supplier(order_no: str, result) -> None:
-    if not result.reference:
+def persist_supplier_ref(order_no: str, reference: str, secret: str = "") -> None:
+    if not reference:
         return
     with db() as connection:
         connection.execute(
-            "UPDATE orders SET supplier_ref=? WHERE order_no=?", (result.reference, order_no)
+            "UPDATE orders SET supplier_ref=?, supplier_secret=CASE WHEN ?!='' THEN ? ELSE supplier_secret END WHERE order_no=?",
+            (reference, secret, secret, order_no),
         )
+
+
+def persist_supplier(order_no: str, result) -> None:
+    persist_supplier_ref(order_no, getattr(result, "reference", ""), getattr(result, "secret", ""))
 
 
 def repoll(order_no: str) -> None:
@@ -337,12 +364,12 @@ async def recharge(request: Request):
     session_fp = fingerprint(payload.session_raw)
     with _lock, db() as connection:
         existing = connection.execute(
-            "SELECT order_no, status, message FROM orders WHERE session_fp=? AND status='pending' "
-            "AND created_at > ? ORDER BY id DESC LIMIT 1",
-            (session_fp, time.time() - IDEMPOTENCY_TTL_SECONDS),
+            "SELECT order_no, status, message FROM orders WHERE session_fp=? AND sku=? "
+            "AND status IN ('pending', 'success') AND created_at > ? ORDER BY id DESC LIMIT 1",
+            (session_fp, payload.sku_type, time.time() - IDEMPOTENCY_TTL_SECONDS),
         ).fetchone()
         if existing:
-            logger.info("reusing pending order %s for the same session", existing["order_no"])
+            logger.info("reusing %s order %s for the same session+sku", existing["status"], existing["order_no"])
             return {"order_no": existing["order_no"], "status": existing["status"], "message": existing["message"]}
 
         if MAX_PENDING_PER_SKU:
@@ -362,7 +389,7 @@ async def recharge(request: Request):
         )
 
     try:
-        run_fulfillment(order_no, payload)
+        await run_in_threadpool(run_fulfillment, order_no, payload)
     except Exception as exc:  # noqa: BLE001
         logger.exception("fulfillment crashed for %s", order_no)
         settle(order_no, "pending", f"履约异常：{exc}")
@@ -380,7 +407,7 @@ async def order_status(order_no: str, request: Request):
     if row is None:
         raise HTTPException(404, "unknown order")
     if row["status"] == "pending" and FULFILL_MODE == "supplier":
-        repoll(order_no)
+        await run_in_threadpool(repoll, order_no)
         with db() as connection:
             row = connection.execute("SELECT status, message FROM orders WHERE order_no=?", (order_no,)).fetchone()
     return {"order_no": order_no, "status": row["status"], "message": row["message"]}
@@ -593,7 +620,7 @@ async def admin_add_stock(request: Request, sku: str):
     return {"added": len(codes), "sku": sku}
 
 
-@app.get("/admin", response_class=PlainTextResponse)
+@app.get("/admin", response_class=HTMLResponse)
 def admin_page() -> str:
     return ADMIN_HTML
 
@@ -610,21 +637,25 @@ button{cursor:pointer}table{width:100%;border-collapse:collapse;margin-top:10px}
 <p><input id=sku placeholder=SKU size=22><textarea id=codes placeholder=一行一个 rows=3 style="width:100%"></textarea>
 <button onclick=add()>导入库存</button></section>
 <script>
+const BASE=location.pathname.replace(/\\/admin\\/?$/,'');
 const tk=()=>localStorage.getItem('tk')||'';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const save=()=>{localStorage.setItem('tk',document.getElementById('t').value);load()};
 const msg=m=>document.getElementById('msg').textContent=m;
-async function api(p,o={}){const r=await fetch(p,{...o,headers:{'x-admin-token':tk(),...(o.headers||{})}});
+async function api(p,o={}){const r=await fetch(BASE+p,{...o,headers:{'x-admin-token':tk(),...(o.headers||{})}});
  if(!r.ok)throw new Error(r.status+' '+await r.text());return r.json()}
 async function load(){document.getElementById('t').value=tk();try{
  const o=await api('/admin/api/orders?status=pending');
- document.getElementById('orders').innerHTML='<tr><th>订单</th><th>SKU</th><th>Session</th><th>操作</th></tr>'+
-  o.items.map(i=>`<tr><td>${i.order_no}</td><td>${i.sku}</td><td class=muted>${i.session_tail}</td>
-  <td><button onclick="settle('${i.order_no}','success')">成功</button> <button onclick="settle('${i.order_no}','failed')">失败</button></td></tr>`).join('');
+ const ot=document.getElementById('orders');
+ ot.innerHTML='<tr><th>订单</th><th>SKU</th><th>Session</th><th>操作</th></tr>'+
+  o.items.map(i=>`<tr><td>${esc(i.order_no)}</td><td>${esc(i.sku)}</td><td class=muted>${esc(i.session_tail)}</td>
+  <td><button data-no="${esc(i.order_no)}" data-st="success">成功</button> <button data-no="${esc(i.order_no)}" data-st="failed">失败</button></td></tr>`).join('');
+ ot.querySelectorAll('button[data-no]').forEach(b=>b.onclick=()=>settle(b.dataset.no,b.dataset.st));
  const s=await api('/admin/api/stock');
  document.getElementById('stock').innerHTML='<tr><th>SKU</th><th>可用</th><th>已用</th></tr>'+
-  s.items.map(i=>`<tr><td>${i.sku}</td><td>${i.available}</td><td class=muted>${i.used}</td></tr>`).join('');
+  s.items.map(i=>`<tr><td>${esc(i.sku)}</td><td>${esc(i.available)}</td><td class=muted>${esc(i.used)}</td></tr>`).join('');
 }catch(e){msg(e.message)}}
-async function settle(n,st){try{await api('/admin/api/orders/'+n+'/settle?status='+st,{method:'POST'});msg(n+' -> '+st);load()}catch(e){msg(e.message)}}
+async function settle(n,st){try{await api('/admin/api/orders/'+encodeURIComponent(n)+'/settle?status='+encodeURIComponent(st),{method:'POST'});msg(n+' -> '+st);load()}catch(e){msg(e.message)}}
 async function add(){const sku=document.getElementById('sku').value.trim(),codes=document.getElementById('codes').value;
  try{const r=await api('/admin/api/stock?sku='+encodeURIComponent(sku),{method:'POST',body:codes});msg('导入 '+r.added);load()}catch(e){msg(e.message)}}
 load()

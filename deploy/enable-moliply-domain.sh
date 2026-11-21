@@ -8,6 +8,7 @@ SERVER_IP="${MOLIPLY_SERVER_IP:?Set MOLIPLY_SERVER_IP to the public IP of this s
 BASE="${MOLIPLY_BASE:-/opt/moliply}"
 CADDYFILE="${MOLIPLY_CADDYFILE:-/opt/caddy/Caddyfile}"
 CADDY_CONTAINER="${MOLIPLY_CADDY_CONTAINER:-caddy-caddy-1}"
+API_BIND_IP="${MOLIPLY_API_BIND_IP:-172.18.0.1}"
 BACKUP_DIR="$BASE/caddy-backups"
 
 mkdir -p "$BACKUP_DIR"
@@ -18,7 +19,7 @@ if ! grep -qx "$SERVER_IP" <<<"$ips"; then
   exit 2
 fi
 
-if grep -Eq '^moliply\.shop[[:space:]]*\{' "$CADDYFILE"; then
+if grep -Eq "^${DOMAIN//./\\.}[[:space:]]*\{" "$CADDYFILE"; then
   echo "[$(date -Is)] $DOMAIN is already configured in Caddy"
   exit 0
 fi
@@ -27,23 +28,22 @@ ts="$(date +%Y%m%d-%H%M%S)"
 backup="$BACKUP_DIR/Caddyfile.pre-moliply-$ts"
 cp "$CADDYFILE" "$backup"
 
-python3 - <<'PY'
-import os
+python3 - "$CADDYFILE" "$DOMAIN" "$API_BIND_IP" <<'PY'
+import sys
 from pathlib import Path
 
-path = Path("/opt/caddy/Caddyfile")
+path = Path(sys.argv[1])
+domain = sys.argv[2]
+api_bind_ip = sys.argv[3]
 text = path.read_text(encoding="utf-8")
-marker = "# >>> MOLIPLY DOMAIN (managed by deploy)"
+marker = f"# >>> MOLIPLY DOMAIN {domain} (managed by deploy)"
 if marker in text:
-    print("Caddyfile already contains moliply.shop; leaving it unchanged")
+    print(f"Caddyfile already contains {domain}; leaving it unchanged")
     raise SystemExit(0)
 block = f"""
 {marker}
-moliply.shop {{
+{domain} {{
     encode zstd gzip
-    request_body {{
-        max_size 2MB
-    }}
     header {{
         X-Content-Type-Options nosniff
         X-Frame-Options SAMEORIGIN
@@ -52,12 +52,24 @@ moliply.shop {{
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
     }}
-    reverse_proxy moliply-web:3000
+    redir /cce /cce/ 302
+    handle /cce/* {{
+        request_body {{
+            max_size 64MB
+        }}
+        reverse_proxy {api_bind_ip}:18080
+    }}
+    handle {{
+        request_body {{
+            max_size 2MB
+        }}
+        reverse_proxy moliply-web:3000
+    }}
 }}
-# <<< MOLIPLY DOMAIN
+# <<< MOLIPLY DOMAIN {domain}
 """
 path.write_text(text.rstrip() + "\n" + block, encoding="utf-8")
-print("Caddyfile: added moliply.shop")
+print(f"Caddyfile: added {domain}")
 PY
 
 if ! docker exec "$CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
@@ -78,5 +90,5 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-echo "[$(date -Is)] configuration reloaded; certificate pending. Check: docker logs caddy-caddy-1 --tail=80"
+echo "[$(date -Is)] configuration reloaded; certificate pending. Check: docker logs $CADDY_CONTAINER --tail=80"
 exit 0

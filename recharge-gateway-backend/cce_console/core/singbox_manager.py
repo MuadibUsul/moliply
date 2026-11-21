@@ -115,40 +115,50 @@ class SingBoxManager:
         self._config_path.write_text(json.dumps(self.render(), indent=2), encoding="utf-8")
         return self._config_path
 
+    async def _stop_locked(self) -> None:
+        if self._proc is None:
+            return
+        proc, self._proc = self._proc, None
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+
     async def reload(self) -> dict[str, Any]:
-        """Rewrite the config and restart sing-box. No-op without a binary."""
-        if not self._route:
-            raise SingBoxError("no routes registered")
-        path = self.write_config()
-        binary = self.resolved
-        if binary is None:
-            return {"applied": False, "reason": "sing-box binary not found", "config": str(path)}
-        await self.stop()
-        self._proc = await asyncio.create_subprocess_exec(
-            binary, "run", "-c", str(path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
-        )
-        await asyncio.sleep(0.4)
-        if self._proc.returncode not in (None, 0):
-            # `read()` would block forever on a child the OS has not reaped yet,
-            # and an unread pipe is how an empty "exited immediately:" happens.
-            err = b""
-            if self._proc.stderr:
+        """Rewrite the config and restart sing-box. No-op without a binary.
+
+        An empty map is legal: sing-box happily runs with no inbounds, and
+        starting a do-nothing process is what keeps the console out of a
+        permanent "sing-box not running" alarm on a freshly emptied system.
+        """
+        async with self._lock:
+            path = self.write_config()
+            binary = self.resolved
+            if binary is None:
+                return {"applied": False, "reason": "sing-box binary not found", "config": str(path)}
+            await self._stop_locked()
+            log_path = self._config_path.parent / "singbox.stderr.log"
+            # Redirect stderr to a file instead of an unread PIPE so sing-box
+            # can never deadlock once warnings exceed the OS 64 KB pipe buffer.
+            log_handle = open(log_path, "wb")
+            try:
+                self._proc = await asyncio.create_subprocess_exec(
+                    binary, "run", "-c", str(path), stdout=asyncio.subprocess.DEVNULL, stderr=log_handle
+                )
+            finally:
+                log_handle.close()
+            await asyncio.sleep(0.4)
+            if self._proc.returncode not in (None, 0):
                 try:
-                    err = await asyncio.wait_for(self._proc.stderr.read(), timeout=2)
-                except (asyncio.TimeoutError, OSError):
-                    err = b""
-            raise SingBoxError(f"sing-box exited immediately: {err.decode('utf-8', 'replace')[-500:]}")
-        return {"applied": True, "config": str(path), "inbounds": len(self._route)}
+                    err = log_path.read_bytes()[-500:].decode("utf-8", "replace")
+                except OSError:
+                    err = ""
+                raise SingBoxError(f"sing-box exited immediately: {err}")
+            return {"applied": True, "config": str(path), "inbounds": len(self._route)}
 
     async def stop(self) -> None:
         async with self._lock:
-            if self._proc is None:
-                return
-            proc, self._proc = self._proc, None
-            if proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
+            await self._stop_locked()

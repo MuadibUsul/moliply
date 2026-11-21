@@ -46,6 +46,11 @@ class ImportRow:
     password: str = ""
 
 
+def _looks_like_proxy(cell: str) -> bool:
+    """A cell carrying a URL or credentials rather than a bare address."""
+    return "://" in cell or "@" in cell
+
+
 def _profile_id_for(email: str) -> str:
     """Derive a stable, filename-safe profile id from the mailbox."""
     base = re.sub(r"[^a-z0-9]+", "-", email.split("@")[0].lower()).strip("-")[:40] or "acct"
@@ -77,15 +82,19 @@ def parse_import(text: str, *, default_proxy_template: str = "") -> tuple[list[I
             errors.append(f"第 {number} 行：缺少 Gmail 应用专用密码")
             continue
         ip = parts[2] if len(parts) >= 3 else ""
-        if not ip:
-            errors.append(f"第 {number} 行：缺少 IP")
-            continue
         proxy = parts[3] if len(parts) >= 4 else ""
-        if not proxy and default_proxy_template:
+        # The third column used to be an IP and nothing else. Accept it carrying
+        # the proxy itself too, which is what a one-column paste looks like.
+        if ip and _looks_like_proxy(ip):
+            if not proxy:
+                proxy, ip = ip, ""
+        if not proxy and default_proxy_template and ip:
             proxy = default_proxy_template.replace("{ip}", ip)
         if not proxy:
             errors.append(f"第 {number} 行：缺少代理地址，且未配置模板")
             continue
+        # An omitted IP is legal: the importer probes the proxy for it. What is
+        # not legal is neither column, which the branch above already caught.
         seen.add(email)
         rows.append(
             ImportRow(
@@ -220,8 +229,10 @@ async def run_job(db: Database, pool: Any, profile_id: str) -> dict[str, Any]:
         await _set_stage(db, profile_id, "failed", error="profile 不存在")
         raise PipelineError("profile 不存在")
 
+    # Atomically claim the job into 'registering' before launching the browser
+    # so a concurrent worker tick or import kick cannot pick the same row.
     await db.execute(
-        "UPDATE account_jobs SET attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP"
+        "UPDATE account_jobs SET stage = 'registering', attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP"
         " WHERE profile_id = ?",
         (profile_id,),
     )
@@ -232,7 +243,7 @@ async def run_job(db: Database, pool: Any, profile_id: str) -> dict[str, Any]:
     try:
         async with pool.acquire_context(profile_id) as context:
             page = await context.new_page()
-            return await _drive(db, pool, profile_id, job, email, password, app_password, page)
+            return await _drive(db, pool, profile_id, job, email, password, app_password, page, context=context)
     except ProxyKillSwitchError as exc:
         # Retry a few times first: proxies flake. If it keeps failing the
         # upstream really is dead and only an operator can fix the URL.
@@ -256,6 +267,8 @@ async def _drive(
     password: str,
     app_password: str,
     page: Any,
+    *,
+    context: Any | None = None,
 ) -> dict[str, Any]:
     """The remote half of a job; runs inside an open browser context."""
     await _set_stage(db, profile_id, "registering")
@@ -304,7 +317,10 @@ async def _drive(
     # The account is paid for; capture its CLI credentials while the session is
     # fresh. A credential failure is still deliverable-by-hand, so it only warns.
     try:
-        await pool.sync_claude_cli_credentials(profile_id, email=email)
+        try:
+            await pool.sync_claude_cli_credentials(profile_id, email=email, context=context)
+        except TypeError:
+            await pool.sync_claude_cli_credentials(profile_id, email=email)
         await _set_stage(db, profile_id, "ready")
     except Exception as exc:  # noqa: BLE001
         await _set_stage(

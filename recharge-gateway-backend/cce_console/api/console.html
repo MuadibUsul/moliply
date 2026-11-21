@@ -121,9 +121,23 @@
   .note.warn { color: #e6b455; }
   .note.bad { color: #ffb4b0; }
 
+  .nextstep {
+    margin-top: 9px; padding: 7px 10px; border-radius: 7px; font-size: 12.5px;
+    background: #4f8dfd14; border: 1px solid #4f8dfd3d; color: #cfe0ff;
+  }
+
   .fixbox { margin-top: 10px; padding: 11px 12px; border: 1px solid #f8514933; background: #f851490d; border-radius: 9px; }
   .fixbox .row { display: flex; gap: 8px; flex-wrap: wrap; }
   .fixbox .row > * { flex: 1 1 210px; }
+
+  /* ---- proxy verdict ---- */
+  .verdict { margin-top: 9px; padding: 9px 11px; border-radius: 8px; font-size: 12px; border: 1px solid var(--line); }
+  .verdict.good { background: #16301d; border-color: #3fb95066; color: #bff3cb; }
+  .verdict.ok { background: #2f2a16; border-color: #e6b45566; color: #f0d79a; }
+  .verdict.bad, .verdict.unreachable { background: #3a1d1f; border-color: #f8514966; color: #ffc9c6; }
+  .verdict b { display: block; margin-bottom: 4px; font-size: 13px; }
+  .verdict ul { margin: 4px 0 0; padding-left: 17px; }
+  .verdict .meta { opacity: .8; margin-top: 5px; font-size: 11.5px; }
 
   .empty { text-align: center; padding: 46px 20px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
 
@@ -146,6 +160,10 @@
   table.preview td { padding: 5px 6px; border-bottom: 1px solid #ffffff0d; font-family: ui-monospace, Consolas, monospace; }
   table.preview tr.bad td { background: #f8514914; color: #ffb4b0; }
   table.preview td.st { font-family: inherit; }
+  .pv { padding: 1px 7px; border-radius: 20px; font-size: 11px; }
+  .pv.good { background: #3fb95026; color: #bff3cb; }
+  .pv.ok { background: #e6b45526; color: #f0d79a; }
+  .pv.bad, .pv.unreachable { background: #f8514926; color: #ffc9c6; }
 
   pre {
     background: #0a0a0c; border: 1px solid var(--line); border-radius: 8px;
@@ -397,6 +415,7 @@ function card(p) {
   const reason = p.human_note || p.last_error || "";
   const needCred = !p.has_credentials && (!p.job_stage || p.job_stage === "ready" || p.job_stage === "subscribed");
   const canDeliver = deliverable(p);
+  const next = nextStep(p, { needCred, trouble, canDeliver });
 
   return `<div class="card ${running ? "is-running" : ""}">
     <div class="card-top">
@@ -407,26 +426,52 @@ function card(p) {
       <span class="pill ${cls}">${label}</span>
     </div>
 
-    ${reason ? `<div class="note ${p.job_stage === "needs_human" ? "warn" : "bad"}">${esc(reason)}</div>` : ""}
-    ${needCred ? `<div class="note warn">没有登录凭证，客户打不开。点「同步凭证」完成登录。</div>` : ""}
-    ${trouble ? `<div class="note warn">出口 IP 变了或登录失效，先修好再交付。</div>` : ""}
+    ${next ? `<div class="nextstep">下一步：${esc(next.hint)}</div>` : ""}
+    ${reason ? `<div class="note ${p.job_stage === "needs_human" ? "warn" : "bad"}">${esc(friendly(reason))}</div>` : ""}
 
     ${p.job_stage === "needs_human" || (!p.job_stage && trouble) ? fixBox(p) : ""}
 
     <div class="actions">
-      ${canDeliver ? `<button class="btn btn-primary btn-sm" data-act="deliver" data-id="${esc(p.profile_id)}">复制交付指令</button>` : ""}
-      ${p.job_stage && !["ready"].includes(p.job_stage)
-        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">继续流程</button>` : ""}
-      ${needCred || p.job_stage === "subscribed"
-        ? `<button class="btn btn-sm ${needCred ? "btn-primary" : ""}" data-act="sync" data-id="${esc(p.profile_id)}">同步凭证</button>` : ""}
-      <button class="btn btn-sm" data-act="stealth" data-id="${esc(p.profile_id)}">检测环境</button>
-      ${p.has_credentials && !canDeliver
-        ? `<button class="btn btn-sm" data-act="skip" data-id="${esc(p.profile_id)}">标为就绪</button>` : ""}
-      <button class="btn btn-sm btn-ghost" data-act="bundle" data-id="${esc(p.profile_id)}" ${canDeliver ? "" : "disabled"}>整合包</button>
-      ${p.status === "IDLE" && p.has_credentials
+      ${next?.act ? `<button class="btn btn-primary btn-sm" data-act="${next.act}" data-id="${esc(p.profile_id)}">${esc(next.label)}</button>` : ""}
+      ${p.job_stage && !["ready"].includes(p.job_stage) && !running
+        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">重跑流程</button>` : ""}
+      ${canDeliver ? `<button class="btn btn-sm" data-act="bundle" data-id="${esc(p.profile_id)}">整合包</button>` : ""}
+      <button class="btn btn-sm btn-ghost" data-act="stealth" data-id="${esc(p.profile_id)}">检测环境</button>
+      ${(p.status === "BUSY" || p.status === "COOLDOWN")
         ? `<button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>` : ""}
     </div>
   </div>`;
+}
+
+/** The one thing this account needs next, so the operator never has to choose. */
+function nextStep(p, { needCred, trouble, canDeliver }) {
+  const stage = p.job_stage || "";
+  if (trouble && ["AUTH_EXPIRED"].includes(p.status))
+    return { hint: "登录态失效了，需要重新登一次拿新凭证。", act: "sync", label: "重新登录取凭证" };
+  if (trouble) return { hint: "出口 IP 变了或代理断了。填入新代理后点①检测，通过再保存。" };
+  if (stage === "failed") return { hint: "上次失败了，可以直接重跑；同一原因反复失败就先修代理。" , act: "resume", label: "重跑" };
+  if (canDeliver) return { hint: "已经可以交付给客户了。", act: "deliver", label: "复制交付指令，发给客户" };
+  if (needCred) return { hint: "账号已开通，还差登录凭证（客户靠它登录）。", act: "sync", label: "取登录凭证" };
+  if (stage === "subscribed") return { hint: "Pro 已开通，下一步取登录凭证。", act: "sync", label: "取登录凭证" };
+  if (stage === "ready" && p.has_credentials) return { hint: "已就绪，可以交付。", act: "deliver", label: "交付" };
+  if (["queued", "registering", "registered", "subscribing"].includes(stage))
+    return { hint: `流程正在自己跑（${STAGE[stage]?.label || stage}），等它。` };
+  if (stage === "needs_human") return { hint: "卡住了，需要人处理。下面按原因给了修复框。" };
+  return { hint: "没有在流程里。检查环境后手动标为就绪。", act: "skip", label: "标为就绪" };
+}
+
+// Backend errors are written for whoever debugs the pipeline.
+const ERROR_HINTS = [
+  [/gmail|imap|应用专用密码/i, "Gmail 收不到验证码：应用专用密码不对或没开两步验证。"],
+  [/ip_drift|egress ip drift/i, "代理出口 IP 和登记的不一致，得换成同一个 IP。"],
+  [/proxy timed out|proxy unreachable/i, "代理连不上：地址、端口或账号密码有错，也可能已经过期。"],
+  [/human|captcha|challenge|cloudflare/i, "被人机验证拦住了，需要人工过一下。"],
+  [/phone|sms|手机/i, "要手机验证，自动流程过不了。"],
+  [/card|declined|insufficient/i, "充值卡被拒了，换一张卡或看看卡余额。"],
+];
+function friendly(text) {
+  for (const [re, hint] of ERROR_HINTS) if (re.test(text)) return `${hint}（原始：${text}）`;
+  return text;
 }
 
 /** Repair affordances, chosen from what the backend actually complained about. */
@@ -440,12 +485,13 @@ function fixBox(p) {
     return `<div class="fixbox">
       <div class="field"><label>新的住宅代理 URL</label>
         <input id="px-${esc(p.profile_id)}" value="${esc(p.proxy_url || "")}" placeholder="socks5://user:pass@host:port"></div>
-      <div class="field"><label>该代理的真实出口 IP</label>
-        <input id="ip-${esc(p.profile_id)}" value="${esc(p.expected_ip || "")}" placeholder="203.0.113.7"></div>
+      <div class="field"><label>该代理的真实出口 IP（留空则自动探测）</label>
+        <input id="ip-${esc(p.profile_id)}" value="${esc(p.expected_ip || "")}" placeholder="留空自动识别"></div>
       <div class="actions" style="margin-top:0">
-        <button class="btn btn-primary btn-sm" data-act="fixproxy" data-id="${esc(p.profile_id)}">保存并重排</button>
-        <button class="btn btn-sm" data-act="stealth" data-id="${esc(p.profile_id)}">先测当前出口</button>
+        <button class="btn btn-sm" data-act="proxychk" data-id="${esc(p.profile_id)}">① 先检测这个代理</button>
+        <button class="btn btn-primary btn-sm" data-act="fixproxy" data-id="${esc(p.profile_id)}">② 保存并重排</button>
       </div>
+      <div class="verdict" id="v-${esc(p.profile_id)}" hidden></div>
     </div>`;
   }
   if (mailIssue) {
@@ -468,6 +514,25 @@ function fixBox(p) {
 
 /* ---------------------------------------------------------------- actions */
 
+// `checks` keys are the inspector's vocabulary; the operator is not.
+const CHECK_NAME = {
+  ip_matches: "出口 IP 变了", ua_matches: "浏览器标识不符", cores_matches: "CPU 核数不符",
+  locale_matches: "语言与地区不符", timezone_matches: "时区与出口不符",
+  screen_matches: "分辨率不符", webdriver_hidden: "被识别为自动化",
+};
+const checkName = (k) => CHECK_NAME[k] || k;
+
+function verdictHtml(r) {
+  const head = `<b>${esc(r.verdict || "检测完成")}</b>`;
+  const why = (r.reasons || []).length
+    ? `<ul>${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+  const drift = r.reason === "ip_drift" ? `<div class="meta">⚠ ${esc(r.detail)}</div>` : "";
+  const meta = r.ip
+    ? `<div class="meta">出口 ${esc(r.ip)} · ${esc(r.country || "")} ${esc(r.city || "")}<br>${esc(r.isp || "")} ${esc(r.asn || "")}</div>`
+    : `<div class="meta">${esc(r.detail || "")}</div>`;
+  return head + why + drift + meta;
+}
+
 async function onAction(act, id) {
   const p = STORE.profiles.find((x) => x.profile_id === id);
   if (!p) return;
@@ -483,7 +548,24 @@ async function onAction(act, id) {
       toast("正在检测出口与指纹…");
       const r = await apiFetch(`/admin/profiles/${id}/stealth-check`, { method: "POST" });
       const failed = Object.entries(r.checks || {}).filter(([, ok]) => !ok).map(([k]) => k);
-      toast(failed.length ? `不一致：${failed.join("、")}` : "出口与指纹一致", failed.length ? "err" : "ok");
+      toast(failed.length ? `不一致：${failed.map(checkName).join("、")}` : "出口与指纹一致", failed.length ? "err" : "ok");
+    } else if (act === "proxychk") {
+      const proxy = $(`#px-${id}`).value.trim();
+      if (!proxy) return toast("先填代理 URL", "err");
+      // Blank IP means "probe and tell me what it is"; a filled one is checked
+      // against the probe so a stale paste is caught before saving.
+      const typedIp = $(`#ip-${id}`).value.trim();
+      const box = $(`#v-${id}`);
+      box.hidden = false;
+      box.className = "verdict";
+      box.textContent = "检测中…";
+      const r = await apiFetch(`/admin/proxy-check`, {
+        method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: typedIp }),
+      });
+      box.className = `verdict ${r.grade}`;
+      box.innerHTML = verdictHtml(r);
+      if (!typedIp && r.ip) $(`#ip-${id}`).value = r.ip;
+      if (r.grade === "good") toast("这个代理可以用", "ok");
     } else if (act === "skip") {
       await apiFetch(`/admin/jobs/${id}/skip`, { method: "POST" });
       toast("已标为就绪", "ok");
@@ -506,15 +588,26 @@ async function onAction(act, id) {
       await copyDelivery(id);
     } else if (act === "fixproxy") {
       const proxy = $(`#px-${id}`).value.trim();
-      const ip = $(`#ip-${id}`).value.trim();
-      if (!proxy || !ip) return toast("代理和出口 IP 都要填", "err");
+      let ip = $(`#ip-${id}`).value.trim();
+      if (!proxy) return toast("代理 URL 必填", "err");
+      if (!ip) {
+        // Discovering the IP beats making the operator look it up in a third
+        // place; it is also the only value that can be right.
+        toast("正在识别出口 IP…");
+        const probe = await apiFetch(`/admin/proxy-check`, {
+          method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: "" }),
+        });
+        if (!probe.ip) return toast(probe.detail || "识别不到出口 IP，先点①检测", "err");
+        ip = probe.ip;
+        $(`#ip-${id}`).value = ip;
+      }
       // A profile imported before the pipeline existed has no job row; fix the
       // profile itself in that case so the box still works.
       await apiFetch(p.job_stage ? `/admin/jobs/${id}/proxy` : `/admin/profiles/${id}/proxy`, {
         method: "PATCH",
         body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: ip }),
       });
-      toast("已保存", "ok");
+      toast(p.job_stage ? "已保存，已重新排队" : "已保存", "ok");
     } else if (act === "testmail") {
       const pw = $(`#pw-${id}`).value.trim();
       if (!pw) return toast("先填应用专用密码", "err");
@@ -547,8 +640,8 @@ async function copyDelivery(id) {
   const cmd = win
     ? [
         "# 1. 下载启动器和证书（只需一次），放到同一个文件夹",
-        `curl.exe -H "x-admin-token: ${TOKEN}" -o claude-box.exe "${host}/admin/client/claude-box-windows-x64.exe"`,
-        `curl.exe -H "x-admin-token: ${TOKEN}" -o gateway-ca.pem "${host}/admin/client/tls.crt"`,
+        `curl.exe -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o claude-box.exe "${host}/launcher/client/claude-box-windows-x64.exe"`,
+        `curl.exe -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
         "",
         "# 2. 在该文件夹里打开 PowerShell，每次用这个",
         `$env:CCE_TUNNEL_CA="$PWD\\gateway-ca.pem"`,
@@ -559,8 +652,8 @@ async function copyDelivery(id) {
       ].join("\n")
     : [
         "# 1. 下载启动器和证书（只需一次）",
-        `curl -H "x-admin-token: ${TOKEN}" -o claude-box "${host}/admin/client/claude-box"`,
-        `curl -H "x-admin-token: ${TOKEN}" -o gateway-ca.pem "${host}/admin/client/tls.crt"`,
+        `curl -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o claude-box "${host}/launcher/client/claude-box"`,
+        `curl -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
         "chmod +x claude-box",
         "",
         "# 2. 启动（每次用这个）",
@@ -629,21 +722,44 @@ function openDrawer(kind, ctx = {}) {
   if (kind === "import") {
     $("#drawer-title").textContent = "批量导入账号";
     body.innerHTML = `
-      <div class="note">每行一条：<b>邮箱,应用专用密码,IP</b>，可再补 <b>代理URL,套餐,密码</b>。
-        代理留空时套用下面的模板，<code>{ip}</code> 会按行替换。直接从 Excel 复制多行即可。</div>
-      <div class="field" style="margin-top:12px"><label>代理模板（可选）</label>
-        <input id="d-tpl" placeholder="socks5://user:pass@host:1080"></div>
+      <div class="note"><b>每行：邮箱, Gmail 应用专用密码, 代理URL</b>。出口 IP 不用填，系统会自己探。
+        想手填就把 IP 插在密码后面。可直接从 Excel 复制多行。</div>
+      <div class="field" style="margin-top:12px"><label>代理模板（可选，只有 IP 没有完整代理时用）</label>
+        <input id="d-tpl" placeholder="socks5://user:pass@{ip}:1080"></div>
       <div class="field"><label>粘贴内容</label>
-        <textarea id="d-import" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,203.0.113.7"></textarea></div>
+        <textarea id="d-import" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,http://user:pass@203.0.113.9:1080"></textarea></div>
+      <div class="actions" style="margin-top:0">
+        <button class="btn btn-sm" id="d-check">先批量体检代理</button>
+      </div>
       <div class="note" id="d-preview-hint">粘贴后这里实时预览解析结果。</div>
       <div id="d-preview"></div>`;
     foot.innerHTML = `<button class="btn btn-primary" id="d-do-import">导入并开始</button>`;
     const reparse = () => renderPreview();
     $("#d-import").addEventListener("input", reparse);
     $("#d-tpl").addEventListener("input", reparse);
+    $("#d-check").onclick = async () => {
+      const { rows } = parseRows();
+      const withProxy = rows.filter((r) => r.proxy);
+      if (!withProxy.length) return toast("没有带代理的行", "err");
+      const box = $("#d-preview-hint");
+      box.textContent = `正在逐个体检 ${withProxy.length} 条代理…`;
+      for (const [i, r] of withProxy.entries()) {
+        box.textContent = `体检 ${i + 1}/${withProxy.length}：${r.email}`;
+        try {
+          r.probe = await apiFetch("/admin/proxy-check", {
+            method: "POST", body: JSON.stringify({ upstream_proxy_url: r.proxy, expected_ip: r.ip }),
+          });
+        } catch { r.probe = { grade: "unreachable", verdict: "检测失败" }; }
+      }
+      renderPreview(rows);
+      const bad = withProxy.filter((r) => r.probe?.grade !== "good").length;
+      box.textContent = `体检完成：${withProxy.length - bad} 条可用，${bad} 条有问题（见下表）。`;
+    };
     $("#d-do-import").onclick = async () => {
-      const { rows, bad } = parseRows();
+      const { rows } = parseRows();
       if (!rows.length) return toast("没有可导入的行", "err");
+      const bad = rows.filter((r) => r.problems.length).length;
+      if (bad && !confirm(`有 ${bad} 行格式不完整，仍要导入其余 ${rows.length - bad} 行吗？`)) return;
       const r = await apiFetch("/admin/jobs/import", {
         method: "POST",
         body: JSON.stringify({
@@ -651,7 +767,7 @@ function openDrawer(kind, ctx = {}) {
           proxy_template: $("#d-tpl").value.trim(),
         }),
       });
-      toast(`已建 ${r.created} 个环境${bad ? `，${bad} 行有问题` : ""}`, r.failed.length ? "err" : "ok");
+      toast(`已建 ${r.created} 个环境${r.failed.length ? `，${r.failed.length} 行失败` : ""}`, r.failed.length ? "err" : "ok");
       closeDrawer();
       refreshAll();
     };
@@ -708,18 +824,22 @@ function parseRows() {
   const tpl = $("#d-tpl")?.value.trim() || "";
   const rows = [];
   let bad = 0;
+  const looksLikeProxy = (cell) => /:\/\//.test(cell) || /@/.test(cell);
   for (const raw of ($("#d-import")?.value || "").split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const parts = line.split(",").map((c) => c.trim());
     const email = (parts[0] || "").toLowerCase();
     const pw = parts[1] || "";
-    const ip = parts[2] || "";
-    const proxy = parts[3] || (tpl && ip ? tpl.replace("{ip}", ip) : "");
+    // Third column is either an IP or the proxy itself; the old 3-column form
+    // put the IP there, so sniff it instead of demanding a column order.
+    const third = parts[2] || "";
+    let ip = looksLikeProxy(third) ? "" : third;
+    let proxy = looksLikeProxy(third) ? third : (parts[3] || "");
+    if (!proxy && tpl && ip) proxy = tpl.replace("{ip}", ip);
     const problems = [];
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) problems.push("邮箱");
     if (!pw) problems.push("应用密码");
-    if (!ip) problems.push("IP");
     if (!proxy) problems.push("代理");
     if (problems.length) bad += 1;
     rows.push({ email, pw, ip, proxy, plan: parts[4] || "pro", problems });
@@ -727,8 +847,9 @@ function parseRows() {
   return { rows, bad };
 }
 
-function renderPreview() {
-  const { rows, bad } = parseRows();
+function renderPreview(probedRows = null) {
+  const parsed = probedRows ? { rows: probedRows, bad: probedRows.filter((r) => r.problems.length).length } : parseRows();
+  const { rows, bad } = parsed;
   const hint = $("#d-preview-hint");
   const box = $("#d-preview");
   if (!box) return;
@@ -739,10 +860,12 @@ function renderPreview() {
   }
   hint.textContent = `${rows.length} 行，${bad ? `${bad} 行有问题（红底）` : "格式全部通过"}`;
   box.innerHTML = `<table class="preview">
-    <thead><tr><th>邮箱</th><th>应用密码</th><th>IP</th><th>代理</th><th>套餐</th><th>校验</th></tr></thead>
+    <thead><tr><th>邮箱</th><th>密码</th><th>出口 IP</th><th>代理</th><th>体检</th><th>校验</th></tr></thead>
     <tbody>${rows.map((r) => `<tr class="${r.problems.length ? "bad" : ""}">
-      <td>${esc(r.email || "—")}</td><td>${esc(r.pw ? "••••" : "—")}</td><td>${esc(r.ip || "—")}</td>
-      <td>${esc(r.proxy || "—")}</td><td>${esc(r.plan)}</td>
+      <td>${esc(r.email || "—")}</td><td>${esc(r.pw ? "••••" : "—")}</td>
+      <td>${esc(r.ip || "自动")}</td>
+      <td>${esc(r.proxy || "—")}</td>
+      <td class="st">${r.probe ? `<span class="pv ${esc(r.probe.grade)}">${esc(r.probe.verdict || r.probe.grade)}</span>` : "—"}</td>
       <td class="st">${r.problems.length ? "缺 " + r.problems.join("/") : "OK"}</td>
     </tr>`).join("")}</tbody></table>`;
 }

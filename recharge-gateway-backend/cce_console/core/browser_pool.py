@@ -78,7 +78,18 @@ class BrowserPool:
             if not await self._db.claim_session(profile_id, browser_session):
                 raise BrowserPoolError(f"profile is {profile['status']}: {profile_id}")
             self._active.add(profile_id)
+            heartbeat_task: asyncio.Task[None] | None = None
+
+            async def _keep_lease_alive() -> None:
+                while True:
+                    await asyncio.sleep(30)
+                    try:
+                        await self._db.touch_heartbeat(profile_id, browser_session)
+                    except Exception:  # noqa: BLE001
+                        pass
+
             try:
+                heartbeat_task = asyncio.create_task(_keep_lease_alive())
                 geo: ProxyGeoInfo = await self._inspector.verify_and_inspect(profile_id)
                 fingerprint = json.loads(profile["fingerprint_json"])
                 self._profiles.browser_data_dir(profile_id).mkdir(parents=True, exist_ok=True)
@@ -110,6 +121,12 @@ class BrowserPool:
                 await self._db.finish_session(profile_id, browser_session, "IDLE")
                 raise
             finally:
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
                 self._active.discard(profile_id)
                 self._profiles.scrub_profile_cache(profile_id)
                 self._profiles.enforce_disk_ceiling(profile_id)
@@ -166,16 +183,18 @@ class BrowserPool:
     # -- credential sync ---------------------------------------------------
 
     async def sync_claude_cli_credentials(
-        self, profile_id: str, *, email: str | None = None, timeout: float = 600.0
+        self,
+        profile_id: str,
+        *,
+        email: str | None = None,
+        timeout: float = 600.0,
+        context: Any | None = None,
     ) -> bytes:
         """Run `claude auth login`, approve it in the profile's browser, archive it.
 
-        `auth login` (not the `login` TUI step) prints the authorization URL and
-        then waits for a pasted code, so its output has to be read while it is
-        still running -- awaiting `communicate()` first would find nothing but the
-        final exit. The CLI runs with HOME pointed at the profile's claude_home
-        and its proxy pointed at the profile's sing-box port, so the whole OAuth
-        exchange leaves from the same IP and fingerprint as everything else.
+        When called from inside an active ``acquire_context`` block (e.g. right
+        after automated Pro signup), pass ``context`` directly so we reuse the
+        already-claimed browser instead of deadlocking on ``claim_session``.
         """
         profile = await self._db.get_profile(profile_id)
         if profile is None:
@@ -185,7 +204,15 @@ class BrowserPool:
         home.mkdir(parents=True, exist_ok=True)
         proxy_url = f"http://127.0.0.1:{profile['local_proxy_port']}"
 
-        async with self.acquire_context(profile_id, headless=self._headless, start_url=None) as context:
+        @asynccontextmanager
+        async def _use_context():
+            if context is not None:
+                yield context
+            else:
+                async with self.acquire_context(profile_id, headless=self._headless, start_url=None) as owned:
+                    yield owned
+
+        async with _use_context() as active_context:
             proc = await asyncio.create_subprocess_exec(
                 "claude",
                 "auth",
@@ -203,7 +230,7 @@ class BrowserPool:
             try:
                 url = await asyncio.wait_for(_read_authorize_url(proc, home), timeout=timeout)
                 if url:
-                    page = await context.new_page()
+                    page = await active_context.new_page()
                     code = await _drive_consent(page, url, email=email, timeout=timeout)
                     if code:
                         # The CLI is blocked on its prompt; without this write

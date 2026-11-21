@@ -1,9 +1,17 @@
 name: moliply
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: 768m
+    pids_limit: 256
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-moliply}
       POSTGRES_USER: ${POSTGRES_USER:-moliply}
@@ -15,10 +23,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    logging: *logging
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 256m
+    pids_limit: 128
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -27,6 +38,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    logging: *logging
 
   api:
     build:
@@ -34,6 +46,10 @@ services:
       args:
         INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
     restart: unless-stopped
+    mem_limit: 768m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://moliply:moliply_dev_password@db:5432/moliply}
@@ -42,19 +58,27 @@ services:
       PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:-http://localhost}
       PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:-http://localhost/redeem}
       API_BASE_URL: ${API_BASE_URL:-http://localhost}
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_CLIENT_DIR: /data/clients
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
+      ARTIFACT_DIR: /artifacts
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - console_data:/data
+      - artifacts_data:/artifacts
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 8
+    logging: *logging
 
   worker:
     build:
@@ -62,16 +86,27 @@ services:
       args:
         INSTALL_BROWSER: "true"
     restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 1024
+    shm_size: 1gb
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://moliply:moliply_dev_password@db:5432/moliply}
       REDIS_URL: redis://redis:6379/0
       TASK_MODE: celery
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
+      ARTIFACT_DIR: /artifacts
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - console_data:/data
+      - artifacts_data:/artifacts
     command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "--concurrency=2"]
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.tasks.celery_worker.celery_app inspect ping -t 5 >/dev/null 2>&1 || exit 1"]
@@ -79,6 +114,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    logging: *logging
 
   beat:
     build:
@@ -86,19 +122,28 @@ services:
       args:
         INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
     restart: unless-stopped
+    mem_limit: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://moliply:moliply_dev_password@db:5432/moliply}
       REDIS_URL: redis://redis:6379/0
       TASK_MODE: celery
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
     depends_on:
       redis:
         condition: service_healthy
       db:
         condition: service_healthy
+    volumes:
+      - console_data:/data
     command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "beat", "-l", "INFO"]
     healthcheck:
       disable: true
+    logging: *logging
 
   web:
     build:
@@ -109,20 +154,30 @@ services:
         NEXT_PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:-http://localhost/redeem}
         NEXT_PUBLIC_CONTACT_WECHAT: ${NEXT_PUBLIC_CONTACT_WECHAT:-MOLIPLY-SUPPORT}
     restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
     depends_on:
       api:
-        condition: service_started
-    # The storefront is served through Nginx. Uncomment only for direct debugging:
-    # ports:
-    #   - "3000:3000"
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logging
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    mem_limit: 128m
+    pids_limit: 128
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -131,9 +186,19 @@ services:
       - "${HTTP_PORT:-80}:80"
       # - "443:443"
     depends_on:
-      - web
-      - api
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    logging: *logging
 
 volumes:
   db_data:
   redis_data:
+  console_data:
+  artifacts_data:

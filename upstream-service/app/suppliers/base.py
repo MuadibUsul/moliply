@@ -35,6 +35,7 @@ class SupplierResult:
     status: str  # success | failed | pending
     message: str = ""
     reference: str = ""
+    secret: str = ""
 
 
 class Supplier(Protocol):

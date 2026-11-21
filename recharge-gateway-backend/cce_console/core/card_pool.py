@@ -126,10 +126,13 @@ async def lease_card(db: Database) -> LeasedCard:
         await cursor.close()
         if row is None:
             raise CardError("没有可用卡，请先在卡片页导入")
-        await conn.execute(
-            "UPDATE subscription_cards SET status = 'in_use', used_at = CURRENT_TIMESTAMP WHERE id = ?",
+        cursor = await conn.execute(
+            "UPDATE subscription_cards SET status = 'in_use', used_at = CURRENT_TIMESTAMP"
+            " WHERE id = ? AND status = 'available'",
             (row["id"],),
         )
+        if cursor.rowcount != 1:
+            raise CardError("卡片已被并发占用，请重试")
     pan = decrypt_blob(row["pan_enc"]).decode()
     cvv = decrypt_blob(row["cvv_enc"]).decode()
     return LeasedCard(
