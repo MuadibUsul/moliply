@@ -37,7 +37,8 @@ def lease(payload: SmsLeaseRequest, request: Request, db: Session = Depends(get_
 
 
 @router.get("/tasks/{task_id}")
-def status(task_id: str, db: Session = Depends(get_db)) -> dict:
+@limiter.limit(settings.lookup_rate_limit)
+def status(task_id: str, request: Request, db: Session = Depends(get_db)) -> dict:
     task = sms_service.poll(db, task_id)
     return {"task": sms_service.serialize(task, db.get(ActivationCode, task.code_id))}
 

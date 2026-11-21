@@ -209,10 +209,65 @@ class VccCardUpdateRequest(StrictModel):
 
 class ProductUpdateRequest(StrictModel):
     active: bool | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    subtitle: str | None = Field(default=None, max_length=255)
     price: float | None = Field(default=None, ge=0, le=100_000)
+    original_price: float | None = Field(default=None, ge=0, le=100_000)
     badge: str | None = Field(default=None, max_length=32)
+    warranty: str | None = Field(default=None, max_length=120)
+    delivery_note: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=10_000)
     base_sales_count: int | None = Field(default=None, ge=0, le=10_000_000)
-    fulfillment_strategy: Literal["STOCK", "JIT_ACCOUNT_RECHARGE"] | None = None
+    fulfillment_strategy: Literal["STOCK", "JIT_ACCOUNT_RECHARGE", "CCE_ACCOUNT_KEY"] | None = None
+
+
+class VariantUpdateRequest(StrictModel):
+    label: str | None = Field(default=None, min_length=1, max_length=64)
+    months: int | None = Field(default=None, ge=1, le=36)
+    price: float | None = Field(default=None, ge=0, le=100_000)
+    original_price: float | None = Field(default=None, ge=0, le=100_000)
+    active: bool | None = None
+
+
+class ProductCreateRequest(StrictModel):
+    slug: str = Field(min_length=2, max_length=96)
+    name: str = Field(min_length=2, max_length=160)
+    subtitle: str = Field(default="", max_length=255)
+    category: Literal["AI_MEMBERSHIP", "SOFTWARE", "DEVELOPER", "DESIGN", "DIGITAL", "API"] = "AI_MEMBERSHIP"
+    brand: str = Field(default="MOLIPLY", max_length=64)
+    logo_key: str = Field(default="gpt", max_length=32)
+    delivery_type: Literal["ACTIVATION_CODE", "ACCOUNT_CREDENTIALS"] = "ACTIVATION_CODE"
+    fulfillment_strategy: Literal["STOCK", "JIT_ACCOUNT_RECHARGE", "CCE_ACCOUNT_KEY"] = "STOCK"
+    price: float = Field(ge=0.01, le=100_000)
+    original_price: float | None = Field(default=None, ge=0, le=100_000)
+    badge: str | None = Field(default=None, max_length=32)
+    warranty: str = Field(default="30 天质保", max_length=120)
+    delivery_note: str = Field(default="支付后自动发货", max_length=255)
+    description: str = Field(default="", max_length=10_000)
+    sku_type: str | None = Field(default=None, max_length=32)
+    variant_label: str = Field(default="1 个月标准版", max_length=64)
+    months: int = Field(default=1, ge=1, le=36)
+
+
+class CouponCreateRequest(StrictModel):
+    code: str = Field(min_length=2, max_length=32)
+    amount: float = Field(gt=0, le=10_000)
+    min_amount: float = Field(default=0, ge=0, le=100_000)
+    max_uses: int | None = Field(default=None, ge=1, le=1_000_000)
+    active: bool = True
+    expires_at: str | None = Field(default=None, max_length=40)
+
+
+class CouponUpdateRequest(StrictModel):
+    active: bool | None = None
+    amount: float | None = Field(default=None, gt=0, le=10_000)
+    min_amount: float | None = Field(default=None, ge=0, le=100_000)
+    max_uses: int | None = Field(default=None, ge=1, le=1_000_000)
+    expires_at: str | None = Field(default=None, max_length=40)
+
+
+class OrderActionReasonRequest(StrictModel):
+    reason: str = Field(default="", max_length=240)
 
 
 class AccountImportRequest(StrictModel):

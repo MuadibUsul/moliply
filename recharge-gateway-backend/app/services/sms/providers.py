@@ -198,6 +198,26 @@ class FiveSimProvider(BaseSMSProvider):
     # rather than a virtual range, which is what the storefront sells.
     OPERATOR = "any"
 
+    # 5sim uses lowercase country names rather than ISO-2 codes.
+    COUNTRY_SLUGS: dict[str, str] = {
+        "US": "usa",
+        "GB": "england",
+        "UK": "england",
+        "PH": "philippines",
+        "CA": "canada",
+        "DE": "germany",
+        "FR": "france",
+        "NL": "netherlands",
+        "AU": "australia",
+        "JP": "japan",
+        "SG": "singapore",
+        "HK": "hongkong",
+        "MY": "malaysia",
+        "ID": "indonesia",
+        "TH": "thailand",
+        "VN": "vietnam",
+    }
+
     def __init__(self) -> None:
         self.api_key = runtime.get("fivesim_api_key", "").strip()
 
@@ -214,6 +234,18 @@ class FiveSimProvider(BaseSMSProvider):
         if response.status_code == 404:
             raise NoNumbersAvailable()
         if response.status_code == 402:
+            try:
+                from app.services import feishu
+
+                feishu.dispatch_event(
+                    "system.error",
+                    "MOLIPLY 5sim 接码上游余额不足",
+                    {"上游": "fivesim", "路径": path},
+                    severity="error",
+                    link_path="/admin/settings",
+                )
+            except Exception:  # noqa: BLE001
+                pass
             raise SmsProviderError("SMS_LOW_BALANCE", "接码上游余额不足")
         if response.status_code >= 500:
             raise SmsProviderError("SMS_UPSTREAM_DOWN", "接码上游暂时不可用", transient=True)
@@ -230,8 +262,9 @@ class FiveSimProvider(BaseSMSProvider):
         return body
 
     def lease_number(self, service: str, country: str) -> LeasedNumber:
+        slug = self.COUNTRY_SLUGS.get(country.upper(), country.lower())
         body = self._request(
-            "GET", f"/user/buy/activation/{country.lower()}/{self.OPERATOR}/{service}"
+            "GET", f"/user/buy/activation/{slug}/{self.OPERATOR}/{service}"
         )
         order_id = body.get("id")
         number = body.get("phone")

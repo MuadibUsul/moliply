@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 connect_args: dict = {}
 if settings.database_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+    connect_args["timeout"] = 30
 
 engine = create_engine(
     settings.database_url,
@@ -22,6 +23,18 @@ engine = create_engine(
     future=True,
     connect_args=connect_args,
 )
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False, class_=Session)
 
 
@@ -70,16 +83,26 @@ def ensure_schema_compatibility() -> None:
     add_column("orders", "payment_currency", "VARCHAR(8)")
     add_column("orders", "payment_address", "VARCHAR(96)")
     add_column("orders", "payment_network", "VARCHAR(16)")
-    if "orders" in inspector.get_table_names() and engine.dialect.name == "postgresql":
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE orders ALTER COLUMN payment_amount TYPE NUMERIC(24,8)"))
-    if "vcc_cards" in inspector.get_table_names() and engine.dialect.name == "postgresql":
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE vcc_cards ALTER COLUMN available_balance TYPE NUMERIC(12,2)"))
-            connection.execute(text("ALTER TABLE vcc_cards ALTER COLUMN reserved_balance TYPE NUMERIC(12,2)"))
-    if "payment_events" in inspector.get_table_names() and engine.dialect.name == "postgresql":
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE payment_events ALTER COLUMN amount TYPE NUMERIC(24,8)"))
+    if engine.dialect.name == "postgresql":
+        def _widen_numeric(table: str, column: str, precision: int, scale: int) -> None:
+            if table not in inspector.get_table_names():
+                return
+            col_meta = next((c for c in inspector.get_columns(table) if c["name"] == column), None)
+            if col_meta is None:
+                return
+            col_type = col_meta.get("type")
+            cur_p = getattr(col_type, "precision", None)
+            cur_s = getattr(col_type, "scale", None)
+            if cur_p == precision and cur_s == scale:
+                return
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE NUMERIC({precision},{scale})"))
+            logger.info("Schema compatibility: widened %s.%s to NUMERIC(%s,%s)", table, column, precision, scale)
+
+        _widen_numeric("orders", "payment_amount", 24, 8)
+        _widen_numeric("vcc_cards", "available_balance", 12, 2)
+        _widen_numeric("vcc_cards", "reserved_balance", 12, 2)
+        _widen_numeric("payment_events", "amount", 24, 8)
     add_column("activation_codes", "preferred_region", "VARCHAR(16) NOT NULL DEFAULT 'PH_FIRST'")
     add_column("recharge_tasks", "executed_channel", "VARCHAR(16)")
     add_column("recharge_tasks", "executed_region", "VARCHAR(4)")
@@ -223,6 +246,7 @@ def init_db() -> None:
     """Migrate the schema and seed the demo catalogue when the database is empty."""
     from app import models  # noqa: F401  (register metadata)
 
+    settings.validate_production_config()
     strict = _strict_migrations()
     try:
         _run_migrations()

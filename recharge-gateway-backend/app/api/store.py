@@ -242,4 +242,6 @@ def mock_settle(
 @router.get("/payment-title-preview")
 def payment_title_preview(order_no: str = Query(default="MOL202610180001")) -> dict:
     """Transparency/debug endpoint: the exact descriptor sent to the gateway."""
+    if settings.is_production and not settings.debug:
+        raise HTTPException(status_code=404, detail="Not found")
     return {"title": masked_order_title(order_no), "categories": CATEGORY_LABELS}

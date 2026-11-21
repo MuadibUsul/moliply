@@ -74,7 +74,11 @@ def available_stock(db: Session, product: Product) -> int:
 
 
 def available_account_stock(db: Session, product: Product) -> int:
-    """Stock of a credential product: finished accounts, or the free pool for JIT."""
+    """Stock of a credential product: finished accounts, JIT free pool, or ready CCE profiles."""
+    if product.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY:
+        from app.services.fulfillment import cce_delivery
+
+        return cce_delivery.available_cce_profiles()
     if product.fulfillment_strategy == FulfillmentStrategy.JIT_ACCOUNT_RECHARGE:
         from app.services.fulfillment import jit_delivery
 

@@ -9,19 +9,113 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="app.tasks.celery_worker.execute_recharge_task", bind=True)
+@celery_app.task(
+    name="app.tasks.celery_worker.execute_recharge_task",
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def execute_recharge_task(self, task_id: str) -> None:
     logger.info("Celery picked up recharge task %s", task_id)
     redeem_service.run_recharge_task(task_id)
 
 
-@celery_app.task(name="app.tasks.celery_worker.execute_jit_job", bind=True)
+@celery_app.task(
+    name="app.tasks.celery_worker.execute_jit_job",
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def execute_jit_job(self, job_id: int) -> None:
     """Upgrade a locked free account for a paid JIT order, then deliver it."""
     from app.services.fulfillment import jit_delivery
 
     logger.info("Celery picked up JIT job %s", job_id)
     jit_delivery.run_jit_job(job_id)
+
+
+@celery_app.task(
+    name="app.tasks.celery_worker.send_delivery_email_task",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def send_delivery_email_task(self, order_no: str) -> bool:
+    """Reliably deliver order credentials email with exponential backoff."""
+    from app.models import Order
+    from app.services import mailer
+    from app.services import orders as order_service
+
+    db = SessionLocal()
+    try:
+        order = db.query(Order).filter(Order.order_no == order_no).first()
+        if order is None:
+            return False
+        payload = order_service.serialize_order(db, order, reveal=True, reveal_email=True)
+        return mailer.send_delivery_email(order.email, payload, raise_on_error=True)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.expire_unpaid_orders_task")
+def expire_unpaid_orders_task() -> int:
+    from app.services import automation
+
+    db = SessionLocal()
+    try:
+        return automation.expire_unpaid_orders(db)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.fulfill_backorders_task")
+def fulfill_backorders_task() -> int:
+    from app.services import orders as order_service
+
+    db = SessionLocal()
+    try:
+        return order_service.fulfill_pending_backorders(db)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.recover_stale_locks_and_tasks_task")
+def recover_stale_locks_and_tasks_task() -> dict:
+    from app.services import automation
+    from app.services.fulfillment import jit_delivery
+
+    db = SessionLocal()
+    try:
+        return {
+            "vcc_locks": automation.recover_stale_vcc_locks(db),
+            "jit": jit_delivery.recover_stale_jit_jobs(db),
+            "tasks": automation.recover_stale_recharge_tasks(db),
+        }
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.reconcile_upstream_tasks_task")
+def reconcile_upstream_tasks_task() -> dict:
+    from app.services import automation
+
+    db = SessionLocal()
+    try:
+        return automation.reconcile_upstream_tasks(db)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.celery_worker.inventory_health_check_task")
+def inventory_health_check_task() -> dict:
+    from app.services import automation
+
+    db = SessionLocal()
+    try:
+        return automation.run_inventory_health_check(db)
+    finally:
+        db.close()
 
 
 @celery_app.task(name="app.tasks.celery_worker.cleanup_tokens_task")

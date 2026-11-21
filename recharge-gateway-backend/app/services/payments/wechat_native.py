@@ -14,6 +14,7 @@ import json
 import logging
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -86,11 +87,14 @@ class WechatNativeProvider(OfficialPaymentGatewayMixin, PaymentProvider):
         )
 
     def create_native(self, order_no: str, amount: Decimal, title: str, client_ip: str = "") -> PaymentIntent:
+        expire_minutes = max(1, runtime.get_int("order_expire_minutes", settings.order_expire_minutes))
+        expire_dt = datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=expire_minutes)
         payload = {
             "appid": self.app_id,
             "mchid": self.mch_id,
             "description": self.build_safe_subject(order_no),
             "out_trade_no": order_no,
+            "time_expire": expire_dt.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
             "notify_url": self.notify_url,
             "amount": {"total": self.to_cents(amount), "currency": "CNY"},
         }
@@ -117,18 +121,28 @@ class WechatNativeProvider(OfficialPaymentGatewayMixin, PaymentProvider):
             provider="wechat_native",
             qr_content=str(data["code_url"]),
             trade_no=order_no,
-            expires_in=runtime.get_int("order_expire_minutes", settings.order_expire_minutes) * 60,
+            expires_in=expire_minutes * 60,
             raw={"code_url": data["code_url"]},
         )
 
     def _signature_valid(self, headers: dict[str, str], raw_body: bytes) -> bool:
         if self._platform_public_key is None:
-            # No platform key configured: the AEAD tag is the only integrity proof.
+            if settings.is_production:
+                logger.error("WECHAT_PLATFORM_PUBLIC_KEY is required in production; rejecting callback")
+                return False
+            # Dev fallback: AEAD tag is the only integrity proof when platform key is unset.
             return True
         timestamp = headers.get("wechatpay-timestamp", "")
         nonce = headers.get("wechatpay-nonce", "")
         signature = headers.get("wechatpay-signature", "")
         if not (timestamp and nonce and signature):
+            return False
+        try:
+            ts_int = int(timestamp)
+        except ValueError:
+            return False
+        if settings.is_production and abs(int(time.time()) - ts_int) > 300:
+            logger.warning("WeChat callback timestamp outside 5-minute replay window")
             return False
         message = f"{timestamp}\n{nonce}\n{raw_body.decode('utf-8')}\n".encode("utf-8")
         try:

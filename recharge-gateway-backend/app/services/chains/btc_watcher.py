@@ -78,9 +78,13 @@ def scan_pending_orders(db: Session) -> int:
     from app.services import orders as order_service
 
     matched = 0
+    used_txids: set[str] = set()
     for order in pending:
         expected = Decimal(str(order.payment_amount))
         for tx in txs:
+            txid = str(tx.get("txid") or "")
+            if not txid or txid in used_txids:
+                continue
             status = tx.get("status") or {}
             if not status.get("confirmed"):
                 continue
@@ -103,16 +107,14 @@ def scan_pending_orders(db: Session) -> int:
                 continue
             if received_at and order.expires_at and received_at > order.expires_at + grace:
                 continue
-            txid = str(tx.get("txid") or "")
-            if not txid:
-                continue
             existing = (
                 db.query(PaymentEvent)
                 .filter(PaymentEvent.provider == "btc", PaymentEvent.event_id == txid)
                 .first()
             )
             if existing:
-                break
+                used_txids.add(txid)
+                continue
             db.add(
                 PaymentEvent(
                     provider="btc",
@@ -136,6 +138,7 @@ def scan_pending_orders(db: Session) -> int:
                 db.rollback()
                 logger.warning("BTC payment could not settle order: %s", exc.__class__.__name__)
                 continue
+            used_txids.add(txid)
             matched += 1
             logger.info("BTC payment matched order %s tx=%s", order.order_no, txid)
             break

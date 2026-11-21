@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
 # These redeem without an account, so the pre-check reports success without one.
-NO_SESSION_SKUS = {SkuType.CODEX_SMS_US, SkuType.GENERIC_DIGITAL}
+NO_SESSION_SKUS = {SkuType.CODEX_SMS_US, SkuType.SMS_VERIFY, SkuType.GENERIC_DIGITAL}
 
 Verdict = str
 

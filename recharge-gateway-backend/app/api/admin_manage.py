@@ -15,13 +15,18 @@ from app.models import (
     AuditLog,
     ChannelMode,
     CodeStatus,
+    Coupon,
+    DeliveryType,
     FreeAccountPool,
     FreeAccountStatus,
     FulfillmentStrategy,
     InventoryStatus,
+    JitAccountJob,
+    JitJobState,
     Order,
     OrderStatus,
     Product,
+    ProductCategory,
     ProductVariant,
     RegionPreference,
     RechargeState,
@@ -40,10 +45,15 @@ from app.schemas import (
     CodeGenerateRequest,
     CodeImportRequest,
     CodeStatusRequest,
+    CouponCreateRequest,
+    CouponUpdateRequest,
     FreeAccountImportRequest,
+    OrderActionReasonRequest,
+    ProductCreateRequest,
     ProductUpdateRequest,
     SettingsUpdateRequest,
     SupplierConfigRequest,
+    VariantUpdateRequest,
     VccCardBatchImportRequest,
     VccCardCalibrateRequest,
     VccCardCreateRequest,
@@ -59,6 +69,7 @@ from app.security import (
     create_admin_token,
     limiter,
     require_admin,
+    revoke_admin_token,
     verify_admin_password,
     verify_admin_totp,
 )
@@ -183,7 +194,7 @@ def admin_login(
         token,
         max_age=ttl,
         httponly=True,
-        secure=True,
+        secure=not settings.debug,
         samesite="lax",
         path="/",
     )
@@ -191,7 +202,14 @@ def admin_login(
 
 
 @router.post("/logout")
-def admin_logout(response: Response) -> dict:
+def admin_logout(request: Request, response: Response) -> dict:
+    cookie_token = request.cookies.get(ADMIN_COOKIE, "")
+    header = request.headers.get("authorization", "")
+    bearer_token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    if cookie_token:
+        revoke_admin_token(cookie_token)
+    if bearer_token:
+        revoke_admin_token(bearer_token)
     response.delete_cookie(ADMIN_COOKIE, path="/")
     return {"ok": True}
 
@@ -601,7 +619,8 @@ def admin_generate_codes(
         )
     )
     db.commit()
-    return {"created": len(created), "codes": created[:50], "sku_type": payload.sku_type}
+    auto_fulfilled = order_service.fulfill_pending_backorders(db) if created else 0
+    return {"created": len(created), "codes": created[:50], "sku_type": payload.sku_type, "auto_fulfilled": auto_fulfilled}
 
 
 @protected.post("/codes/import")
@@ -653,7 +672,8 @@ def admin_import_codes(
         )
     )
     db.commit()
-    return {"created": len(created), "skipped": skipped, "codes": created[:20]}
+    auto_fulfilled = order_service.fulfill_pending_backorders(db) if created else 0
+    return {"created": len(created), "skipped": skipped, "codes": created[:20], "auto_fulfilled": auto_fulfilled}
 
 
 @protected.patch("/codes/{code_id}/status")
@@ -670,6 +690,8 @@ def admin_code_status(
     if target == CodeStatus.DISABLED:
         if code.status != CodeStatus.UNUSED:
             raise HTTPException(status_code=409, detail="仅未使用的激活码可以作废")
+        if code.order_item_id is not None:
+            raise HTTPException(status_code=409, detail="该激活码已交付给客户订单，请通过订单退款流程作废")
         code.status = CodeStatus.DISABLED
     elif target == CodeStatus.UNUSED:
         if code.status != CodeStatus.DISABLED:
@@ -1162,6 +1184,8 @@ def admin_update_card(
         card.available_balance = Decimal(str(payload.available_balance))
     if payload.reset_failed_count:
         card.failed_count = 0
+        card.consecutive_failures = 0
+        card.cooldown_until = None
     if payload.proxy_url is not None:
         card.proxy_url = payload.proxy_url or None
     if payload.timezone_id is not None:
@@ -1214,10 +1238,22 @@ def admin_update_product(
         raise HTTPException(status_code=404, detail="商品不存在")
     if payload.active is not None:
         product.active = payload.active
+    if payload.name is not None:
+        product.name = payload.name.strip()
+    if payload.subtitle is not None:
+        product.subtitle = payload.subtitle.strip()
     if payload.price is not None:
         product.price = Decimal(str(payload.price))
+    if payload.original_price is not None:
+        product.original_price = Decimal(str(payload.original_price)) if payload.original_price > 0 else None
     if payload.badge is not None:
         product.badge = payload.badge or None
+    if payload.warranty is not None:
+        product.warranty = payload.warranty.strip()
+    if payload.delivery_note is not None:
+        product.delivery_note = payload.delivery_note.strip()
+    if payload.description is not None:
+        product.description = payload.description.strip()
     if payload.base_sales_count is not None:
         product.base_sales_count = payload.base_sales_count
     if payload.fulfillment_strategy is not None:
@@ -1293,7 +1329,8 @@ def admin_import_free_accounts(
         )
     )
     db.commit()
-    return {"created": created, "skipped": skipped}
+    auto_fulfilled = order_service.fulfill_pending_backorders(db, product_id=product.id) if created else 0
+    return {"created": created, "skipped": skipped, "auto_fulfilled": auto_fulfilled}
 
 
 @protected.get("/free-accounts")
@@ -1361,7 +1398,8 @@ def admin_import_accounts(
         )
     )
     db.commit()
-    return {"created": created}
+    auto_fulfilled = order_service.fulfill_pending_backorders(db, product_id=product.id) if created else 0
+    return {"created": created, "auto_fulfilled": auto_fulfilled}
 
 
 @protected.get("/channels")
@@ -1482,3 +1520,399 @@ def admin_probe_supplier(db: Session = Depends(get_db), admin: dict = Depends(re
             else None
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Commercial order actions: cancel, refund, resend delivery email
+# ---------------------------------------------------------------------------
+@protected.post("/orders/{order_no}/cancel")
+def admin_cancel_order(
+    order_no: str,
+    payload: OrderActionReasonRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    order = db.query(Order).filter(Order.order_no == order_no).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    updated = order_service.cancel_order(
+        db,
+        order,
+        actor=admin.get("sub", "admin"),
+        reason=payload.reason,
+        ip=client_ip(request),
+    )
+    return {"order": order_service.serialize_order(db, updated, reveal=True, reveal_email=True)}
+
+
+@protected.post("/orders/{order_no}/refund")
+def admin_refund_order(
+    order_no: str,
+    payload: OrderActionReasonRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    order = db.query(Order).filter(Order.order_no == order_no).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    result = order_service.refund_order(
+        db,
+        order,
+        actor=admin.get("sub", "admin"),
+        reason=payload.reason,
+        ip=client_ip(request),
+    )
+    return {
+        "order": order_service.serialize_order(db, result["order"], reveal=True, reveal_email=True),
+        "revoked_codes": result["revoked_codes"],
+    }
+
+
+@protected.post("/orders/{order_no}/resend-email")
+def admin_resend_order_email(
+    order_no: str,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    from app.services import mailer
+
+    order = db.query(Order).filter(Order.order_no == order_no).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
+        raise HTTPException(status_code=409, detail="仅已支付或已交付的订单可补发邮件")
+    if not mailer.smtp_configured():
+        raise HTTPException(status_code=400, detail="SMTP 发信尚未配置，请先在系统设置中完成配置")
+    payload = order_service.serialize_order(db, order, reveal=True, reveal_email=True)
+    sent = mailer.send_delivery_email(order.email, payload)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="order.resend_email",
+            entity_type="order",
+            entity_id=order.order_no,
+            detail=f"sent={sent}",
+        )
+    )
+    db.commit()
+    return {"ok": sent}
+
+
+# ---------------------------------------------------------------------------
+# Product & Variant creation/editing
+# ---------------------------------------------------------------------------
+@protected.post("/products", status_code=201)
+def admin_create_product(
+    payload: ProductCreateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    slug = payload.slug.strip().lower()
+    if db.query(Product.id).filter(Product.slug == slug).first():
+        raise HTTPException(status_code=409, detail="商品 slug 已存在")
+    sku_enum = None
+    if payload.sku_type:
+        try:
+            sku_enum = SkuType(payload.sku_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"无效的 SKU 类型：{payload.sku_type}") from exc
+    product = Product(
+        slug=slug,
+        name=payload.name.strip(),
+        subtitle=payload.subtitle.strip(),
+        category=ProductCategory(payload.category),
+        brand=payload.brand.strip(),
+        logo_key=payload.logo_key.strip(),
+        delivery_type=DeliveryType(payload.delivery_type),
+        fulfillment_strategy=FulfillmentStrategy(payload.fulfillment_strategy),
+        price=Decimal(str(payload.price)),
+        original_price=Decimal(str(payload.original_price)) if payload.original_price else None,
+        badge=payload.badge or None,
+        warranty=payload.warranty.strip(),
+        delivery_note=payload.delivery_note.strip(),
+        description=payload.description.strip(),
+        active=True,
+    )
+    db.add(product)
+    db.flush()
+    variant = ProductVariant(
+        product_id=product.id,
+        label=payload.variant_label.strip(),
+        months=payload.months,
+        price=Decimal(str(payload.price)),
+        original_price=Decimal(str(payload.original_price)) if payload.original_price else None,
+        sku_type=sku_enum,
+        active=True,
+    )
+    db.add(variant)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="product.create",
+            entity_type="product",
+            entity_id=str(product.id),
+            detail=f"slug={slug}",
+        )
+    )
+    db.commit()
+    db.refresh(product)
+    return {"product": serialize_product(db, product)}
+
+
+@protected.patch("/variants/{variant_id}")
+def admin_update_variant(
+    variant_id: int,
+    payload: VariantUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    variant = db.get(ProductVariant, variant_id)
+    if not variant:
+        raise HTTPException(status_code=404, detail="商品规格不存在")
+    if payload.label is not None:
+        variant.label = payload.label.strip()
+    if payload.months is not None:
+        variant.months = payload.months
+    if payload.price is not None:
+        variant.price = Decimal(str(payload.price))
+    if payload.original_price is not None:
+        variant.original_price = Decimal(str(payload.original_price)) if payload.original_price > 0 else None
+    if payload.active is not None:
+        variant.active = payload.active
+    db.add(variant)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="variant.update",
+            entity_type="product_variant",
+            entity_id=str(variant.id),
+            detail=f"price={variant.price} active={variant.active}",
+        )
+    )
+    db.commit()
+    return {
+        "id": variant.id,
+        "label": variant.label,
+        "price": float(variant.price),
+        "active": variant.active,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Coupon CRUD
+# ---------------------------------------------------------------------------
+def _serialize_coupon(coupon: Coupon) -> dict:
+    return {
+        "id": coupon.id,
+        "code": coupon.code,
+        "amount": float(coupon.amount),
+        "min_amount": float(coupon.min_amount),
+        "active": coupon.active,
+        "max_uses": coupon.max_uses,
+        "used_count": coupon.used_count,
+        "expires_at": coupon.expires_at.isoformat() + "Z" if coupon.expires_at else None,
+        "created_at": coupon.created_at.isoformat() + "Z",
+    }
+
+
+def _parse_iso_dt(value: str | None) -> datetime | None:
+    if not value or not value.strip():
+        return None
+    cleaned = value.strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(cleaned)
+    if dt.tzinfo is not None:
+        from datetime import timezone as _tz
+
+        dt = dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
+
+
+@protected.get("/coupons")
+def admin_coupons(db: Session = Depends(get_db)) -> dict:
+    rows = db.query(Coupon).order_by(Coupon.id.desc()).limit(200).all()
+    return {"items": [_serialize_coupon(row) for row in rows]}
+
+
+@protected.post("/coupons", status_code=201)
+def admin_create_coupon(
+    payload: CouponCreateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    code = payload.code.strip().upper()
+    if db.query(Coupon.id).filter(func.upper(Coupon.code) == code).first():
+        raise HTTPException(status_code=409, detail="优惠码已存在")
+    try:
+        expires_at = _parse_iso_dt(payload.expires_at)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="过期时间格式无效，请使用 ISO 格式") from exc
+    coupon = Coupon(
+        code=code,
+        amount=Decimal(str(payload.amount)),
+        min_amount=Decimal(str(payload.min_amount)),
+        max_uses=payload.max_uses,
+        active=payload.active,
+        expires_at=expires_at,
+    )
+    db.add(coupon)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="coupon.create",
+            entity_type="coupon",
+            entity_id=code,
+            detail=f"amount={payload.amount} min={payload.min_amount}",
+        )
+    )
+    db.commit()
+    db.refresh(coupon)
+    return {"coupon": _serialize_coupon(coupon)}
+
+
+@protected.patch("/coupons/{coupon_id}")
+def admin_update_coupon(
+    coupon_id: int,
+    payload: CouponUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    coupon = db.get(Coupon, coupon_id)
+    if not coupon:
+        raise HTTPException(status_code=404, detail="优惠码不存在")
+    if payload.active is not None:
+        coupon.active = payload.active
+    if payload.amount is not None:
+        coupon.amount = Decimal(str(payload.amount))
+    if payload.min_amount is not None:
+        coupon.min_amount = Decimal(str(payload.min_amount))
+    if payload.max_uses is not None:
+        coupon.max_uses = payload.max_uses
+    if payload.expires_at is not None:
+        try:
+            coupon.expires_at = _parse_iso_dt(payload.expires_at)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="过期时间格式无效") from exc
+    db.add(coupon)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="coupon.update",
+            entity_type="coupon",
+            entity_id=coupon.code,
+            detail=f"active={coupon.active}",
+        )
+    )
+    db.commit()
+    db.refresh(coupon)
+    return {"coupon": _serialize_coupon(coupon)}
+
+
+@protected.delete("/coupons/{coupon_id}")
+def admin_delete_coupon(
+    coupon_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    coupon = db.get(Coupon, coupon_id)
+    if not coupon:
+        raise HTTPException(status_code=404, detail="优惠码不存在")
+    code = coupon.code
+    db.delete(coupon)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="coupon.delete",
+            entity_type="coupon",
+            entity_id=code,
+            detail="deleted",
+        )
+    )
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Operational metrics & on-demand self-healing recovery
+# ---------------------------------------------------------------------------
+@protected.get("/metrics")
+def admin_metrics(db: Session = Depends(get_db)) -> dict:
+    """Live operational metrics for dashboards, alert badges, and uptime monitors."""
+    stock_pending = (
+        db.query(func.count(Order.id))
+        .filter(Order.status == OrderStatus.PAID, Order.stock_pending.is_(True))
+        .scalar()
+        or 0
+    )
+    manual_review = (
+        db.query(func.count(RechargeTask.task_id))
+        .join(ActivationCode, ActivationCode.id == RechargeTask.code_id)
+        .filter(RechargeTask.state == RechargeState.FAILED, ActivationCode.status == CodeStatus.LOCKED)
+        .scalar()
+        or 0
+    )
+    active_tasks = (
+        db.query(func.count(RechargeTask.task_id))
+        .filter(RechargeTask.state.notin_([RechargeState.SUCCESS, RechargeState.FAILED]))
+        .scalar()
+        or 0
+    )
+    active_jit = (
+        db.query(func.count(JitAccountJob.id))
+        .filter(JitAccountJob.state.in_([JitJobState.PENDING, JitJobState.RECHARGING]))
+        .scalar()
+        or 0
+    )
+    failed_jit = (
+        db.query(func.count(JitAccountJob.id))
+        .filter(JitAccountJob.state == JitJobState.FAILED)
+        .scalar()
+        or 0
+    )
+    locked_cards = (
+        db.query(func.count(VccCard.id))
+        .filter(VccCard.is_locked.is_(True))
+        .scalar()
+        or 0
+    )
+    pending_orders = (
+        db.query(func.count(Order.id))
+        .filter(Order.status == OrderStatus.PENDING)
+        .scalar()
+        or 0
+    )
+    attention_count = int(stock_pending) + int(manual_review) + int(failed_jit)
+    return {
+        "status": "ok",
+        "attention_count": attention_count,
+        "orders_pending": int(pending_orders),
+        "orders_stock_pending": int(stock_pending),
+        "tasks_active": int(active_tasks),
+        "tasks_manual_review": int(manual_review),
+        "jit_active": int(active_jit),
+        "jit_failed": int(failed_jit),
+        "vcc_locked": int(locked_cards),
+    }
+
+
+@protected.post("/automation/recover")
+def admin_run_recovery(
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Trigger immediate expiry sweep, stale-lock recovery, and backorder fulfillment."""
+    from app.services import automation
+
+    summary = automation.run_all_recovery(db)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="automation.recover",
+            entity_type="system",
+            entity_id="recovery",
+            detail=str(summary)[:450],
+        )
+    )
+    db.commit()
+    return summary

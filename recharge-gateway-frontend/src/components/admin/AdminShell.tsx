@@ -17,12 +17,13 @@ import {
   Search,
   ServerCog,
   Settings,
+  TicketPercent,
   X,
   Zap,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
-import { clearAdminToken } from "@/lib/api";
+import { api, clearAdminToken } from "@/lib/api";
 
 const NAV_GROUPS = [
   {
@@ -30,6 +31,7 @@ const NAV_GROUPS = [
     items: [
       { href: "/admin", label: "概览", icon: LayoutDashboard },
       { href: "/admin/orders", label: "订单管理", icon: ReceiptText },
+      { href: "/admin/coupons", label: "优惠码管理", icon: TicketPercent },
     ],
   },
   {
@@ -55,6 +57,7 @@ const NAV_GROUPS = [
 const PAGE_TITLES: Record<string, string> = {
   "/admin": "运营概览",
   "/admin/orders": "订单管理",
+  "/admin/coupons": "优惠码管理",
   "/admin/products": "商品管理",
   "/admin/codes": "卡密管理",
   "/admin/tasks": "充值任务",
@@ -65,16 +68,58 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/settings": "系统设置",
 };
 
+type HealthState = {
+  ready: boolean;
+  attention: number;
+  detail: string;
+};
+
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [health, setHealth] = useState<HealthState>({ ready: true, attention: 0, detail: "检查连接中..." });
 
   const currentTitle = PAGE_TITLES[pathname] || "运营后台";
 
-  function logout() {
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const [readyRes, metrics] = await Promise.all([
+          fetch("/readyz").then((r) => r.ok).catch(() => false),
+          api<{ attention_count: number; orders_stock_pending: number; tasks_manual_review: number }>(
+            "/api/v1/admin/metrics",
+          ).catch(() => null),
+        ]);
+        if (!active) return;
+        const attention = metrics?.attention_count ?? 0;
+        const detail = !readyRes
+          ? "后端或队列连接异常"
+          : attention > 0
+            ? `待处理：缺货 ${metrics?.orders_stock_pending ?? 0} · 人工复核 ${metrics?.tasks_manual_review ?? 0}`
+            : "数据库与队列均正常";
+        setHealth({ ready: readyRes, attention, detail });
+      } catch {
+        if (active) setHealth({ ready: false, attention: 0, detail: "健康检查失败" });
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  async function logout() {
+    try {
+      await api("/api/v1/admin/logout", { method: "POST" });
+    } catch {
+      // Clear local session regardless of network state.
+    }
     clearAdminToken();
     router.replace("/admin/login");
   }
@@ -152,14 +197,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
       </nav>
 
       <div className="border-t border-white/[0.06] px-5 py-4">
-        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+        <div className="flex items-center gap-2 text-[10px] text-slate-400">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-40 ${health.ready ? "bg-emerald-400" : "bg-rose-400"}`} />
+            <span className={`relative inline-flex h-2 w-2 rounded-full ${health.ready ? "bg-emerald-400" : "bg-rose-400"}`} />
           </span>
-          服务运行正常
+          {health.ready ? "服务运行正常" : "服务健康异常"}
         </div>
-        <p className="mt-1.5 text-[9px] text-slate-700">全系统连接状态良好</p>
+        <p className="mt-1.5 text-[9px] text-slate-600">{health.detail}</p>
       </div>
     </div>
   );
@@ -216,11 +261,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
               </form>
               <button
                 type="button"
+                onClick={() => router.push(health.attention > 0 ? "/admin/tasks" : "/admin/orders")}
+                title={health.detail}
                 className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] text-slate-500 transition hover:text-slate-200"
-                aria-label="通知"
+                aria-label="待办告警通知"
               >
                 <Bell size={15} />
-                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-brand-400" />
+                {health.attention > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold text-slate-950">
+                    {health.attention > 99 ? "99+" : health.attention}
+                  </span>
+                )}
               </button>
               <div className="relative">
                 <button

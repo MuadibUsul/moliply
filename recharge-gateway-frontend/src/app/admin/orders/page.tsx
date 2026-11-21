@@ -26,6 +26,7 @@ const STATUS_TABS = [
   { key: "PENDING", label: "待支付" },
   { key: "PAID", label: "已支付" },
   { key: "DELIVERED", label: "已交付" },
+  { key: "REFUNDED", label: "已退款" },
   { key: "FAILED", label: "失败" },
   { key: "CANCELLED", label: "已取消" },
 ];
@@ -42,8 +43,15 @@ function AdminOrdersContent() {
   const [data, setData] = useState<AdminOrderList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Order | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  useEffect(() => {
+    setQueryInput(initialQuery);
+    setSubmittedQuery(initialQuery);
+    setPage(1);
+  }, [initialQuery]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,16 +77,31 @@ function AdminOrdersContent() {
     void load();
   }, [load]);
 
-  async function orderAction(action: "mark-paid" | "fulfill") {
+  async function orderAction(action: "mark-paid" | "fulfill" | "cancel" | "refund" | "resend-email") {
     if (!selected) return;
-    if (!window.confirm(action === "mark-paid" ? "确认将该订单标记为已支付并发货？" : "确认重新执行自动发货？")) return;
+    const prompts: Record<string, string> = {
+      "mark-paid": "确认将该订单标记为已支付并发货？",
+      fulfill: "确认重新执行自动发货？",
+      cancel: "确认取消该待支付订单？",
+      refund: "确认对该订单执行退款？未使用的已发卡密将被自动作废。",
+      "resend-email": "确认向客户邮箱补发一次交付通知邮件？",
+    };
+    if (!window.confirm(prompts[action])) return;
     setActionLoading(true);
+    setError(null);
+    setNotice(null);
     try {
-      const result = await api<OrderResponse>(`/api/v1/admin/orders/${selected.order_no}/${action}`, {
-        method: "POST",
-      });
-      setSelected(result.order);
-      await load();
+      if (action === "resend-email") {
+        await api(`/api/v1/admin/orders/${selected.order_no}/resend-email`, { method: "POST" });
+        setNotice("交付邮件已重新发送");
+      } else {
+        const result = await api<OrderResponse>(`/api/v1/admin/orders/${selected.order_no}/${action}`, {
+          method: "POST",
+          ...(action === "cancel" || action === "refund" ? { body: { reason: "后台操作" } } : {}),
+        });
+        setSelected(result.order);
+        await load();
+      }
     } catch (err) {
       setError(handleAdminError(err));
     } finally {
@@ -344,7 +367,44 @@ function AdminOrdersContent() {
               ))}
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
+            {notice && (
+              <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-[11px] text-emerald-200">
+                {notice}
+              </div>
+            )}
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
+                {selected.status === "PENDING" && (
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => void orderAction("cancel")}
+                    className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
+                  >
+                    取消订单
+                  </button>
+                )}
+                {(selected.status === "PAID" || selected.status === "DELIVERED") && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={actionLoading}
+                      onClick={() => void orderAction("resend-email")}
+                      className="btn-secondary py-2 text-[11px]"
+                    >
+                      补发交付邮件
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionLoading}
+                      onClick={() => void orderAction("refund")}
+                      className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
+                    >
+                      退款并作废未用卡密
+                    </button>
+                  </>
+                )}
+              </div>
               <button type="button" onClick={() => setSelected(null)} className="btn-secondary py-2.5">
                 关闭
                 <X size={13} />

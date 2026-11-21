@@ -21,7 +21,13 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 
 function extractMessage(payload: unknown, fallback: string): string {
   if (!payload) return fallback;
-  if (typeof payload === "string") return payload;
+  if (typeof payload === "string") {
+    const trimmed = payload.trim();
+    if (!trimmed || trimmed.startsWith("<") || /<html|<body|<!doctype/i.test(trimmed)) {
+      return fallback;
+    }
+    return trimmed.slice(0, 240);
+  }
   if (typeof payload !== "object") return fallback;
   const data = payload as Record<string, unknown>;
   if (typeof data.detail === "string") return data.detail;
@@ -60,15 +66,24 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     }
   }
 
+  const controller = options.signal ? null : new AbortController();
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 20_000) : null;
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers,
+      signal: options.signal ?? controller?.signal,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("请求超时，请稍后重试", 408, "REQUEST_TIMEOUT");
+    }
     throw new ApiError("网络连接失败，请检查网络后重试", 0, "NETWORK_ERROR");
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 
   const text = await response.text();
@@ -82,9 +97,13 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
 
   if (!response.ok) {
-    const data = (payload || {}) as Record<string, unknown>;
+    const data = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+    const statusHint =
+      response.status === 502 || response.status === 503 || response.status === 504
+        ? "服务暂时繁忙，请稍后重试"
+        : `请求失败（${response.status}）`;
     throw new ApiError(
-      extractMessage(payload, `请求失败（${response.status}）`),
+      extractMessage(payload, statusHint),
       response.status,
       typeof data.code === "string" ? data.code : undefined,
     );

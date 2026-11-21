@@ -58,6 +58,12 @@ class DirectTrc20Provider(PaymentProvider):
         )
         if base < Decimal("0.01"):
             base = Decimal("0.01")
+        # Include the watcher's post-expiry grace window so a newly created
+        # invoice never collides with an expired order still eligible for match.
+        grace = timedelta(
+            minutes=max(1, runtime.get_int("crypto_payment_grace_minutes", settings.crypto_payment_grace_minutes))
+        )
+        cutoff = utcnow() - grace
         existing = {
             Decimal(str(amount))
             for (amount,) in db.query(Order.payment_amount)
@@ -66,7 +72,7 @@ class DirectTrc20Provider(PaymentProvider):
                 Order.payment_provider == self.name,
                 Order.payment_currency == "USDT",
                 Order.payment_amount.isnot(None),
-                Order.expires_at > utcnow(),
+                Order.expires_at > cutoff,
             )
             .all()
         }

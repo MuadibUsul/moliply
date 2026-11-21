@@ -121,7 +121,22 @@ def _attempt_upstream(db: Session, task: RechargeTask, code: ActivationCode, ses
     credential = (
         (session.session_token or session.raw) if session.kind == "chatgpt" else session.access_token
     )
-    result = UpstreamProvider().create_recharge(credential, code.sku_type.value, upstream_code)
+    def _save_upstream_order_no(order_no: str) -> None:
+        task.upstream_order_no = order_no
+        db.add(task)
+        db.commit()
+
+    provider = UpstreamProvider()
+    try:
+        result = provider.create_recharge(
+            credential,
+            code.sku_type.value,
+            upstream_code,
+            on_order_created=_save_upstream_order_no,
+        )
+    except TypeError:
+        # Backward compatibility for monkeypatched test stubs accepting 3 positional args.
+        result = provider.create_recharge(credential, code.sku_type.value, upstream_code)
     if result.status != "SUCCESS":
         raise RechargeError(
             "UPSTREAM_PENDING",
@@ -207,6 +222,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
         for attempt in range(card_retry_limit()):
             card = None
             reserved = False
+            reserved_amount = None
             try:
                 # A card carries its own sticky exit; the region-wide proxy is
                 # only the fallback. The region proxy is optional here so a
@@ -216,9 +232,10 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 except region_router.RegionError:
                     region_proxy = ""
                 currency, amount = region_router.amount_for(region, code.sku_type)
-                card = vcc_pool_scheduler.acquire_card(
-                    db, region, amount=region_router.cost_usd_for(region, code.sku_type)
-                )
+                cost_usd = region_router.cost_usd_for(region, code.sku_type)
+                min_bal = region_router.min_balance_for(region)
+                reserved_amount = cost_usd if cost_usd > min_bal else min_bal
+                card = vcc_pool_scheduler.acquire_card(db, region, amount=cost_usd)
                 if card is None:
                     # A drained pool must not hide an earlier decline: that is
                     # what the customer and the operator need to see.
@@ -267,7 +284,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                     region=region,
                 )
                 vcc_pool_scheduler.mark_success(
-                    db, card, region, charged=region_router.cost_usd_for(region, code.sku_type)
+                    db, card, region, charged=cost_usd, reserved=reserved_amount
                 )
                 reserved = False
                 self_vcc_circuit.reset()
@@ -280,7 +297,7 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 )
             except ChannelFallback as exc:
                 if reserved and card is not None:
-                    vcc_pool_scheduler.release_reservation(db, card)
+                    vcc_pool_scheduler.release_reservation(db, card, reserved_amount)
                     reserved = False
                 last_error = exc
                 if exc.can_fallback:
@@ -294,10 +311,10 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 declined = exc.is_explicit_decline or exc.code == "CARD_DECLINED"
                 if reserved and card is not None:
                     if declined:
-                        vcc_pool_scheduler.record_failure(db, card, exc.message)
+                        vcc_pool_scheduler.record_failure(db, card, exc.message, reserved_amount)
                         _alert_card_declined(card, code, region, exc.message)
                     else:
-                        vcc_pool_scheduler.release_reservation(db, card)
+                        vcc_pool_scheduler.release_reservation(db, card, reserved_amount)
                     reserved = False
 
                 if declined:
@@ -350,18 +367,18 @@ def _attempt_self(db: Session, task: RechargeTask, code: ActivationCode, session
                 ) from exc
             except region_router.RegionError as exc:
                 if reserved and card is not None:
-                    vcc_pool_scheduler.release_reservation(db, card)
+                    vcc_pool_scheduler.release_reservation(db, card, reserved_amount)
                     reserved = False
                 self_vcc_circuit.record_failure(exc.code)
                 last_error = ChannelFallback(exc.code, exc.message)
                 break
             except RechargeError:
                 if reserved and card is not None:
-                    vcc_pool_scheduler.release_reservation(db, card)
+                    vcc_pool_scheduler.release_reservation(db, card, reserved_amount)
                 raise
             except Exception as exc:  # noqa: BLE001
                 if reserved and card is not None:
-                    vcc_pool_scheduler.release_reservation(db, card)
+                    vcc_pool_scheduler.release_reservation(db, card, reserved_amount)
                 logger.warning("Self-VCC unexpected failure: %s", exc.__class__.__name__)
                 self_vcc_circuit.record_failure(exc.__class__.__name__)
                 raise ChannelFallback("SELF_VCC_ERROR", "自营通道执行异常，已转人工处理", can_fallback=False) from exc

@@ -19,6 +19,7 @@ the payment callback on a Playwright run.
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 import threading
 import uuid
@@ -111,28 +112,131 @@ def release_free_account(db: Session, account: FreeAccountPool) -> None:
     db.commit()
 
 
-def _pending_job(db: Session, order_item_id: int) -> JitAccountJob | None:
+def _pending_jobs(db: Session, order_item_id: int) -> list[JitAccountJob]:
     return (
         db.query(JitAccountJob)
         .filter(
             JitAccountJob.order_item_id == order_item_id,
             JitAccountJob.state.in_([JitJobState.PENDING, JitJobState.RECHARGING]),
         )
-        .first()
+        .order_by(JitAccountJob.id.asc())
+        .all()
     )
 
 
 def start_jit_delivery(db: Session, order_item: OrderItem) -> JitAccountJob:
-    """Queue the upgrade for one paid order item. Idempotent per item."""
-    existing = _pending_job(db, order_item.id)
-    if existing:
-        return existing
+    """Queue upgrades for every remaining undelivered unit of one paid order item.
+
+    Idempotent: counts existing deliveries plus in-flight jobs so multi-quantity
+    orders (quantity 1..5) spawn exactly ``quantity`` upgrades without duplicates.
+    """
+    from sqlalchemy import func
+
+    delivered = int(
+        db.query(func.count(OrderDelivery.id))
+        .filter(OrderDelivery.order_item_id == order_item.id)
+        .scalar()
+        or 0
+    )
+    active = _pending_jobs(db, order_item.id)
+    needed = max(0, int(order_item.quantity or 1) - delivered - len(active))
+    created: list[JitAccountJob] = []
+    for _ in range(needed):
+        job = JitAccountJob(order_item_id=order_item.id, state=JitJobState.PENDING)
+        db.add(job)
+        created.append(job)
+    if created:
+        db.commit()
+        for job in created:
+            db.refresh(job)
+            dispatch_job(job.id)
+        return created[0]
+    if active:
+        return active[0]
+    # Already fully delivered; return the most recent job for caller convenience.
+    latest = (
+        db.query(JitAccountJob)
+        .filter(JitAccountJob.order_item_id == order_item.id)
+        .order_by(JitAccountJob.id.desc())
+        .first()
+    )
+    if latest is not None:
+        return latest
     job = JitAccountJob(order_item_id=order_item.id, state=JitJobState.PENDING)
     db.add(job)
     db.commit()
     db.refresh(job)
     dispatch_job(job.id)
     return job
+
+
+def recover_stale_jit_jobs(db: Session) -> dict[str, int]:
+    """Release leaked free-account locks and fail/requeue orphaned JIT jobs."""
+    now = utcnow()
+    lock_cutoff = now - timedelta(minutes=LOCK_MINUTES)
+    job_cutoff = now - timedelta(minutes=max(15, LOCK_MINUTES + 5))
+
+    released_accounts = 0
+    stuck_jobs = (
+        db.query(JitAccountJob)
+        .filter(
+            JitAccountJob.state == JitJobState.RECHARGING,
+            JitAccountJob.updated_at < job_cutoff,
+        )
+        .all()
+    )
+    recovered_jobs = 0
+    for job in stuck_jobs:
+        account = db.get(FreeAccountPool, job.free_account_id) if job.free_account_id else None
+        if account is not None and account.status == FreeAccountStatus.LOCKED:
+            account.status = FreeAccountStatus.AVAILABLE
+            account.order_item_id = None
+            account.locked_at = None
+            db.add(account)
+            released_accounts += 1
+        job.state = JitJobState.FAILED
+        job.error_code = "JIT_WORKER_TIMEOUT"
+        job.error_message = "后台升级任务超时未完成，白号已自动释放，等待重试或人工处理"
+        job.completed_at = now
+        db.add(job)
+        recovered_jobs += 1
+
+    # Also release any orphaned LOCKED free accounts without an active RECHARGING job.
+    stale_accounts = (
+        db.query(FreeAccountPool)
+        .filter(
+            FreeAccountPool.status == FreeAccountStatus.LOCKED,
+            FreeAccountPool.locked_at.isnot(None),
+            FreeAccountPool.locked_at < lock_cutoff,
+        )
+        .all()
+    )
+    for account in stale_accounts:
+        active_job = (
+            db.query(JitAccountJob)
+            .filter(
+                JitAccountJob.free_account_id == account.id,
+                JitAccountJob.state == JitJobState.RECHARGING,
+            )
+            .first()
+        )
+        if active_job is None:
+            account.status = FreeAccountStatus.AVAILABLE
+            account.order_item_id = None
+            account.locked_at = None
+            db.add(account)
+            released_accounts += 1
+
+    if recovered_jobs or released_accounts:
+        db.commit()
+        feishu.dispatch_event(
+            "system.error",
+            "MOLIPLY 自动回收超时 JIT 任务与白号锁",
+            {"回收任务数": recovered_jobs, "释放白号数": released_accounts},
+            severity="warning",
+            link_path="/admin/orders",
+        )
+    return {"recovered_jobs": recovered_jobs, "released_accounts": released_accounts}
 
 
 def dispatch_job(job_id: int) -> None:

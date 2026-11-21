@@ -2,5 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /api
+Disallow: /cce
 
-Sitemap: https://shop.moliply.com/sitemap.xml
+Sitemap: /sitemap.xml

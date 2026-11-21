@@ -208,6 +208,7 @@ class FulfillmentStrategy(str, enum.Enum):
 
     STOCK = "STOCK"
     JIT_ACCOUNT_RECHARGE = "JIT_ACCOUNT_RECHARGE"
+    CCE_ACCOUNT_KEY = "CCE_ACCOUNT_KEY"
 
 
 class FreeAccountStatus(str, enum.Enum):

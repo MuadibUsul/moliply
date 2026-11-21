@@ -110,6 +110,7 @@ def scan_pending_orders(db: Session) -> int:
 
     from app.services import orders as order_service
 
+    used_txids: set[str] = set()
     for (address, provider), orders in grouped.items():
         token = provider == "usdc_erc20"
         params = {
@@ -119,7 +120,9 @@ def scan_pending_orders(db: Session) -> int:
             "address": address,
             "startblock": "0",
             "endblock": "99999999",
-            "sort": "asc",
+            "page": "1",
+            "offset": "200",
+            "sort": "desc",
             "apikey": api_key,
         }
         if token:
@@ -158,7 +161,7 @@ def scan_pending_orders(db: Session) -> int:
                 if received_at and order.expires_at and received_at > order.expires_at + grace:
                     continue
                 txid = str(item.get("hash") or "")
-                if not txid:
+                if not txid or txid in used_txids:
                     continue
                 existing = (
                     db.query(PaymentEvent)
@@ -166,7 +169,8 @@ def scan_pending_orders(db: Session) -> int:
                     .first()
                 )
                 if existing:
-                    break
+                    used_txids.add(txid)
+                    continue
                 db.add(
                     PaymentEvent(
                         provider=provider,
@@ -190,6 +194,7 @@ def scan_pending_orders(db: Session) -> int:
                     db.rollback()
                     logger.warning("EVM payment could not settle order: %s", exc.__class__.__name__)
                     continue
+                used_txids.add(txid)
                 matched += 1
                 logger.info("EVM payment matched order %s tx=%s", order.order_no, txid)
                 break

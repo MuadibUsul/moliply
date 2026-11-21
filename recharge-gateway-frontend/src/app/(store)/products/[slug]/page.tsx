@@ -212,7 +212,7 @@ export default function ProductDetailPage() {
         {/* Purchase panel */}
         <div className="flex flex-col">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="eyebrow">AI MEMBERSHIP / INSTANT DELIVERY</span>
+            <span className="eyebrow">{product.category_label} / 24H 自动交付</span>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             {product.badge && <span className="badge-soft">{product.badge}</span>}
@@ -310,7 +310,7 @@ export default function ProductDetailPage() {
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[1.4fr_1fr]">
-            <button type="button" onClick={buyNow} disabled={restocking} className="btn-primary w-full">
+            <button type="button" onClick={buyNow} className="btn-primary w-full">
               {restocking ? "暂时缺货 · 咨询客服" : "立即购买"}
               {!restocking && <ArrowUpRight size={16} />}
             </button>

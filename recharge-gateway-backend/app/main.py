@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,21 +9,43 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.security import limiter
-from app.services import direct_crypto
+from app.services import direct_crypto, locks
 from app.services import redeem as redeem_service
 from app.services import runtime_settings as runtime
 from app.services.orders import OrderError
 from app.services.redeem import RedeemError
 from app.services.sms.service import SmsError
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _configure_logging() -> None:
+    level = logging.DEBUG if settings.debug else logging.INFO
+    if settings.log_format.lower() == "json":
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+        logging.basicConfig(level=level, handlers=[handler], force=True)
+    else:
+        logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -76,8 +99,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "X-Admin-Token"],
 )
 
 
@@ -88,6 +111,8 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if settings.is_production:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     response.headers.setdefault("X-Brand", settings.brand_name_en)
     return response
 
@@ -116,6 +141,40 @@ async def order_error_handler(_: Request, exc: OrderError) -> JSONResponse:
 @app.get("/healthz", tags=["ops"])
 def healthz() -> dict:
     return {"status": "ok", "service": "moliply-api", "version": "1.0.0"}
+
+
+@app.get("/readyz", tags=["ops"])
+def readyz():
+    """Deep readiness probe checking database and Redis connectivity."""
+    checks: dict[str, str] = {}
+    ok = True
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception:  # noqa: BLE001
+        checks["database"] = "error"
+        ok = False
+    if settings.task_mode.lower() == "celery":
+        client = locks.redis_client()
+        try:
+            if client is not None and client.ping():
+                checks["redis"] = "ok"
+            else:
+                checks["redis"] = "unavailable"
+                ok = False
+        except Exception:  # noqa: BLE001
+            checks["redis"] = "error"
+            ok = False
+    else:
+        checks["redis"] = "optional"
+    payload = {
+        "status": "ready" if ok else "degraded",
+        "service": "moliply-api",
+        "task_mode": settings.task_mode,
+        "checks": checks,
+    }
+    return JSONResponse(status_code=200 if ok else 503, content=payload)
 
 
 @app.get("/api/v1/brand", tags=["brand"])

@@ -62,6 +62,7 @@ REDEEMABLE_SKUS = {
     SkuType.CHATGPT_PLUS_12M,
     SkuType.CLAUDE_PRO_1M,
     SkuType.CHATGPT_PRO_200,
+    SkuType.CHATGPT_PRO_20X_1M,
     SkuType.GPT_PRO_100,
     SkuType.GPT_PRO_200,
     SkuType.GPT_PRO_500,
@@ -69,6 +70,7 @@ REDEEMABLE_SKUS = {
     # buyer walks the exact flow they will use for a real top-up.
     SkuType.GENERIC_DIGITAL,
     # SMS SKUs redeem into the receipt workbench rather than the charge wizard.
+    SkuType.CODEX_SMS_US,
     SkuType.SMS_VERIFY,
 }
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
@@ -625,7 +627,7 @@ def run_recharge_task(task_id: str) -> None:
             db.close()
 
 
-def serialize_task(db: Session, task: RechargeTask) -> dict:
+def serialize_task(db: Session, task: RechargeTask, *, include_diagnostics: bool = True) -> dict:
     code = db.get(ActivationCode, task.code_id)
     idx = STATE_STEP_INDEX.get(task.state, 0)
     steps = []
@@ -645,7 +647,7 @@ def serialize_task(db: Session, task: RechargeTask) -> dict:
     message = STATE_MESSAGES.get(task.state, "")
     if task.state == RechargeState.FAILED and task.error_message:
         message = task.error_message
-    return {
+    payload = {
         "task_id": task.task_id,
         "state": task.state.value,
         "progress_percent": STATE_PROGRESS.get(task.state, 0),
@@ -653,12 +655,6 @@ def serialize_task(db: Session, task: RechargeTask) -> dict:
         "steps": steps,
         "error_code": task.error_code,
         "error_message": task.error_message,
-        # Operator diagnostics: null unless the checkout captured some.
-        "error_detail": task.error_detail,
-        "has_evidence": bool(task.evidence_path),
-        "evidence_name": (
-            task.evidence_path.replace("\\", "/").rsplit("/", 1)[-1] if task.evidence_path else None
-        ),
         "target_email": mask_email(task.target_email),
         "session_kind": task.session_kind,
         "sku_label": _sku_label(db, code) if code else "",
@@ -668,13 +664,20 @@ def serialize_task(db: Session, task: RechargeTask) -> dict:
         "updated_at": task.updated_at.isoformat() + "Z",
         "completed_at": task.completed_at.isoformat() + "Z" if task.completed_at else None,
     }
+    if include_diagnostics:
+        payload["error_detail"] = task.error_detail
+        payload["has_evidence"] = bool(task.evidence_path)
+        payload["evidence_name"] = (
+            task.evidence_path.replace("\\", "/").rsplit("/", 1)[-1] if task.evidence_path else None
+        )
+    return payload
 
 
 def get_task_status(db: Session, task_id: str) -> dict:
     task = db.get(RechargeTask, task_id)
     if not task:
         raise RedeemError("TASK_NOT_FOUND", "充值任务不存在", 404)
-    return serialize_task(db, task)
+    return serialize_task(db, task, include_diagnostics=False)
 
 
 def retry_task(db: Session, task_id: str, ip: str = "") -> RechargeTask:

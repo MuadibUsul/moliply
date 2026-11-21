@@ -104,7 +104,8 @@ LEGACY_PRO_SKUS = {SkuType.CHATGPT_PRO_200, SkuType.CHATGPT_PRO_20X_1M}
 
 def amount_for(region: str, sku_type: SkuType) -> tuple[str, Decimal]:
     if sku_type in PRO_AMOUNTS:
-        key, _, ph_default, us_default = PRO_AMOUNTS[sku_type]
+        ph_key, us_key, ph_default, us_default = PRO_AMOUNTS[sku_type]
+        key = ph_key if region == PH else us_key
         fallback = ph_default if region == PH else us_default
         return REGIONS[region]["currency"], Decimal(str(runtime.get_float(key, fallback)))
     if sku_type in LEGACY_PRO_SKUS:

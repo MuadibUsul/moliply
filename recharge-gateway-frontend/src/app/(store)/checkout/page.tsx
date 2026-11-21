@@ -71,7 +71,10 @@ function CheckoutContent() {
 
   const directProductId = searchParams.get("product");
   const directVariantId = searchParams.get("variant");
-  const directQty = Math.min(5, Math.max(1, Number(searchParams.get("qty") || 1)));
+  const rawDirectQty = Number(searchParams.get("qty"));
+  const directQty = Number.isFinite(rawDirectQty) && rawDirectQty > 0
+    ? Math.min(5, Math.max(1, Math.trunc(rawDirectQty)))
+    : 1;
 
   useEffect(() => {
     api<BrandInfo>("/api/v1/brand")
@@ -94,7 +97,7 @@ function CheckoutContent() {
     }
     let cancelled = false;
     setDirectLoading(true);
-    api<{ product: Product }>(`/api/v1/store/products/${directProductId}`)
+    api<{ product: Product }>(`/api/v1/store/products/${encodeURIComponent(directProductId)}`)
       .then(({ product }) => {
         if (cancelled) return;
         const variants = product.variants;
@@ -138,6 +141,11 @@ function CheckoutContent() {
 
   function updateQuantity(productId: number, variantId: number | null, quantity: number) {
     setCoupon(null);
+    if (directItem) {
+      const clamped = Math.min(5, Math.max(1, quantity));
+      setDirectItem((current) => (current ? { ...current, quantity: clamped } : current));
+      return;
+    }
     setQuantity(productId, variantId, quantity);
   }
 

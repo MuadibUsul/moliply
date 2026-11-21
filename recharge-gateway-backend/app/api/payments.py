@@ -19,19 +19,18 @@ router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 
 
 async def _read_payload(request: Request) -> dict[str, Any]:
-    payload: dict[str, Any] = dict(request.query_params)
     content_type = request.headers.get("content-type", "")
+    if "form" in content_type or "urlencoded" in content_type:
+        form = await request.form()
+        return {key: str(value) for key, value in form.items()}
     if "application/json" in content_type:
         try:
             body = await request.json()
             if isinstance(body, dict):
-                payload.update({key: value for key, value in body.items() if not isinstance(value, (dict, list))})
+                return {key: value for key, value in body.items() if not isinstance(value, (dict, list))}
         except json.JSONDecodeError:
             pass
-    elif "form" in content_type or "urlencoded" in content_type:
-        form = await request.form()
-        payload.update({key: str(value) for key, value in form.items()})
-    return payload
+    return dict(request.query_params)
 
 
 def _report_callback_failure(channel: str, order_no: str, code: str, message: str) -> None:
@@ -86,10 +85,10 @@ async def wechat_notify(request: Request):
         return PlainTextResponse(body)
     except order_service.OrderError as exc:
         _report_callback_failure("微信支付", "", exc.code, exc.message)
-        return PlainTextResponse(f'{{"code":"FAIL","message":"{exc.message}"}}', status_code=400)
+        return PlainTextResponse(json.dumps({"code": "FAIL", "message": exc.message}, ensure_ascii=False), status_code=400, media_type="application/json")
     except PaymentProviderError as exc:
         _report_callback_failure("微信支付", "", exc.code, exc.message)
-        return PlainTextResponse(f'{{"code":"FAIL","message":"{exc.message}"}}', status_code=400)
+        return PlainTextResponse(json.dumps({"code": "FAIL", "message": exc.message}, ensure_ascii=False), status_code=400, media_type="application/json")
     finally:
         db.close()
 

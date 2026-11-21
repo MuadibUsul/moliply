@@ -174,7 +174,7 @@ export function SmsWorkbench({ code }: { code: string }) {
             <select
               value={service}
               onChange={(event) => setService(event.target.value)}
-              disabled={busy || !!task}
+              disabled={busy || task?.status === "WAITING" || task?.status === "RECEIVED"}
               className="field mt-1 w-full text-[11px]"
             >
               {(options?.services || []).map((item) => (
@@ -187,7 +187,7 @@ export function SmsWorkbench({ code }: { code: string }) {
             <select
               value={country}
               onChange={(event) => setCountry(event.target.value)}
-              disabled={busy || !!task}
+              disabled={busy || task?.status === "WAITING" || task?.status === "RECEIVED"}
               className="field mt-1 w-full text-[11px]"
             >
               {(options?.countries || []).map((item) => (

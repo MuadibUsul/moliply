@@ -266,6 +266,42 @@ class Settings(BaseSettings):
     # Internal alert mailbox for pool/stock alarms; empty reuses ``smtp_from``.
     ops_alert_email: str = ""
 
+    # ------------------------------------------------------------------
+    # Production hardening & observability
+    # ------------------------------------------------------------------
+    jit_fulfillment_enabled: bool = True
+    trusted_proxies: str = "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    log_format: str = "text"  # text | json
+
+    @property
+    def trusted_proxy_list(self) -> list[str]:
+        return [item.strip() for item in self.trusted_proxies.split(",") if item.strip()]
+
+    def validate_production_config(self) -> None:
+        """Fail closed on unsafe defaults when APP_ENV=production."""
+        if not self.is_production:
+            return
+        errors: list[str] = []
+        if self.debug:
+            errors.append("DEBUG must be false in production")
+        if self.seed_demo_inventory:
+            errors.append("SEED_DEMO_INVENTORY must be false in production")
+        if not self.master_aes_key.strip():
+            errors.append("MASTER_AES_KEY is required in production")
+        if self.admin_password == "change-me" or len(self.admin_password) < 12:
+            errors.append("ADMIN_PASSWORD must be non-default and at least 12 characters in production")
+        for name, value in (
+            ("SECRET_KEY", self.secret_key),
+            ("ADMIN_JWT_SECRET", self.admin_jwt_secret),
+        ):
+            lowered = (value or "").lower()
+            if len(value or "") < 32 or "change-me" in lowered or lowered.startswith("dev-"):
+                errors.append(f"{name} must be a strong secret (>=32 chars) in production")
+        if not (self.admin_totp_secret or "").strip():
+            errors.append("ADMIN_TOTP_SECRET is required in production")
+        if errors:
+            raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]

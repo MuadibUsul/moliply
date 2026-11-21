@@ -16,6 +16,10 @@ from app.services.payments.base import ParsedNotify, PaymentIntent, PaymentProvi
 
 
 def _select_unique(db: Session, cny_amount: Decimal, coin: str) -> Decimal:
+    grace = timedelta(
+        minutes=max(1, runtime.get_int("crypto_payment_grace_minutes", settings.crypto_payment_grace_minutes))
+    )
+    cutoff = utcnow() - grace
     existing = {
         Decimal(str(amount))
         for (amount,) in db.query(Order.payment_amount)
@@ -24,7 +28,7 @@ def _select_unique(db: Session, cny_amount: Decimal, coin: str) -> Decimal:
             Order.payment_provider == coin.lower(),
             Order.payment_currency == direct_crypto.coin_currency(coin),
             Order.payment_amount.isnot(None),
-            Order.expires_at > utcnow(),
+            Order.expires_at > cutoff,
         )
         .all()
     }

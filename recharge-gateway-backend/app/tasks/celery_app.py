@@ -36,10 +36,30 @@ celery_app.conf.update(
             "task": "app.tasks.celery_worker.scan_direct_crypto_payments_task",
             "schedule": crontab(minute="*"),
         },
+        "expire-unpaid-orders": {
+            "task": "app.tasks.celery_worker.expire_unpaid_orders_task",
+            "schedule": crontab(minute="*"),
+        },
+        "fulfill-backorders": {
+            "task": "app.tasks.celery_worker.fulfill_backorders_task",
+            "schedule": crontab(minute="*"),
+        },
+        "recover-stale-locks-and-tasks": {
+            "task": "app.tasks.celery_worker.recover_stale_locks_and_tasks_task",
+            "schedule": crontab(minute="*/2"),
+        },
+        "reconcile-upstream-tasks": {
+            "task": "app.tasks.celery_worker.reconcile_upstream_tasks_task",
+            "schedule": crontab(minute="*/2"),
+        },
+        "inventory-health-check": {
+            "task": "app.tasks.celery_worker.inventory_health_check_task",
+            "schedule": crontab(minute="*/30"),
+        },
         "feishu-daily-summary": {
             "task": "app.tasks.celery_worker.feishu_daily_summary_task",
             "schedule": crontab(hour=9, minute=0),
-        }
+        },
     },
 )
 

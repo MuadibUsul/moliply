@@ -44,7 +44,7 @@ export type Product = {
   features: ProductFeature[];
   faq: ProductFaq[];
   active: boolean;
-  fulfillment_strategy?: "STOCK" | "JIT_ACCOUNT_RECHARGE";
+  fulfillment_strategy?: "STOCK" | "JIT_ACCOUNT_RECHARGE" | "CCE_ACCOUNT_KEY";
   variants: ProductVariant[];
   stock: number | null;
   availability?: "IN_STOCK" | "BACKORDER" | "RESTOCKING";
@@ -69,7 +69,7 @@ export type ProductsResponse = {
 
 export type Delivery = {
   id: number;
-  kind: "ACTIVATION_CODE" | "ACCOUNT_CREDENTIALS";
+  kind: "ACTIVATION_CODE" | "ACCOUNT_CREDENTIALS" | "CCE_DELIVERY_KEY";
   payload: string | null;
   payload_hint: string | null;
   code_status: string | null;

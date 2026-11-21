@@ -112,6 +112,15 @@ def check_proxy_health() -> dict:
             "自营通道未配置美国住宅代理，任务已中止，激活码已释放",
         )
     try:
+        from app.services import net_guard
+
+        net_guard.ensure_https(health_url)
+    except ValueError as exc:
+        raise SelfVccFailure(
+            "PROXY_HEALTH_URL_INVALID",
+            "代理健康检测地址必须为安全的 HTTPS 地址",
+        ) from exc
+    try:
         with httpx.Client(timeout=20.0, proxy=proxy_url) as client:
             response = client.get(health_url, headers={"Accept": "application/json"})
         response.raise_for_status()
@@ -521,7 +530,19 @@ class PlaywrightCheckout:
                         payment_submitted=True,
                         is_explicit_decline=True,
                     )
-                if "success" in body or "thanks" in body or "you're now" in body:
+                url_lower = (page.url or "").lower()
+                positive_markers = (
+                    "you're now",
+                    "welcome to chatgpt",
+                    "subscription confirmed",
+                    "thank you for subscribing",
+                    "thanks for subscribing",
+                    "payment succeeded",
+                )
+                error_markers = ("error", "failed", "try again", "unable to", "declined")
+                has_error = any(m in body for m in error_markers)
+                url_confirmed = ("chatgpt.com" in url_lower and "checkout" not in url_lower) or "success" in url_lower
+                if (url_confirmed and not has_error) or any(m in body for m in positive_markers):
                     cancelled = self._cancel_autorenew(page)
                     return (
                         "自营卡池扣款成功，会员已升级"

@@ -716,23 +716,33 @@ export default function AdminSettingsPage() {
         </div>
 
         <div className={activeTab === "operations" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
-        <Section icon={Package} title="订单与库存" description="控制下单后的支付有效期与库存拦截。">
+        <Section icon={Package} title="订单、库存与自动化履约" description="控制支付有效期、缺货策略与 JIT 成品号自动升级引擎。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="订单支付有效期（分钟）">
               <input type="number" value={text("order_expire_minutes", "15")} onChange={(event) => setValue("order_expire_minutes", event.target.value)} className="admin-input w-full py-2.5" />
             </Field>
             <Toggle
               label="缺货时拦截下单"
-              description="关闭后允许缺货下单，订单会进入备货状态"
+              description="关闭后允许缺货下单，订单会进入备货状态并在补货后自动交付"
               checked={bool("enforce_stock", true)}
               onChange={(checked) => setValue("enforce_stock", checked)}
             />
+            <Toggle
+              label="启用 JIT 现充成品号"
+              description="支付后再自动锁定白号并升级，避免预充账号空耗有效期"
+              checked={bool("jit_fulfillment_enabled", true)}
+              onChange={(checked) => setValue("jit_fulfillment_enabled", checked)}
+            />
+            <Toggle
+              label="空架允许备货下单"
+              description="本地无现货但有上游/人工保障时保持商品可下单"
+              checked={bool("manual_backorder_enabled", true)}
+              onChange={(checked) => setValue("manual_backorder_enabled", checked)}
+            />
           </div>
         </Section>
-        </div>
 
-        <div className={activeTab === "operations" ? "grid gap-4 xl:grid-cols-2" : "hidden"}>
-        <Section icon={MessageCircle} title="SMTP 发货邮件（可选）" description="系统不依赖邮件；配置后支付成功可额外发送交付通知。">
+        <Section icon={MessageCircle} title="SMTP 发货邮件（可选）" description="系统不依赖邮件；配置后支付与 JIT 交付完成会自动异步发信。">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="SMTP 主机">
               <input value={text("smtp_host")} onChange={(event) => setValue("smtp_host", event.target.value)} className="admin-input w-full py-2.5" />
@@ -752,6 +762,32 @@ export default function AdminSettingsPage() {
                 <option value="true">SSL（465）</option>
                 <option value="false">STARTTLS</option>
               </select>
+            </Field>
+          </div>
+        </Section>
+
+        <Section icon={Settings2} title="SMS 自助接码渠道（Non-VoIP）" description="配置 SMSPool / 5sim 密钥与接码窗口，支持主备自动故障转移。">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {secretProps("smspool_api_key", "SMSPool API Key", data.secret_configured.smspool_api_key)}
+            {secretProps("fivesim_api_key", "5sim Bearer Token", data.secret_configured.fivesim_api_key)}
+            <Field label="默认首选上游" hint="留空按权重自动选择">
+              <select value={text("sms_default_provider")} onChange={(event) => setValue("sms_default_provider", event.target.value)} className="admin-input w-full py-2.5">
+                <option value="">按权重自动选择</option>
+                <option value="smspool">SMSPool</option>
+                <option value="fivesim">5sim</option>
+              </select>
+            </Field>
+            <Field label="接码有效期（秒）">
+              <input type="number" value={text("sms_receive_window_seconds", "120")} onChange={(event) => setValue("sms_receive_window_seconds", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="免费换号最短等待（秒）">
+              <input type="number" value={text("sms_cancel_min_seconds", "45")} onChange={(event) => setValue("sms_cancel_min_seconds", event.target.value)} className="admin-input w-full py-2.5" />
+            </Field>
+            <Field label="SMSPool / 5sim 权重">
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" value={text("sms_weight_smspool", "50")} onChange={(event) => setValue("sms_weight_smspool", event.target.value)} className="admin-input w-full py-2.5" placeholder="SMSPool" />
+                <input type="number" value={text("sms_weight_fivesim", "50")} onChange={(event) => setValue("sms_weight_fivesim", event.target.value)} className="admin-input w-full py-2.5" placeholder="5sim" />
+              </div>
             </Field>
           </div>
         </Section>

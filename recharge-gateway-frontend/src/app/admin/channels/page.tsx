@@ -239,7 +239,7 @@ export default function AdminChannelsPage() {
         {[
           { icon: Activity, title: "幂等与锁", desc: "激活码使用 SELECT FOR UPDATE + Redis 锁，杜绝一码多充。" },
           { icon: Zap, title: "失败释放", desc: "可恢复失败自动回滚激活码；支付中途异常保持锁定等待人工复核。" },
-          { icon: ShieldAlert, title: "失败熔断", desc: "VCC 拒付一次即挂起卡片，避免失败交易费与连续风控。" },
+          { icon: ShieldAlert, title: "失败熔断", desc: "VCC 软拒付先进入冷却窗口，连续失败达到阈值或硬拒付时自动挂起卡片并告警。" },
         ].map((item) => {
           const Icon = item.icon;
           return (

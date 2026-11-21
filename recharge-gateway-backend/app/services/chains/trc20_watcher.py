@@ -162,7 +162,7 @@ def scan_pending_orders(db: Session) -> int:
             )
             if existing:
                 used_txids.add(transfer["txid"])
-                break
+                continue
             db.add(
                 PaymentEvent(
                     provider="usdt_trc20",

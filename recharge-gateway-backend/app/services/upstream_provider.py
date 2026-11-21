@@ -45,10 +45,16 @@ class UpstreamProvider:
         self.max_wait = runtime.get_int("upstream_max_wait_seconds", settings.upstream_max_wait_seconds)
         self.poll_interval = runtime.get_float("upstream_poll_interval_seconds", settings.upstream_poll_interval_seconds)
 
-    def create_recharge(self, session_raw: str, sku_type: str, upstream_code: str | None) -> UpstreamResult:
+    def create_recharge(
+        self,
+        session_raw: str,
+        sku_type: str,
+        upstream_code: str | None,
+        on_order_created=None,
+    ) -> UpstreamResult:
         if self.mode == "mock":
             return self._mock_recharge(sku_type)
-        return self._http_recharge(session_raw, sku_type, upstream_code)
+        return self._http_recharge(session_raw, sku_type, upstream_code, on_order_created=on_order_created)
 
     # ------------------------------------------------------------------
     # Mock channel (development and demos)
@@ -81,7 +87,13 @@ class UpstreamProvider:
             "X-Signature": signature,
         }
 
-    def _http_recharge(self, session_raw: str, sku_type: str, upstream_code: str | None) -> UpstreamResult:
+    def _http_recharge(
+        self,
+        session_raw: str,
+        sku_type: str,
+        upstream_code: str | None,
+        on_order_created=None,
+    ) -> UpstreamResult:
         if not self.base or not self.merchant_key:
             raise RechargeError("UPSTREAM_NOT_CONFIGURED", "上游充值通道尚未配置，请联系客服")
         try:
@@ -113,12 +125,19 @@ class UpstreamProvider:
                     content=body.encode("utf-8"),
                     headers=self._headers(body),
                 )
-        except httpx.HTTPError as exc:
-            logger.warning("Upstream create request failed: %s", exc.__class__.__name__)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            logger.warning("Upstream connect failed: %s", exc.__class__.__name__)
             raise RechargeError(
                 "UPSTREAM_TIMEOUT",
-                "上游通道响应超时，激活码已自动释放，请稍后重试",
+                "上游通道连接超时，激活码已自动释放，请稍后重试",
                 release_code=True,
+            ) from exc
+        except httpx.HTTPError as exc:
+            logger.warning("Upstream post failed after send: %s", exc.__class__.__name__)
+            raise RechargeError(
+                "UPSTREAM_TIMEOUT",
+                "上游通道响应超时，系统正在自动对账确认，请稍后查看",
+                release_code=False,
             ) from exc
         if response.status_code >= 500:
             raise RechargeError("UPSTREAM_TEMPORARY_FAILURE", "上游通道暂时不可用，请稍后重试")
@@ -130,11 +149,38 @@ class UpstreamProvider:
         message = str(data.get("message") or data.get("msg") or "")
         if not order_no:
             raise RechargeError("UPSTREAM_INVALID_RESPONSE", "上游通道返回数据异常，请联系客服")
+        if on_order_created is not None:
+            try:
+                on_order_created(order_no)
+            except Exception:  # noqa: BLE001
+                logger.warning("on_order_created callback failed for %s", order_no)
         if status_value in {"success", "succeeded", "completed", "done"}:
             return UpstreamResult("SUCCESS", order_no, message)
         if status_value in {"failed", "failure", "declined"}:
             raise RechargeError("UPSTREAM_REJECTED", message or "上游充值失败，请联系客服")
         return self._poll(order_no, message)
+
+    def check_order(self, order_no: str) -> tuple[str, str] | None:
+        """Single non-blocking status query for async Beat reconciliation."""
+        try:
+            base = self._require_base()
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(
+                    f"{base}/api/v1/recharge/{order_no}",
+                    headers=self._headers(""),
+                )
+            if response.status_code >= 400:
+                return None
+            data = response.json()
+            status_value = str(data.get("status") or data.get("data", {}).get("status") or "").lower()
+            message = str(data.get("message") or data.get("msg") or "")
+            if status_value in {"success", "succeeded", "completed", "done"}:
+                return ("SUCCESS", message)
+            if status_value in {"failed", "failure", "declined"}:
+                return ("FAILED", message)
+            return ("PENDING", message)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _poll(self, order_no: str, initial_message: str = "") -> UpstreamResult:
         base = self.base.rstrip("/")
@@ -186,6 +232,9 @@ class UpstreamProvider:
         if not self.base or not self.merchant_key:
             raise RechargeError("UPSTREAM_NOT_CONFIGURED", "上游充值通道尚未配置，请先填写 API Base 与 Key")
         net_guard.ensure_https(self.base)
+        allowed = runtime.get_list("upstream_allowed_hosts", [])
+        if allowed and not net_guard.host_allowed(self.base, allowed):
+            raise RechargeError("UPSTREAM_HOST_NOT_ALLOWED", "上游 API 域名不在允许列表内")
         return self.base.rstrip("/")
 
     def _call(self, method: str, path: str, payload: dict | None = None) -> dict:

@@ -393,10 +393,10 @@ export default function AdminCardsPage() {
                     </td>
                     <td className="text-[10px] text-slate-500">{card.three_ds_email_masked || "—"}</td>
                     <td className="text-[10px] text-slate-500">{card.exp_month}/{card.exp_year}</td>
-                    <td className="text-[11px] text-slate-300">
-                      {formatMoney(card.available_balance)}
+                    <td className="font-mono text-[11px] text-slate-300">
+                      ${Number(card.available_balance || 0).toFixed(2)}
                       {card.reserved_balance > 0 && (
-                        <div className="mt-0.5 text-[9px] text-amber-300/80">预占 {formatMoney(card.reserved_balance)}</div>
+                        <div className="mt-0.5 text-[9px] text-amber-300/80">预占 ${Number(card.reserved_balance).toFixed(2)}</div>
                       )}
                     </td>
                     <td className="text-[10px] text-slate-500">{card.current_bind_count} / {card.max_bind_count}</td>

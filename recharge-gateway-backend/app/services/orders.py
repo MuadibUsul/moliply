@@ -96,10 +96,24 @@ def validate_coupon(db: Session, code: str | None, amount: Decimal) -> tuple[Cou
     coupon = db.query(Coupon).filter(func.upper(Coupon.code) == code.strip().upper()).first()
     if not coupon or not coupon.active:
         raise OrderError("COUPON_INVALID", "优惠码无效")
-    if coupon.expires_at and coupon.expires_at < utcnow():
+    now = utcnow()
+    if coupon.expires_at and coupon.expires_at < now:
         raise OrderError("COUPON_EXPIRED", "优惠码已过期")
-    if coupon.max_uses is not None and coupon.used_count >= coupon.max_uses:
-        raise OrderError("COUPON_EXHAUSTED", "优惠码已被领完")
+    if coupon.max_uses is not None:
+        # Include active unexpired PENDING orders so one buyer cannot reserve
+        # N parallel orders against a max_uses=1 coupon and pay all of them.
+        pending_uses = int(
+            db.query(func.count(Order.id))
+            .filter(
+                Order.status == OrderStatus.PENDING,
+                func.upper(Order.coupon_code) == coupon.code.upper(),
+                (Order.expires_at.is_(None)) | (Order.expires_at > now),
+            )
+            .scalar()
+            or 0
+        )
+        if coupon.used_count + pending_uses >= coupon.max_uses:
+            raise OrderError("COUPON_EXHAUSTED", "优惠码已被领完")
     if amount < coupon.min_amount:
         raise OrderError("COUPON_THRESHOLD", f"订单满 ¥{coupon.min_amount:.0f} 可使用该优惠码")
     return coupon, min(coupon.amount, amount)
@@ -248,6 +262,17 @@ def _direct_provider_for(coin: str):
 
 
 def create_payment(db: Session, order: Order, provider_name: str, client_ip: str, coin: str = ""):
+    from app.services.locks import redis_lock
+
+    order = (
+        db.query(Order)
+        .filter(Order.id == order.id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
     if order.status == OrderStatus.DELIVERED:
         raise OrderError("ORDER_ALREADY_PAID", "订单已支付并交付")
     if order.status != OrderStatus.PENDING:
@@ -280,16 +305,40 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
             return _direct_payment_response(order)
         try:
             provider = _direct_provider_for(selected)
-            payment_amount = provider.select_unique_amount(db, order.amount)
-            intent = provider.create_native(
-                order.order_no,
-                order.amount,
-                masked_order_title(order.order_no),
-                client_ip,
-                payment_amount=payment_amount,
-            )
+            with redis_lock(f"lock:crypto-amount:{selected.lower()}", ttl_seconds=10):
+                payment_amount = provider.select_unique_amount(db, order.amount)
+                intent = provider.create_native(
+                    order.order_no,
+                    order.amount,
+                    masked_order_title(order.order_no),
+                    client_ip,
+                    payment_amount=payment_amount,
+                )
+                order.payment_provider = intent.provider
+                order.payment_address = intent.payment_address
+                order.payment_amount = intent.payment_amount
+                order.payment_currency = intent.payment_currency
+                order.payment_network = intent.network
+                order.expires_at = utcnow() + timedelta(seconds=intent.expires_in)
+                db.add(order)
+                db.commit()
         except PaymentProviderError as exc:
             raise OrderError(exc.code, exc.message, 502) from exc
+        return {
+            "provider": intent.provider,
+            "qr_content": intent.qr_content,
+            "pay_url": intent.pay_url,
+            "trade_no": intent.trade_no,
+            "mock": intent.mock,
+            "expires_in": intent.expires_in,
+            "order_no": order.order_no,
+            "amount": money(order.amount),
+            "payment_address": intent.payment_address,
+            "payment_amount": money(intent.payment_amount),
+            "payment_currency": intent.payment_currency,
+            "network": intent.network,
+            "expires_at": intent.expires_at,
+        }
     else:
         try:
             provider = get_provider(provider_name)
@@ -478,7 +527,8 @@ def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> 
         raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
     if order.status in {OrderStatus.PAID, OrderStatus.DELIVERED}:
         return False
-    if order.status != OrderStatus.PENDING:
+    late_recovery = order.status == OrderStatus.CANCELLED
+    if order.status not in {OrderStatus.PENDING, OrderStatus.CANCELLED}:
         raise OrderError("ORDER_NOT_PAYABLE", "当前订单状态不可完成支付")
     order.status = OrderStatus.PAID
     order.paid_at = utcnow()
@@ -502,37 +552,60 @@ def mark_order_paid(db: Session, order: Order, provider: str, trade_no: str) -> 
     db.add(
         AuditLog(
             actor="payment",
-            action="order.paid",
+            action="order.late_payment_recovered" if late_recovery else "order.paid",
             entity_type="order",
             entity_id=order.order_no,
-            detail=f"provider={provider}",
+            detail=f"provider={provider}" + (" late_after_cancel=true" if late_recovery else ""),
         )
     )
     db.commit()
     db.refresh(order)
     fulfill_order(db, order)
-    feishu.dispatch_event(
-        "order.paid",
-        "MOLIPLY 支付成功",
-        {
-            "订单号": order.order_no,
-            "金额": f"¥{order.amount:.2f}",
-            "支付通道": PAYMENT_LABELS.get(provider, provider),
-            "邮箱": mask_email(order.email),
-        },
-        severity="success",
-        link_path=f"/admin/orders?q={order.order_no}",
-    )
-    _send_delivery_notification_async(db, order)
+    if late_recovery:
+        feishu.dispatch_event(
+            "order.paid",
+            "MOLIPLY 超时取消订单收到真实支付（已自动恢复发货）",
+            {
+                "订单号": order.order_no,
+                "金额": f"¥{order.amount:.2f}",
+                "支付通道": PAYMENT_LABELS.get(provider, provider),
+                "邮箱": mask_email(order.email),
+            },
+            severity="warning",
+            link_path=f"/admin/orders?q={order.order_no}",
+        )
+    else:
+        feishu.dispatch_event(
+            "order.paid",
+            "MOLIPLY 支付成功",
+            {
+                "订单号": order.order_no,
+                "金额": f"¥{order.amount:.2f}",
+                "支付通道": PAYMENT_LABELS.get(provider, provider),
+                "邮箱": mask_email(order.email),
+            },
+            severity="success",
+            link_path=f"/admin/orders?q={order.order_no}",
+        )
+    if order.status == OrderStatus.DELIVERED:
+        _send_delivery_notification_async(db, order)
     return True
 
 
 def _send_delivery_notification_async(db: Session, order: Order) -> None:
+    if not smtp_configured_safe():
+        return
+    if settings.task_mode.lower() == "celery":
+        try:
+            from app.tasks.celery_worker import send_delivery_email_task
+
+            send_delivery_email_task.delay(order.order_no)
+            return
+        except Exception:  # noqa: BLE001
+            logger.warning("Celery email enqueue failed for %s; falling back to thread", order.order_no)
     try:
         payload = serialize_order(db, order, reveal=True, reveal_email=True)
     except Exception:
-        return
-    if not smtp_configured_safe():
         return
     threading.Thread(
         target=send_delivery_email,
@@ -592,6 +665,25 @@ def fulfill_order(db: Session, order: Order) -> Order:
                     kind="ACTIVATION_CODE",
                     code_id=code.id,
                     payload_enc=encrypt_text(code.code),
+                )
+                db.add(delivery)
+                item.deliveries.append(delivery)
+                missing -= 1
+            if missing > 0:
+                pending = True
+        elif _is_cce_item(db, item):
+            from app.services.fulfillment import cce_delivery
+
+            variant = db.get(ProductVariant, item.variant_id) if item.variant_id else None
+            valid_days = max(1, int((variant.months if variant else 1) * 30))
+            for _ in range(missing):
+                minted = cce_delivery.claim_and_mint_key(plan_tier="pro", valid_days=valid_days)
+                if minted is None:
+                    break
+                delivery = OrderDelivery(
+                    order_item_id=item.id,
+                    kind="CCE_DELIVERY_KEY",
+                    payload_enc=encrypt_text(minted["payload"]),
                 )
                 db.add(delivery)
                 item.deliveries.append(delivery)
@@ -709,6 +801,11 @@ def fulfill_order(db: Session, order: Order) -> Order:
     return order
 
 
+def _is_cce_item(db: Session, item: OrderItem) -> bool:
+    product = db.get(Product, item.product_id)
+    return bool(product and product.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY)
+
+
 def _is_jit_item(db: Session, item: OrderItem) -> bool:
     """JIT only when the product asks for it *and* the engine is switched on.
 
@@ -726,19 +823,27 @@ def finalize_pending_order_if_delivered(db: Session, order_item_id: int) -> None
 
     JIT deliveries arrive asynchronously long after the payment callback, so the
     order cannot be marked DELIVERED there. This re-checks the whole order and
-    flips it only when every line is complete.
+    flips it only when every line is complete, then sends the delivery email.
     """
+    order_id = (
+        db.query(OrderItem.order_id)
+        .filter(OrderItem.id == order_item_id)
+        .scalar()
+    )
+    if order_id is None:
+        return
     order = (
         db.query(Order)
-        .join(OrderItem, OrderItem.order_id == Order.id)
-        .filter(OrderItem.id == order_item_id)
+        .filter(Order.id == order_id)
+        .with_for_update()
+        .populate_existing()
         .first()
     )
     if order is None:
         return
+    was_delivered = order.status == OrderStatus.DELIVERED
     # Count through fresh queries: the caller just committed a delivery in this
     # same session, so the relationship collections can still be stale.
-    db.expire_all()
     lines = db.query(OrderItem.id, OrderItem.quantity).filter(OrderItem.order_id == order.id).all()
     delivered = {
         item_id: count
@@ -757,6 +862,114 @@ def finalize_pending_order_if_delivered(db: Session, order_item_id: int) -> None
     order.stock_pending = False
     db.add(order)
     db.commit()
+    db.refresh(order)
+    if not was_delivered:
+        _send_delivery_notification_async(db, order)
+
+
+def cancel_order(db: Session, order: Order, *, actor: str = "admin", reason: str = "", ip: str = "") -> Order:
+    order = db.query(Order).filter(Order.id == order.id).with_for_update().populate_existing().first()
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
+    if order.status != OrderStatus.PENDING:
+        raise OrderError("ORDER_NOT_CANCELLABLE", "仅待支付订单可以取消", 409)
+    order.status = OrderStatus.CANCELLED
+    db.add(order)
+    db.add(
+        AuditLog(
+            actor=actor,
+            action="order.cancelled",
+            entity_type="order",
+            entity_id=order.order_no,
+            detail=reason[:250] or "manual_cancel",
+            ip=ip,
+        )
+    )
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def refund_order(db: Session, order: Order, *, actor: str = "admin", reason: str = "", ip: str = "") -> dict:
+    """Mark a paid/delivered order REFUNDED and disable any unused delivered activation codes."""
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.deliveries))
+        .filter(Order.id == order.id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
+    if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
+        raise OrderError("ORDER_NOT_REFUNDABLE", "仅已支付或已交付的订单可以退款", 409)
+
+    revoked_codes = 0
+    for item in order.items:
+        for delivery in item.deliveries:
+            if delivery.code_id:
+                code = db.get(ActivationCode, delivery.code_id)
+                if code is not None and code.status in {CodeStatus.UNUSED, CodeStatus.LOCKED}:
+                    code.status = CodeStatus.DISABLED
+                    code.note = (f"{code.note} | refunded" if code.note else "refunded")[:255]
+                    db.add(code)
+                    revoked_codes += 1
+
+    order.status = OrderStatus.REFUNDED
+    order.stock_pending = False
+    db.add(order)
+    db.add(
+        AuditLog(
+            actor=actor,
+            action="order.refunded",
+            entity_type="order",
+            entity_id=order.order_no,
+            detail=f"revoked_codes={revoked_codes} reason={reason[:200]}",
+            ip=ip,
+        )
+    )
+    db.commit()
+    db.refresh(order)
+    feishu.dispatch_event(
+        "order.paid",
+        "MOLIPLY 订单已退款",
+        {
+            "订单号": order.order_no,
+            "金额": f"¥{order.amount:.2f}",
+            "已作废未用卡密": revoked_codes,
+            "原因": reason[:160] or "后台操作退款",
+        },
+        severity="warning",
+        link_path=f"/admin/orders?q={order.order_no}",
+    )
+    return {"order": order, "revoked_codes": revoked_codes}
+
+
+def fulfill_pending_backorders(db: Session, *, product_id: int | None = None, limit: int = 50) -> int:
+    """FIFO auto-fulfillment for paid orders waiting on restocked inventory."""
+    query = (
+        db.query(Order)
+        .filter(
+            Order.status == OrderStatus.PAID,
+            Order.stock_pending.is_(True),
+        )
+        .order_by(Order.paid_at.asc(), Order.id.asc())
+    )
+    if product_id is not None:
+        query = query.join(OrderItem, OrderItem.order_id == Order.id).filter(OrderItem.product_id == product_id)
+    orders = query.distinct().limit(limit).all()
+    fulfilled = 0
+    for order in orders:
+        try:
+            updated = fulfill_order(db, order)
+            if updated.status == OrderStatus.DELIVERED:
+                fulfilled += 1
+                _send_delivery_notification_async(db, updated)
+        except Exception:  # noqa: BLE001
+            logger.exception("Auto-fulfillment failed for backorder %s", order.order_no)
+            db.rollback()
+    return fulfilled
 
 
 def settle_mock_order(db: Session, order: Order, channel: str = "wechat") -> Order:

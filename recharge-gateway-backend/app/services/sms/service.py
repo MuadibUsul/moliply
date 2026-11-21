@@ -177,24 +177,37 @@ def lease(db: Session, code: ActivationCode, service: str, country: str, ip: str
                 db.commit()
                 return existing
 
-        provider = providers.choose_provider(runtime.get("sms_default_provider") or None)
-        upstream_service = _service_for(provider.name, service)
-        try:
-            lease_info = provider.lease_number(upstream_service, (country or "US").upper())
-        except providers.NoNumbersAvailable:
-            # Nothing was held at the supplier, so nothing is refunded and the
-            # code must stay usable for another region.
+        primary = providers.choose_provider(runtime.get("sms_default_provider") or None)
+        fallback_names = [name for name in providers.available_providers() if name != primary.name]
+        candidates = [primary] + [providers.build_provider(name) for name in fallback_names]
+        provider = primary
+        lease_info = None
+        last_exc: Exception | None = None
+        for candidate in candidates:
+            provider = candidate
+            upstream_service = _service_for(provider.name, service)
+            try:
+                lease_info = provider.lease_number(upstream_service, (country or "US").upper())
+                break
+            except providers.NoNumbersAvailable as exc:
+                last_exc = exc
+                continue
+            except providers.SmsProviderError as exc:
+                last_exc = exc
+                if exc.transient:
+                    continue
+                break
+
+        if lease_info is None:
             if code.status == CodeStatus.LOCKED_WAITING_OTP:
                 code.status = CodeStatus.UNUSED
                 db.add(code)
             db.commit()
-            raise SmsError("NO_NUMBERS", "该地区暂时没有可用号码，请换一个地区或稍后再试")
-        except providers.SmsProviderError as exc:
-            if code.status == CodeStatus.LOCKED_WAITING_OTP:
-                code.status = CodeStatus.UNUSED
-                db.add(code)
-            db.commit()
-            raise SmsError(exc.code, exc.message, 502) from exc
+            if isinstance(last_exc, providers.NoNumbersAvailable):
+                raise SmsError("NO_NUMBERS", "该地区暂时没有可用号码，请换一个地区或稍后再试")
+            if isinstance(last_exc, providers.SmsProviderError):
+                raise SmsError(last_exc.code, last_exc.message, 502) from last_exc
+            raise SmsError("SMS_LEASE_FAILED", "取号失败，请稍后重试", 502)
 
         now = utcnow()
         task = SmsVerificationTask(
@@ -229,91 +242,114 @@ def lease(db: Session, code: ActivationCode, service: str, country: str, ip: str
 
 
 def poll(db: Session, task_id: str) -> SmsVerificationTask:
-    """Check upstream once; consume the code only when an OTP is parsed."""
-    task = db.get(SmsVerificationTask, task_id)
-    if task is None:
-        raise SmsError("SMS_TASK_NOT_FOUND", "接码任务不存在", 404)
-    if task.status != SmsTaskStatus.WAITING:
-        return task
+    """Check upstream once; consume the code once any SMS payload arrives."""
+    with redis_lock(f"lock:sms:task:{task_id}", ttl_seconds=15) as acquired:
+        task = db.get(SmsVerificationTask, task_id)
+        if task is None:
+            raise SmsError("SMS_TASK_NOT_FOUND", "接码任务不存在", 404)
+        if not acquired or task.status != SmsTaskStatus.WAITING:
+            return task
 
-    _expire_if_due(db, task)
-    if task.status != SmsTaskStatus.WAITING:
-        db.commit()
-        return task
+        _expire_if_due(db, task)
+        if task.status != SmsTaskStatus.WAITING:
+            db.commit()
+            return task
 
-    try:
-        provider = providers.build_provider(task.provider)
-        result = provider.poll_code(
-            providers.LeasedNumber(
-                upstream_order_id=task.upstream_order_id or "",
-                phone_number=task.phone_number,
-                provider=task.provider,
+        try:
+            provider = providers.build_provider(task.provider)
+            result = provider.poll_code(
+                providers.LeasedNumber(
+                    upstream_order_id=task.upstream_order_id or "",
+                    phone_number=task.phone_number,
+                    provider=task.provider,
+                )
             )
-        )
-    except providers.SmsProviderError as exc:
-        if not exc.transient:
-            task.error_message = exc.message[:250]
+        except providers.SmsProviderError as exc:
+            if not exc.transient:
+                task.error_message = exc.message[:250]
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            return task
+
+        if result.arrived:
+            code = db.query(ActivationCode).filter(ActivationCode.id == task.code_id).with_for_update().first()
+            task.raw_sms = (result.text or "")[:1000]
+            if result.code or result.text:
+                if code is not None:
+                    code.status = CodeStatus.USED
+                    code.used_at = utcnow()
+                    db.add(code)
+                if result.code:
+                    task.otp_code = result.code
+                    _finish(db, task, SmsTaskStatus.RECEIVED)
+                else:
+                    # The SMS arrived and is shown to the customer, so consume
+                    # the code to prevent free unlimited OTP extraction.
+                    _finish(
+                        db,
+                        task,
+                        SmsTaskStatus.RECEIVED,
+                        "已收到短信，但未能自动识别验证码，请查看原文",
+                    )
+            db.commit()
+            db.refresh(task)
+            return task
+
+        task.updated_at = utcnow()
         db.add(task)
         db.commit()
         db.refresh(task)
         return task
 
-    if result.arrived:
-        code = db.get(ActivationCode, task.code_id)
-        task.raw_sms = (result.text or "")[:1000]
-        if result.code and code is not None:
-            code.status = CodeStatus.USED
-            code.used_at = utcnow()
-            db.add(code)
-            task.otp_code = result.code
-            _finish(db, task, SmsTaskStatus.RECEIVED)
-        else:
-            # A message we could not parse still means the number worked; hold
-            # the code and let the customer read the raw text.
-            task.error_message = "已收到短信，但未能自动识别验证码，请查看原文"
-            task.status = SmsTaskStatus.RECEIVED if not result.text else task.status
-            db.add(task)
-        db.commit()
-        db.refresh(task)
-        return task
 
-    task.updated_at = utcnow()
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    return task
-
-
-def change_number(db: Session, task_id: str, ip: str = "") -> SmsVerificationTask:
+def change_number(
+    db: Session,
+    task_id: str,
+    ip: str = "",
+    *,
+    enforce_cooldown: bool | None = None,
+) -> SmsVerificationTask:
     """Cancel (refund) the current number and lease a fresh one on the same code.
 
     Used both by the customer's "no code? change number" button and by the
     timeout sweep, which makes the two paths identical.
     """
-    task = db.get(SmsVerificationTask, task_id)
-    if task is None:
-        raise SmsError("SMS_TASK_NOT_FOUND", "接码任务不存在", 404)
+    with redis_lock(f"lock:sms:task:{task_id}", ttl_seconds=20) as acquired:
+        if not acquired:
+            raise SmsError("SMS_BUSY", "任务正在处理中，请稍候")
 
-    if task.status == SmsTaskStatus.RECEIVED:
-        return task
-    if task.status in {SmsTaskStatus.CANCELLED, SmsTaskStatus.EXPIRED, SmsTaskStatus.FAILED}:
-        # Nothing live to cancel; hand back the same terminal row.
-        return task
+        task = db.query(SmsVerificationTask).filter(SmsVerificationTask.task_id == task_id).with_for_update().first()
+        if task is None:
+            raise SmsError("SMS_TASK_NOT_FOUND", "接码任务不存在", 404)
 
-    _cancel_upstream(task)
-    code = _release_code(db, task)
-    _finish(db, task, SmsTaskStatus.CANCELLED, "用户申请换号")
-    db.add(
-        AuditLog(
-            actor="customer",
-            action="sms.change_number",
-            entity_type="sms_task",
-            entity_id=task.task_id,
-            detail=f"service={task.service_name} country={task.country_code}",
-            ip=ip,
+        if task.status == SmsTaskStatus.RECEIVED:
+            return task
+        if task.status in {SmsTaskStatus.CANCELLED, SmsTaskStatus.EXPIRED, SmsTaskStatus.FAILED}:
+            # Nothing live to cancel; hand back the same terminal row.
+            return task
+
+        should_enforce = settings.is_production if enforce_cooldown is None else enforce_cooldown
+        min_wait = max(0, runtime.get_int("sms_cancel_min_seconds", settings.sms_cancel_min_seconds))
+        elapsed = (utcnow() - task.created_at).total_seconds()
+        if should_enforce and elapsed < min_wait:
+            wait_left = max(1, int(min_wait - elapsed))
+            raise SmsError("SMS_CHANGE_TOO_EARLY", f"请至少等待 {wait_left} 秒后再申请换号", 429)
+
+        _cancel_upstream(task)
+        code = _release_code(db, task)
+        _finish(db, task, SmsTaskStatus.CANCELLED, "用户申请换号")
+        db.add(
+            AuditLog(
+                actor="customer",
+                action="sms.change_number",
+                entity_type="sms_task",
+                entity_id=task.task_id,
+                detail=f"service={task.service_name} country={task.country_code}",
+                ip=ip,
+            )
         )
-    )
-    db.commit()
+        db.commit()
 
     if code is None:
         raise SmsError("CODE_NOT_FOUND", "激活码不存在", 404)

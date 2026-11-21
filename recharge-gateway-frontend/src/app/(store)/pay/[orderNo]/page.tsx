@@ -59,10 +59,12 @@ function PayContent() {
   const [payError, setPayError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
-  const [remaining, setRemaining] = useState(0);
+  const [remaining, setRemaining] = useState<number | null>(null);
   const [settling, setSettling] = useState(false);
   const [checkingCrypto, setCheckingCrypto] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const cryptoCoinRef = useRef(cryptoCoin);
+  cryptoCoinRef.current = cryptoCoin;
 
   useEffect(() => {
     api<BrandInfo>("/api/v1/brand")
@@ -88,14 +90,13 @@ function PayContent() {
     async (provider: PaymentProviderKey, coinOverride?: string) => {
       setIntentLoading(true);
       setPayError(null);
+      const selectedCoin = coinOverride || cryptoCoinRef.current;
       try {
         const data = await api<PaymentIntent>(`/api/v1/store/orders/${orderNo}/pay`, {
           method: "POST",
           body: {
             provider,
-            ...(provider === "crypto" && (coinOverride || cryptoCoin)
-              ? { coin: coinOverride || cryptoCoin }
-              : {}),
+            ...(provider === "crypto" && selectedCoin ? { coin: selectedCoin } : {}),
           },
         });
         setIntent(data);
@@ -112,7 +113,7 @@ function PayContent() {
         setIntentLoading(false);
       }
     },
-    [orderNo, cryptoCoin],
+    [orderNo],
   );
 
   useEffect(() => {
@@ -126,7 +127,7 @@ function PayContent() {
         if (data.status === "PENDING") {
           const orderCoin = PROVIDER_TO_COIN[data.payment_provider || ""] || "";
           if (orderCoin) setCryptoCoin(orderCoin);
-          void startPayment(initialProvider, orderCoin);
+          void startPayment(initialProvider, orderCoin || undefined);
         }
       })
       .catch((err: Error) => {
@@ -145,8 +146,9 @@ function PayContent() {
     };
   }, [orderNo, loadOrder, startPayment, initialProvider]);
 
+  const orderStatus = order?.status;
   useEffect(() => {
-    if (!order || order.status !== "PENDING") {
+    if (orderStatus !== "PENDING") {
       if (pollRef.current) window.clearInterval(pollRef.current);
       return;
     }
@@ -160,11 +162,11 @@ function PayContent() {
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
     };
-  }, [order, orderNo]);
+  }, [orderStatus, orderNo]);
 
   useEffect(() => {
     if (!order?.expires_at) {
-      setRemaining(0);
+      setRemaining(null);
       return;
     }
     const update = () => {
@@ -307,7 +309,9 @@ function PayContent() {
                       <p className="text-sm font-medium text-slate-100">{item.product_name}</p>
                       <p className="mt-0.5 text-[10px] text-slate-500">{item.spec_label} · {item.delivery_type === "ACTIVATION_CODE" ? "激活码" : "账密交付"}</p>
                     </div>
-                    <span className="text-[10px] text-emerald-300">已发货</span>
+                    <span className={`text-[10px] ${item.deliveries.length >= item.quantity ? "text-emerald-300" : "text-amber-300"}`}>
+                      {item.deliveries.length >= item.quantity ? "已发货" : "自动交付中"}
+                    </span>
                   </div>
 
                   {item.deliveries.length > 0 ? (
@@ -340,7 +344,9 @@ function PayContent() {
                               {delivery.payload}
                             </pre>
                             <p className="mt-2 text-[10px] leading-5 text-slate-600">
-                              建议首次登录后立即修改密码并保存辅助邮箱。
+                              {delivery.kind === "CCE_DELIVERY_KEY"
+                                ? "请妥善保存专属交付密钥，按照上方启动命令连接即可使用。"
+                                : "请妥善保存账号凭证，质保期内请勿擅自修改密码或安全绑定信息，以免影响质保服务。"}
                             </p>
                           </div>
                         ),
@@ -414,7 +420,7 @@ function PayContent() {
     );
   }
 
-  const expired = remaining <= 0 && order.status === "PENDING";
+  const expired = remaining !== null && remaining <= 0 && order.status === "PENDING";
   const directCrypto = Boolean(intent?.payment_address);
   const directAmount = Number(intent?.payment_amount || 0);
   const directCurrency = intent?.payment_currency || "USDT";
@@ -503,7 +509,7 @@ function PayContent() {
                 {directCrypto ? `${directAmount.toFixed(directDecimals)} ${directCurrency}` : formatMoney(order.amount)}
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
-                {expired ? "订单已超时，请重新下单" : `请在 ${formatCountdown(remaining)} 内完成支付`}
+                {expired ? "订单已超时，请重新下单" : `请在 ${formatCountdown(remaining ?? 0)} 内完成支付`}
               </p>
               <p className="mt-2 text-[10px] text-slate-600">
                 {directCrypto

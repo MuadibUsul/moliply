@@ -104,6 +104,7 @@ function ProductsContent() {
 
   const activeTab = tab;
   const products = data?.items || [];
+  const allCount = (data?.categories || []).reduce((sum, item) => sum + item.count, 0) || (data?.total ?? 0);
 
   return (
     <div className="relative overflow-hidden">
@@ -124,7 +125,7 @@ function ProductsContent() {
               <div className="surface p-4">
                 <div className="flex items-center justify-between px-2 pb-3">
                   <span className="text-xs font-semibold text-slate-300">商品分类</span>
-                  <span className="text-[10px] text-slate-600">全部 {data?.total ?? 48}</span>
+                  <span className="text-[10px] text-slate-600">全部 {allCount}</span>
                 </div>
                 <div className="grid gap-0.5">
                   <button
@@ -138,7 +139,7 @@ function ProductsContent() {
                       <SlidersHorizontal size={14} />
                       全部商品
                     </span>
-                    <span className={!category ? "text-blue-100" : "text-slate-600"}>{data?.total ?? 0}</span>
+                    <span className={!category ? "text-blue-100" : "text-slate-600"}>{allCount}</span>
                   </button>
                   {(data?.categories || []).map((item) => {
                     const Icon = CATEGORY_ICONS[item.key] || Sparkles;

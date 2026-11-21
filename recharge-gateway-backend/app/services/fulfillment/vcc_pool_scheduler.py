@@ -66,13 +66,53 @@ def _alert(event: str, title: str, fields: dict, severity: str = "warning") -> N
         logger.debug("SMTP pool alert failed", exc_info=False)
 
 
+def _cst_day_start_utc(now: datetime | None = None) -> datetime:
+    current = now or datetime.utcnow()
+    local_now = current + timedelta(hours=8)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_start - timedelta(hours=8)
+
+
+def _daily_uses_for_card(db: Session, card_id: int, day_start: datetime) -> int:
+    return int(
+        db.query(func.count(RechargeTask.task_id))
+        .filter(
+            RechargeTask.vcc_card_id == card_id,
+            RechargeTask.created_at >= day_start,
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _eligible_query(db: Session, region: str, required: Decimal, now: datetime):
+    spendable = VccCard.available_balance - VccCard.reserved_balance
+    query = db.query(VccCard).filter(
+        VccCard.status == VccStatus.ACTIVE,
+        VccCard.is_locked.is_(False),
+        spendable >= required,
+        VccCard.current_bind_count < VccCard.max_bind_count,
+        VccCard.consecutive_failures < max_consecutive_failures(),
+        (VccCard.cooldown_until.is_(None)) | (VccCard.cooldown_until <= now),
+    )
+    if region == region_router.PH:
+        query = query.filter(VccCard.ph_billing_address_json.isnot(None))
+    return query.order_by(
+        VccCard.consecutive_failures.asc(),
+        VccCard.failed_count.asc(),
+        VccCard.available_balance.desc(),
+        VccCard.last_used_at.asc().nullsfirst(),
+        VccCard.id.asc(),
+    )
+
+
 def acquire_card(db: Session, region: str, amount: Decimal | None = None) -> VccCard | None:
     """Reserve one bind slot *and* the order amount before a slow checkout starts.
 
-    ``available_balance - reserved_balance`` is the spendable remainder, so one
-    card can still serve several small orders but never gets over-committed. The
-    row is locked with ``SKIP LOCKED`` so concurrent workers fall through to other
-    cards instead of queueing behind the same row.
+    ``available_balance - reserved_balance`` is the spendable remainder, and
+    ``is_locked`` guarantees exclusive ownership during an in-flight checkout.
+    The row is locked with ``SKIP LOCKED`` so concurrent workers fall through to
+    other cards instead of queueing behind the same row.
 
     The caller must call :func:`release_reservation` when the checkout definitely
     did not charge, or :func:`mark_success` after a successful charge.
@@ -80,27 +120,17 @@ def acquire_card(db: Session, region: str, amount: Decimal | None = None) -> Vcc
     now = datetime.utcnow()
     minimum = region_router.min_balance_for(region)
     required = amount if amount is not None and amount > minimum else minimum
-    spendable = VccCard.available_balance - VccCard.reserved_balance
+    day_start = _cst_day_start_utc(now)
 
-    query = db.query(VccCard).filter(
-        VccCard.status == VccStatus.ACTIVE,
-        spendable >= required,
-        VccCard.current_bind_count < VccCard.max_bind_count,
-        VccCard.failed_count == 0,
-        (VccCard.cooldown_until.is_(None)) | (VccCard.cooldown_until <= now),
-    )
-    if region == region_router.PH:
-        query = query.filter(VccCard.ph_billing_address_json.isnot(None))
-    card = (
-        query.order_by(
-            VccCard.consecutive_failures.asc(),
-            VccCard.available_balance.desc(),
-            VccCard.last_used_at.asc().nullsfirst(),
-            VccCard.id.asc(),
-        )
-        .with_for_update(skip_locked=True)
-        .first()
-    )
+    candidates = _eligible_query(db, region, required, now).with_for_update(skip_locked=True).limit(20).all()
+    card: VccCard | None = None
+    for candidate in candidates:
+        if candidate.daily_limit is not None and candidate.daily_limit > 0:
+            if _daily_uses_for_card(db, candidate.id, day_start) >= candidate.daily_limit:
+                continue
+        card = candidate
+        break
+
     if card is None:
         check_watermark(db, required)
         return None
@@ -119,24 +149,13 @@ def peek_card(db: Session, region: str, amount: Decimal | None = None) -> VccCar
     now = datetime.utcnow()
     minimum = region_router.min_balance_for(region)
     required = amount if amount is not None and amount > minimum else minimum
-    spendable = VccCard.available_balance - VccCard.reserved_balance
-    query = db.query(VccCard).filter(
-        VccCard.status == VccStatus.ACTIVE,
-        spendable >= required,
-        VccCard.current_bind_count < VccCard.max_bind_count,
-        VccCard.failed_count == 0,
-        (VccCard.cooldown_until.is_(None)) | (VccCard.cooldown_until <= now),
-    )
-    if region == region_router.PH:
-        query = query.filter(VccCard.ph_billing_address_json.isnot(None))
-    return (
-        query.order_by(
-            VccCard.consecutive_failures.asc(),
-            VccCard.available_balance.desc(),
-            VccCard.last_used_at.asc().nullsfirst(),
-            VccCard.id.asc(),
-        ).first()
-    )
+    day_start = _cst_day_start_utc(now)
+    for candidate in _eligible_query(db, region, required, now).limit(20).all():
+        if candidate.daily_limit is not None and candidate.daily_limit > 0:
+            if _daily_uses_for_card(db, candidate.id, day_start) >= candidate.daily_limit:
+                continue
+        return candidate
+    return None
 
 
 def release_reservation(db: Session, card: VccCard, amount: Decimal | None = None) -> None:
@@ -150,13 +169,20 @@ def release_reservation(db: Session, card: VccCard, amount: Decimal | None = Non
     db.commit()
 
 
-def mark_success(db: Session, card: VccCard, region: str, charged: Decimal | None = None) -> None:
+def mark_success(
+    db: Session,
+    card: VccCard,
+    region: str,
+    charged: Decimal | None = None,
+    reserved: Decimal | None = None,
+) -> None:
     """Settle a charged checkout: burn the money, clear the fuse state."""
     now = datetime.utcnow()
     cost = charged if charged is not None else region_router.cost_usd_for(region)
-    # The whole promise is released; the real charge hits the balance. They differ
-    # when a reservation was padded to the region's minimum usable balance.
-    card.reserved_balance = Decimal("0")
+    if reserved is not None:
+        card.reserved_balance = max(Decimal("0"), (card.reserved_balance or Decimal("0")) - reserved)
+    else:
+        card.reserved_balance = Decimal("0")
     card.available_balance = max(Decimal("0"), card.available_balance - cost)
     card.total_used_count = (card.total_used_count or 0) + 1
     card.consecutive_failures = 0
@@ -230,7 +256,7 @@ def check_watermark(db: Session, required: Decimal) -> int:
         db.query(func.count(VccCard.id))
         .filter(
             VccCard.status == VccStatus.ACTIVE,
-            VccCard.failed_count == 0,
+            VccCard.consecutive_failures < max_consecutive_failures(),
             VccCard.is_locked.is_(False),
             spendable >= required,
             (VccCard.cooldown_until.is_(None)) | (VccCard.cooldown_until <= now),
@@ -274,7 +300,7 @@ def calibrate_balance(db: Session, card: VccCard, balance: Decimal) -> None:
 def summary(db: Session) -> dict:
     cards = db.query(VccCard).all()
     now = datetime.utcnow()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=8)
+    start = _cst_day_start_utc(now)
     channel_rows = (
         db.query(RechargeTask.executed_channel, func.count(RechargeTask.task_id))
         .filter(RechargeTask.created_at >= start)

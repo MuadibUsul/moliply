@@ -38,8 +38,10 @@ def me(user: User = Depends(require_user)) -> dict:
 
 
 @router.post("/change-password")
+@limiter.limit(settings.login_rate_limit)
 def change_password(
     payload: ChangePasswordRequest,
+    request: Request,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:

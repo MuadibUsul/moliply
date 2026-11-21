@@ -32,7 +32,6 @@ export function SiteFooter() {
                   {link.label}
                 </Link>
               ))}
-              <Link href="/admin/login" className="text-slate-600 hover:text-slate-400">运营后台</Link>
             </div>
           </div>
         </div>

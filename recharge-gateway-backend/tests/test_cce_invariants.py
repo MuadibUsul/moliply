@@ -256,3 +256,185 @@ def test_active_delivery_key_rejects_expired_and_revoked(db):
     past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     assert _run(db.active_delivery_key(key, past)) is not None
     assert _run(db.active_delivery_key(key, (datetime.now(timezone.utc) + timedelta(days=99)).isoformat())) is None
+
+
+# -- invariant: proxy grading is advisory, never the kill switch -------------
+
+def _geo(**kw):
+    from core.proxy_inspector import ProxyGeoInfo, locale_for_country
+
+    base = dict(
+        ip="203.0.113.9", country_code="US", timezone="America/Chicago",
+        latitude=0.0, longitude=0.0, locale=locale_for_country("US"),
+        isp="WideOpenWest Finance LLC", asn="AS12083 WOW-INTERNET",
+    )
+    base.update(kw)
+    return ProxyGeoInfo(**base)
+
+
+def test_clean_isp_proxy_grades_good():
+    from core.proxy_inspector import grade_proxy
+
+    verdict = grade_proxy(_geo())
+    assert verdict["grade"] == "good"
+    assert verdict["reasons"] == []
+
+
+def test_datacenter_proxy_grades_bad():
+    from core.proxy_inspector import grade_proxy
+
+    verdict = grade_proxy(_geo(isp="Amazon", asn="AS16509 AMAZON-02", is_hosting=True))
+    assert verdict["grade"] == "bad"
+    # Both the flag and the name should be called out, not just one.
+    assert len(verdict["reasons"]) >= 2
+
+
+def test_known_public_proxy_and_non_us_lose_points_but_stay_usable():
+    from core.proxy_inspector import grade_proxy
+
+    verdict = grade_proxy(_geo(country_code="GB", isp="Heart Internet", is_proxy=True))
+    assert verdict["grade"] == "ok"
+    assert any("公共代理库" in r for r in verdict["reasons"])
+
+
+def test_resold_whole_block_is_reported_without_disqualifying():
+    from core.proxy_inspector import grade_proxy
+
+    verdict = grade_proxy(_geo(asn="AS7029 217-RIPE"))
+    assert verdict["grade"] == "good"
+    assert any("转租" in r for r in verdict["reasons"])
+
+
+def test_grade_never_returns_a_negative_score():
+    from core.proxy_inspector import grade_proxy
+
+    verdict = grade_proxy(
+        _geo(country_code="CN", is_hosting=True, is_proxy=True, timezone="", isp="hosting cloud vps")
+    )
+    assert verdict["score"] >= 0
+    assert verdict["grade"] == "bad"
+
+
+# -- invariant: an import row may omit the IP, never the proxy --------------
+
+def test_import_accepts_a_proxy_in_the_ip_column():
+    from core.pipeline import parse_import
+
+    rows, errors = parse_import("a@gmail.com,pw123456789012,http://u:p@203.0.113.9:1080")
+    assert errors == []
+    assert rows[0].proxy_url.endswith(":1080")
+    assert rows[0].ip == ""
+
+
+def test_import_still_reads_the_legacy_ip_proxy_columns():
+    from core.pipeline import parse_import
+
+    rows, errors = parse_import("a@gmail.com,pw123456789012,203.0.113.9,socks5://h:1080")
+    assert errors == []
+    assert rows[0].ip == "203.0.113.9"
+    assert rows[0].proxy_url == "socks5://h:1080"
+
+
+def test_import_rejects_a_row_with_no_proxy_at_all():
+    from core.pipeline import parse_import
+
+    rows, errors = parse_import("a@gmail.com,pw123456789012")
+    assert rows == []
+    assert "代理" in errors[0]
+
+
+# -- invariant: an empty port map is a valid running state ------------------
+
+def test_singbox_renders_an_empty_map_without_raising():
+    """An emptied system must not park the API in a permanent alarm."""
+    from core.singbox_manager import SingBoxManager
+
+    manager = SingBoxManager(config_path=Path("unused.json"))
+    assert manager.render()["inbounds"] == []
+    assert manager.render()["route"]["rules"] == [{"action": "sniff"}]
+
+
+def test_singbox_reload_no_longer_refuses_an_empty_map(tmp_path, monkeypatch):
+    """An emptied system must not park the API in a permanent alarm.
+
+    The stub binary is not a real sing-box, so the assertion is about the guard
+    being gone: the only failure allowed is the stub itself misbehaving.
+    """
+    from core import singbox_manager
+
+    stub = tmp_path / ("sing-box.cmd" if sys.platform == "win32" else "sing-box")
+    body = "@echo off\r\nping -n 30 127.0.0.1 >nul\r\n" if sys.platform == "win32" else "#!/bin/sh\nsleep 30\n"
+    stub.write_text(body)
+    stub.chmod(0o755)
+    monkeypatch.setattr(singbox_manager.shutil, "which", lambda _name: str(stub))
+
+    manager = singbox_manager.SingBoxManager(config_path=tmp_path / "config.json")
+
+    async def scenario() -> dict:
+        # One loop for both calls: the child process future is bound to it.
+        try:
+            return await manager.reload()
+        finally:
+            await manager.stop()
+
+    try:
+        result = asyncio.run(scenario())
+    except singbox_manager.SingBoxError as exc:
+        assert "no routes registered" not in str(exc), exc
+    else:
+        assert result["inbounds"] == 0
+
+    assert (tmp_path / "config.json").exists()
+
+
+# -- invariant: a restart must not strand a job mid-flight ----------------
+
+def _startup_with(db_path, monkeypatch):
+    """Run the real startup hook against a temp db; return its live state."""
+    monkeypatch.setenv("CCE_ADMIN_TOKEN", "t" * 64)
+    monkeypatch.setenv("CCE_MASTER_KEY", KEY)
+    from api import app as app_module
+
+    # DB_PATH is a module-level constant read at import time, so setting the env
+    # var alone would leave the app pointing at the default path.
+    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+    monkeypatch.setattr(app_module, "WORKER_INTERVAL", 0.0)
+    app = app_module.create_app()
+    _run(app.state.cce_startup())
+    return app_module.state
+
+
+def test_startup_requeues_a_job_left_in_flight(tmp_path, monkeypatch):
+    """The worker only drains `queued`; an interrupted stage would stall forever."""
+    import sqlite3
+
+    db_file = tmp_path / "cce.sqlite3"
+    asyncio.run(Database(db_file).connect())  # create the schema
+    con = sqlite3.connect(db_file)
+    con.executescript(
+        "INSERT INTO profiles (profile_id, local_proxy_port, upstream_proxy_url, expected_ip,"
+        " os_type, noise_seed, fingerprint_json, status, active_session_id)"
+        " VALUES ('p1', 10001, 'socks5://h:1', '203.0.113.9', 'macos', 1, '{}', 'BUSY', 'browser-x');"
+        "INSERT INTO account_jobs (profile_id, email, password_enc, gmail_app_password_enc, plan, stage)"
+        " VALUES ('p1', 'a@gmail.com', x'00', x'00', 'pro', 'subscribing');"
+    )
+    con.commit()
+    con.close()
+
+    state = _startup_with(db_file, monkeypatch)
+
+    async def read() -> tuple:
+        try:
+            # One loop for both reads: aiosqlite is bound to the loop that made it.
+            return (
+                await state.db.fetch_one("SELECT stage FROM account_jobs WHERE profile_id = 'p1'"),
+                await state.db.get_profile("p1"),
+            )
+        finally:
+            await state.db.close()
+
+    row, profile = asyncio.run(read())
+
+    assert row["stage"] == "queued"
+    assert profile["status"] == "IDLE"
+    assert profile["active_session_id"] is None

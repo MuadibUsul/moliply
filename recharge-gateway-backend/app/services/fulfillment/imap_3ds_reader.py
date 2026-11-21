@@ -110,7 +110,7 @@ def extract_code_from_raw(
     candidates: list[str] = []
     for match in pattern.finditer(haystack):
         value = match.group(1) if match.groups() else match.group(0)
-        if value.isdigit() and len(value) == 6 and not (2015 <= int(value) <= 2035):
+        if value.isdigit() and len(value) == 6:
             candidates.append(value)
     if not candidates:
         return None
@@ -122,6 +122,30 @@ def extract_code_from_raw(
 def _imap_since(value: datetime) -> str:
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     return f"{value.day:02d}-{months[value.month - 1]}-{value.year}"
+
+
+_CONSUMED_UIDS: set[str] = set()
+_MAX_CONSUMED_UIDS = 2000
+
+
+def _mark_uid_consumed(mailbox_key: str, uid: bytes | str) -> bool:
+    """Atomically claim a 3DS email UID so concurrent checkouts never reuse one OTP."""
+    uid_str = uid.decode("ascii", errors="ignore") if isinstance(uid, bytes) else str(uid)
+    token = f"{mailbox_key}:{uid_str}"
+    try:
+        from app.services.locks import redis_client
+
+        client = redis_client()
+        if client is not None:
+            return bool(client.set(f"moliply:3ds_uid:{token}", "1", nx=True, ex=3600))
+    except Exception:  # noqa: BLE001
+        pass
+    if token in _CONSUMED_UIDS:
+        return False
+    if len(_CONSUMED_UIDS) >= _MAX_CONSUMED_UIDS:
+        _CONSUMED_UIDS.clear()
+    _CONSUMED_UIDS.add(token)
+    return True
 
 
 class Imap3dsReader:
@@ -144,7 +168,7 @@ class Imap3dsReader:
     def fetch_latest_code(self, since: datetime) -> VerificationCode | None:
         if not (self.host and self.user and self.password):
             return None
-        client = imaplib.IMAP4_SSL(self.host, self.port)
+        client = imaplib.IMAP4_SSL(self.host, self.port, timeout=15)
         try:
             client.login(self.user, self.password)
             client.select("INBOX")
@@ -156,7 +180,7 @@ class Imap3dsReader:
             if status != "OK" or not data or not data[0]:
                 return None
             uids = data[0].split()[-15:]
-            found: list[VerificationCode] = []
+            mailbox_key = f"{self.host}:{self.user}"
             for uid in reversed(uids):
                 status, fetched = client.uid("fetch", uid, "(BODY.PEEK[])")
                 if status != "OK" or not fetched:
@@ -174,9 +198,9 @@ class Imap3dsReader:
                     code_regex=self.code_regex,
                     since=since,
                 )
-                if code:
-                    found.append(code)
-            return found[0] if found else None
+                if code and _mark_uid_consumed(mailbox_key, uid):
+                    return code
+            return None
         finally:
             try:
                 client.close()

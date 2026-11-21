@@ -115,7 +115,7 @@ const TOPICS: Topic[] = [
       "所有交付内容均展示在订单详情中，并以加密形式存储，仅用于订单账户与售后核验。",
     ],
     faqs: [
-      { q: "成品号首次登录要注意什么？", a: "建议首次登录后修改密码，并妥善保存辅助邮箱信息。不要共享账号或频繁切换地区。" },
+      { q: "成品号首次登录要注意什么？", a: "请妥善保存交付账密与辅助邮箱信息，不要共享账号或频繁切换地区；质保期内请勿擅自修改密码或 2FA，以免影响售后。" },
       { q: "可以改邮箱吗？", a: "成品号不支持更换主邮箱，请保留交付邮箱信息用于后续登录与售后。" },
     ],
   },
@@ -177,6 +177,20 @@ export default function HelpPage() {
   const [contactOpen, setContactOpen] = useState(false);
   const [contactWechat, setContactWechat] = useState(BRAND.contactWechat);
   const [supportHours, setSupportHours] = useState("每日 09:00–24:00");
+
+  useEffect(() => {
+    const syncHash = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if (hash === "terms" || hash === "privacy" || hash === "warranty") {
+        setOpenPolicy(hash);
+      } else if (hash === "contact") {
+        setContactOpen(true);
+      }
+    };
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, []);
 
   useEffect(() => {
     api<BrandInfo>("/api/v1/brand")

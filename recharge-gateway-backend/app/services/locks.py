@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -13,7 +14,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client = None
-_checked = False
+_checked_at = 0.0
+_RECONNECT_COOLDOWN = 30.0
 _check_lock = threading.Lock()
 
 _RELEASE_SCRIPT = """
@@ -26,13 +28,19 @@ end
 
 
 def _get_client():
-    global _client, _checked
-    if _checked:
+    global _client, _checked_at
+    if _client is not None:
         return _client
+    now = time.monotonic()
+    if _checked_at and (now - _checked_at) < _RECONNECT_COOLDOWN:
+        return None
     with _check_lock:
-        if _checked:
+        if _client is not None:
             return _client
-        _checked = True
+        now = time.monotonic()
+        if _checked_at and (now - _checked_at) < _RECONNECT_COOLDOWN:
+            return None
+        _checked_at = now
         try:
             import redis
 
@@ -46,6 +54,13 @@ def _get_client():
             logger.warning("Redis unavailable; distributed lock falls back to database row locks")
             _client = None
     return _client
+
+
+def _drop_client() -> None:
+    global _client, _checked_at
+    with _check_lock:
+        _client = None
+        _checked_at = time.monotonic()
 
 
 class LockUnavailable(Exception):
@@ -74,7 +89,13 @@ def redis_lock(key: str, ttl_seconds: int | None = None) -> Iterator[bool]:
         yield True
         return
     token = secrets.token_hex(16)
-    acquired = bool(client.set(key, token, nx=True, ex=ttl))
+    try:
+        acquired = bool(client.set(key, token, nx=True, ex=ttl))
+    except Exception:
+        logger.warning("Redis lock acquisition failed for %s; falling back to DB row lock", key)
+        _drop_client()
+        yield True
+        return
     try:
         yield acquired
     finally:
@@ -83,3 +104,4 @@ def redis_lock(key: str, ttl_seconds: int | None = None) -> Iterator[bool]:
                 client.eval(_RELEASE_SCRIPT, 1, key, token)
             except Exception:
                 logger.warning("Failed to release Redis lock %s", key)
+                _drop_client()
