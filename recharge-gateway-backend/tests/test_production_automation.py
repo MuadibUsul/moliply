@@ -499,3 +499,159 @@ def test_readyz_and_admin_metrics_and_cce_diagnose_ip_drift(client, admin_header
     assert verdict["ok"] is True
     assert verdict["reason"] == "ip_drift"
     assert verdict["ip"] == "203.0.113.99"
+
+
+# ---------------------------------------------------------------------------
+# CCE delivery bridge: HTTP transport
+# ---------------------------------------------------------------------------
+
+
+class _ctx:
+    """Minimal stand-in for the redis_lock context manager."""
+
+    def __init__(self, acquired):
+        self.acquired = acquired
+
+    def __enter__(self):
+        return self.acquired
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def _cce_env(monkeypatch, base="http://cce.test:8010", token="tok"):
+    monkeypatch.setenv("CCE_API_BASE", base)
+    monkeypatch.setenv("CCE_ADMIN_TOKEN", token)
+
+
+def _profile(**overrides):
+    row = {
+        "profile_id": "p-1",
+        "status": "IDLE",
+        "has_credentials": True,
+        "active_key": False,
+        "created_at": "2026-11-01T00:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_http_bridge_counts_only_deliverable_profiles(monkeypatch):
+    from app.services.fulfillment import cce_delivery
+
+    _cce_env(monkeypatch)
+    profiles = [
+        _profile(profile_id="ok"),
+        _profile(profile_id="busy", status="BUSY"),
+        _profile(profile_id="nokey", has_credentials=False),
+        _profile(profile_id="taken", active_key=True),
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"profiles": profiles}
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, path):
+            assert path == "/admin/profiles"
+            return FakeResponse()
+
+    monkeypatch.setattr(cce_delivery, "_http_client", lambda: FakeClient())
+    assert cce_delivery.available_cce_profiles() == 1
+
+
+def test_http_bridge_mints_for_the_oldest_deliverable_profile(monkeypatch):
+    from app.services.fulfillment import cce_delivery
+
+    _cce_env(monkeypatch)
+    profiles = [
+        _profile(profile_id="newer", created_at="2026-11-10T00:00:00+00:00"),
+        _profile(profile_id="older", created_at="2026-11-01T00:00:00+00:00"),
+        _profile(profile_id="busy", status="BUSY"),
+    ]
+    minted_body = {}
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, _path):
+            return FakeResponse({"profiles": profiles})
+
+        def post(self, path, json):
+            assert path == "/admin/keys"
+            minted_body.update(json)
+            return FakeResponse(
+                {"card_key": "cce_abc", "tunnel_secret": "sec", "expires_at": "2026-12-21T00:00:00+00:00"}
+            )
+
+    monkeypatch.setattr(cce_delivery, "_http_client", lambda: FakeClient())
+    monkeypatch.setattr(cce_delivery, "redis_lock", lambda *a, **k: _ctx(True), raising=False)
+
+    result = cce_delivery.claim_and_mint_key(valid_days=30)
+    assert minted_body["profile_id"] == "older"
+    assert result["profile_id"] == "older"
+    assert result["card_key"] == "cce_abc"
+    assert "TUNNEL_SECRET=sec" in result["payload"]
+
+
+def test_http_bridge_returns_none_when_pool_is_empty(monkeypatch):
+    from app.services.fulfillment import cce_delivery
+
+    _cce_env(monkeypatch)
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"profiles": [_profile(status="BUSY")]}
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, _path):
+            return FakeResponse()
+
+    monkeypatch.setattr(cce_delivery, "_http_client", lambda: FakeClient())
+    monkeypatch.setattr(cce_delivery, "redis_lock", lambda *a, **k: _ctx(True), raising=False)
+    assert cce_delivery.claim_and_mint_key() is None
+
+
+def test_bridge_falls_back_to_sqlite_without_http_env(monkeypatch):
+    from app.services.fulfillment import cce_delivery
+
+    monkeypatch.delenv("CCE_API_BASE", raising=False)
+    monkeypatch.delenv("CCE_ADMIN_TOKEN", raising=False)
+    monkeypatch.setenv("CCE_DB_PATH", "/nonexistent/cce.sqlite3")
+    assert cce_delivery.available_cce_profiles() == 0
+    assert cce_delivery.claim_and_mint_key() is None

@@ -9,6 +9,18 @@ customer-facing handover payload for ``OrderDelivery``.
 If CCE is not installed or no ready profile is available, ``claim_and_mint_key``
 returns ``None`` so the order cleanly enters ``stock_pending`` and will be
 auto-fulfilled by the backorder sweeper as soon as CCE finishes provisioning.
+
+Two transports reach CCE, tried in this order:
+
+* **HTTP** (``CCE_API_BASE`` + ``CCE_ADMIN_TOKEN``) — the console's own admin
+  API. Preferred: it runs the same code path an operator does, so the gateway
+  snapshot is refreshed by CCE itself and no file permissions are shared.
+* **direct SQLite** (``CCE_DB_PATH``) — kept for a co-located CCE whose database
+  this process can already open. Requires writing the gateway snapshot here.
+
+Claiming over HTTP is not atomic the way a single ``BEGIN IMMEDIATE`` is, so a
+``CCE_API_BASE`` deployment relies on the profile's own delivery-key check plus
+a short Redis lock to keep two workers off the same account.
 """
 
 from __future__ import annotations
@@ -19,10 +31,111 @@ import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# How long an HTTP claim may hold the pick lock; a mint is two quick calls.
+_CLAIM_LOCK_SECONDS = 20
+
+
+def _cce_api_base() -> str:
+    return (os.environ.get("CCE_API_BASE") or "").rstrip("/")
+
+
+def _cce_admin_token() -> str:
+    return os.environ.get("CCE_ADMIN_TOKEN", "")
+
+
+def _http_ready() -> bool:
+    return bool(_cce_api_base() and _cce_admin_token())
+
+
+def _http_client() -> httpx.Client:
+    return httpx.Client(
+        base_url=_cce_api_base(),
+        headers={"x-admin-token": _cce_admin_token()},
+        timeout=15.0,
+    )
+
+
+def _http_deliverable(profile: dict[str, Any]) -> bool:
+    """Same conditions the SQLite query enforces, in Python.
+
+    A profile is sellable when it is resting, holds sealed credentials, and has
+    no live delivery key. ``job_stage`` is ignored deliberately: an operator can
+    finish a stuck account by hand and the delivery is still valid.
+    """
+    return (
+        str(profile.get("status") or "") == "IDLE"
+        and bool(profile.get("has_credentials"))
+        and not profile.get("active_key")
+    )
+
+
+def _http_available() -> int:
+    try:
+        with _http_client() as client:
+            response = client.get("/admin/profiles")
+        response.raise_for_status()
+        profiles = response.json().get("profiles") or []
+        return sum(1 for profile in profiles if _http_deliverable(profile))
+    except Exception:  # noqa: BLE001 - a bridge probe must never raise
+        logger.warning("CCE HTTP probe failed", exc_info=False)
+        return 0
+
+
+def _http_claim(plan_tier: str, valid_days: int) -> dict | None:
+    """Pick a deliverable profile and mint its key through the console API."""
+    from app.services.locks import redis_lock
+
+    with redis_lock("lock:cce:claim", ttl_seconds=_CLAIM_LOCK_SECONDS) as acquired:
+        if not acquired:
+            return None
+        try:
+            with _http_client() as client:
+                listed = client.get("/admin/profiles")
+                listed.raise_for_status()
+                candidates = [p for p in (listed.json().get("profiles") or []) if _http_deliverable(p)]
+                if not candidates:
+                    return None
+                # Oldest account first, matching the SQLite ordering.
+                candidates.sort(key=lambda p: str(p.get("created_at") or ""))
+                profile_id = str(candidates[0]["profile_id"])
+
+                minted = client.post(
+                    "/admin/keys",
+                    json={"profile_id": profile_id, "plan_tier": plan_tier, "valid_days": valid_days},
+                )
+                minted.raise_for_status()
+                record = minted.json()
+        except Exception:  # noqa: BLE001
+            logger.exception("CCE HTTP claim failed")
+            return None
+
+    card_key = str(record["card_key"])
+    tunnel_secret = str(record["tunnel_secret"])
+    expires_iso = str(record["expires_at"])
+    base = settings.public_store_url.rstrip("/")
+    payload = (
+        f"CCE_KEY={card_key}\n"
+        f"TUNNEL_SECRET={tunnel_secret}\n"
+        f"PROFILE={profile_id}\n"
+        f"EXPIRES_AT={expires_iso}\n"
+        f"HOST={base}/cce\n"
+        f"LAUNCH=claude-box cli --key {card_key} --secret {tunnel_secret} --host {base}/cce"
+    )
+    return {
+        "profile_id": profile_id,
+        "card_key": card_key,
+        "tunnel_secret": tunnel_secret,
+        "expires_at": expires_iso,
+        "payload": payload,
+    }
 
 
 def _cce_db_path() -> Path:
@@ -51,6 +164,8 @@ def _connect() -> sqlite3.Connection | None:
 
 def available_cce_profiles() -> int:
     """Count ready, unassigned CCE profiles eligible for automatic delivery."""
+    if _http_ready():
+        return _http_available()
     conn = _connect()
     if conn is None:
         return 0
@@ -107,7 +222,9 @@ def _export_tunnel_secrets(conn: sqlite3.Connection) -> None:
 
 
 def claim_and_mint_key(*, plan_tier: str = "pro", valid_days: int = 30) -> dict | None:
-    """Atomically claim one ready CCE profile and mint a delivery key for a paid order."""
+    """Claim one ready CCE profile and mint a delivery key for a paid order."""
+    if _http_ready():
+        return _http_claim(plan_tier, valid_days)
     conn = _connect()
     if conn is None:
         return None
