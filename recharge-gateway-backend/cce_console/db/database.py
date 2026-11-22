@@ -307,6 +307,19 @@ class Database:
             "SELECT * FROM delivery_keys WHERE profile_id = ? ORDER BY expires_at", (profile_id,)
         )
 
+    async def active_delivery_keys_by_profile(self, now_iso: str) -> dict[str, dict[str, Any]]:
+        """Return one active, unexpired delivery key per profile (latest expiry wins)."""
+        rows = await self.fetch_all(
+            "SELECT * FROM delivery_keys WHERE is_active = 1 AND expires_at > ? ORDER BY expires_at DESC",
+            (now_iso,),
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            pid = str(row["profile_id"])
+            if pid not in result:
+                result[pid] = row
+        return result
+
     async def revoke_delivery_key(self, card_key: str) -> None:
         await self.execute("UPDATE delivery_keys SET is_active = 0 WHERE card_key = ?", (card_key,))
 

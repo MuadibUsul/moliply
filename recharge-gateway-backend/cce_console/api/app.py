@@ -202,7 +202,11 @@ async def _launcher_key(
     if not hmac.compare_digest(str(row["tunnel_secret"]), x_tunnel_secret or ""):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tunnel secret mismatch")
     path = request.url.path.rstrip("/")
-    pre_session = path.endswith("/launcher/session") or "/launcher/client/" in path
+    pre_session = (
+        path.endswith("/launcher/session")
+        or path.endswith("/launcher/bundle")
+        or "/launcher/client/" in path
+    )
     if not pre_session:
         if row["profile_status"] != "BUSY" or not x_session_id or row["active_session_id"] != x_session_id:
             raise HTTPException(status.HTTP_409_CONFLICT, "session is not active")
@@ -503,37 +507,56 @@ def create_app() -> FastAPI:
         )
         await _export_secrets()
 
-        gateway_host = TUNNEL_HOST or "127.0.0.1"
-        manifest = {
-            "key": card_key,
-            "secret": tunnel_secret,
-            "host": request_base(request).rstrip("/"),
-            "gateway": f"{gateway_host}:{TUNNEL_PORT}",
-            "ca": "gateway-ca.pem",
-        }
-
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("cce.json", json.dumps(manifest, indent=2))
-            archive.writestr("gateway-ca.pem", ca.read_bytes())
-            archive.write(binary, binary_name)
-            readme = (
-                "双击 claude-box-windows-x64.exe 就能用，不用输任何命令。\r\n"
-                "\r\n"
-                f"有效期到 {expires[:10]}，过期请联系卖家续期。\r\n"
-                "\r\n"
-                "如果提示找不到 claude：\r\n"
-                "  1. 先装 Claude Code 官方客户端；或\r\n"
-                "  2. 把 claude.exe 复制到本文件夹，再双击一次。\r\n"
-                "\r\n"
-                "跑完窗口会停住，按回车关闭。\r\n"
-            )
-            archive.writestr("请先看我.txt", readme.encode("utf-8"))
-
+        bundle_bytes = _pack_bundle_zip(
+            card_key=card_key,
+            tunnel_secret=tunnel_secret,
+            host=request_base(request).rstrip("/"),
+            expires=expires,
+            os_name=os_name,
+            binary_name=binary_name,
+            binary_bytes=binary.read_bytes(),
+            ca_bytes=ca.read_bytes(),
+        )
         return Response(
-            content=out.getvalue(),
+            content=bundle_bytes,
             media_type="application/zip",
             headers={"content-disposition": f'attachment; filename="{profile_id}.zip"'},
+        )
+
+    @app.get("/launcher/bundle")
+    async def launcher_download_bundle(
+        request: Request,
+        row: Annotated[dict[str, Any], Depends(_launcher_key)],
+        os_name: str = "windows",
+    ) -> Response:
+        """Customer-authenticated one-click bundle download reusing the existing key."""
+        binary_name = {
+            "windows": "claude-box-windows-x64.exe",
+            "linux": "claude-box",
+            "darwin-arm64": "claude-box-darwin-arm64",
+            "darwin-x64": "claude-box-darwin-x64",
+        }.get(os_name, "claude-box-windows-x64.exe")
+        binary = _client_files().get(binary_name)
+        if binary is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"no {os_name} client published yet")
+        ca = _client_files().get("tls.crt")
+        if ca is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "gateway CA not published yet")
+
+        bundle_bytes = _pack_bundle_zip(
+            card_key=str(row["card_key"]),
+            tunnel_secret=str(row["tunnel_secret"]),
+            host=request_base(request).rstrip("/"),
+            expires=str(row["expires_at"]),
+            os_name=os_name,
+            binary_name=binary_name,
+            binary_bytes=binary.read_bytes(),
+            ca_bytes=ca.read_bytes(),
+        )
+        return Response(
+            content=bundle_bytes,
+            media_type="application/zip",
+            headers={"content-disposition": f'attachment; filename="{row["profile_id"]}-{os_name}.zip"'},
         )
 
     @app.get("/admin/client/{name}", dependencies=[admin])
@@ -580,10 +603,14 @@ def create_app() -> FastAPI:
         # The account pipeline annotates each row so one list is enough: the
         # console must not show the same account twice under two statuses.
         jobs = {job["profile_id"]: job for job in await pipeline.list_jobs(state.db)}
+        active_keys = await state.db.active_delivery_keys_by_profile(_now_iso())
         items = []
         for row in rows:
             item = _public_profile(row)
             job = jobs.get(row["profile_id"])
+            active = active_keys.get(row["profile_id"])
+            item["active_key"] = active["card_key"] if active else None
+            item["active_key_expires_at"] = active["expires_at"] if active else None
             item["job_stage"] = job["stage"] if job else None
             item["email"] = job["email"] if job else ""
             item["human_note"] = job["human_note"] if job else ""
@@ -911,7 +938,7 @@ def create_app() -> FastAPI:
             "geo": _json_or_none(row.get("geo_json")),
             "tunnel": {"host": TUNNEL_HOST, "port": TUNNEL_PORT},
             "expires_at": row["expires_at"],
-            "has_credentials": row.get("claude_credentials_enc") is not None,
+            "has_credentials": _has_real_credentials(row.get("claude_credentials_enc")),
         }
 
     @app.get("/launcher/credentials")
@@ -1001,13 +1028,71 @@ def _client_files() -> dict[str, Path]:
     return {p.name: p for p in sorted(CLIENT_DIR.iterdir()) if p.is_file()}
 
 
+def _has_real_credentials(blob: Any) -> bool:
+    """Ignore empty or 1-byte placeholder blobs when deciding whether credentials exist."""
+    if blob is None:
+        return False
+    if isinstance(blob, (bytes, bytearray, memoryview)):
+        return len(blob) > 1
+    if isinstance(blob, str):
+        return len(blob.encode("utf-8")) > 1
+    return False
+
+
+def _pack_bundle_zip(
+    *,
+    card_key: str,
+    tunnel_secret: str,
+    host: str,
+    expires: str,
+    os_name: str,
+    binary_name: str,
+    binary_bytes: bytes,
+    ca_bytes: bytes,
+) -> bytes:
+    gateway_host = TUNNEL_HOST or "127.0.0.1"
+    manifest = {
+        "key": card_key,
+        "secret": tunnel_secret,
+        "host": host,
+        "gateway": f"{gateway_host}:{TUNNEL_PORT}",
+        "ca": "gateway-ca.pem",
+    }
+    if os_name == "windows":
+        launch_hint = f"双击 {binary_name} 就能用，不用输任何命令。\r\n"
+    else:
+        launch_hint = f"在终端进入本文件夹并执行：chmod +x ./{binary_name} && ./{binary_name}\n"
+    readme = (
+        f"{launch_hint}"
+        "\r\n"
+        f"有效期到 {expires[:10]}，过期请联系卖家续期。\r\n"
+        "\r\n"
+        "如果提示找不到 claude：\r\n"
+        "  1. 先装 Claude Code 官方客户端；或\r\n"
+        "  2. 把 claude 可执行文件复制到本文件夹，再运行一次。\r\n"
+        "\r\n"
+        "跑完窗口会停住，按回车关闭。\r\n"
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("cce.json", json.dumps(manifest, indent=2))
+        archive.writestr("gateway-ca.pem", ca_bytes)
+        info = zipfile.ZipInfo(binary_name)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        if os_name != "windows":
+            info.external_attr = 0o100755 << 16
+        archive.writestr(info, binary_bytes)
+        archive.writestr("请先看我.txt", readme.encode("utf-8"))
+    return out.getvalue()
+
+
 def _public_profile(row: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in row.items()
         if key not in {"claude_credentials_enc", "fingerprint_json", "upstream_proxy_url"}
     } | {
-        "has_credentials": row.get("claude_credentials_enc") is not None,
+        "has_credentials": _has_real_credentials(row.get("claude_credentials_enc")),
         "local_proxy_port": row.get("local_proxy_port"),
         "expected_ip": row.get("expected_ip"),
     }

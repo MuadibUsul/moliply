@@ -655,3 +655,339 @@ def test_bridge_falls_back_to_sqlite_without_http_env(monkeypatch):
     monkeypatch.setenv("CCE_DB_PATH", "/nonexistent/cce.sqlite3")
     assert cce_delivery.available_cce_profiles() == 0
     assert cce_delivery.claim_and_mint_key() is None
+
+
+def test_http_bridge_prevents_double_sell_when_active_key_omitted(monkeypatch):
+    """Older CCE /admin/profiles omits active_key; bridge must verify /admin/keys/{id} and fail closed."""
+    from app.services.fulfillment import cce_delivery
+
+    _cce_env(monkeypatch)
+    # Deliberately omit "active_key" from all profile rows (matches unpatched CCE)
+    profiles = [
+        {
+            "profile_id": "already-sold",
+            "status": "IDLE",
+            "has_credentials": True,
+            "created_at": "2026-10-01T00:00:00+00:00",
+        },
+        {
+            "profile_id": "keys-error",
+            "status": "IDLE",
+            "has_credentials": True,
+            "created_at": "2026-10-02T00:00:00+00:00",
+        },
+        {
+            "profile_id": "reusable-expired",
+            "status": "IDLE",
+            "has_credentials": True,
+            "created_at": "2026-10-03T00:00:00+00:00",
+        },
+    ]
+    minted_ids: list[str] = []
+
+    class FakeResp:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"http {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, path):
+            if path == "/admin/profiles":
+                return FakeResp({"profiles": profiles})
+            if path == "/admin/keys/already-sold":
+                return FakeResp(
+                    {"keys": [{"card_key": "cce_live", "is_active": 1, "expires_at": "2099-01-01T00:00:00+00:00"}]}
+                )
+            if path == "/admin/keys/keys-error":
+                return FakeResp({}, status_code=500)
+            if path == "/admin/keys/reusable-expired":
+                return FakeResp(
+                    {
+                        "keys": [
+                            {"card_key": "cce_old", "is_active": 1, "expires_at": "2020-01-01T00:00:00+00:00"},
+                            {"card_key": "cce_revoked", "is_active": 0, "expires_at": "2099-01-01T00:00:00+00:00"},
+                        ]
+                    }
+                )
+            raise AssertionError(f"unexpected GET {path}")
+
+        def post(self, path, json):
+            assert path == "/admin/keys"
+            minted_ids.append(json["profile_id"])
+            return FakeResp(
+                {"card_key": "cce_fresh", "tunnel_secret": "sec_fresh", "expires_at": "2099-02-01T00:00:00+00:00"}
+            )
+
+    monkeypatch.setattr(cce_delivery, "_http_client", lambda: FakeClient())
+    monkeypatch.setattr(cce_delivery, "redis_lock", lambda *a, **k: _ctx(True), raising=False)
+
+    assert cce_delivery.available_cce_profiles() == 1
+    claimed = cce_delivery.claim_and_mint_key(plan_tier="pro", valid_days=30)
+    assert claimed is not None
+    assert claimed["profile_id"] == "reusable-expired"
+    assert minted_ids == ["reusable-expired"]
+
+
+def test_cce_console_admin_profiles_exposes_active_key_and_launcher_bundle_reuses_key(tmp_path, monkeypatch):
+    """CCE /admin/profiles must expose active_key, ignore 1-byte creds, and /launcher/bundle must not re-mint."""
+    import io
+    import json
+    import zipfile
+
+    from fastapi.testclient import TestClient
+
+    from cce_console.api import app as cce_app_mod
+    from cce_console.db.database import Database
+
+    db_path = tmp_path / "cce.sqlite3"
+    client_dir = tmp_path / "clients"
+    client_dir.mkdir()
+    (client_dir / "claude-box-windows-x64.exe").write_bytes(b"MZ-fake-win-bin")
+    (client_dir / "claude-box").write_bytes(b"ELF-fake-linux-bin")
+    (client_dir / "tls.crt").write_bytes(b"-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n")
+
+    monkeypatch.setenv("CCE_ADMIN_TOKEN", "cce-test-admin-token")
+    monkeypatch.setenv("CCE_TUNNEL_SECRETS", str(tmp_path / "cce.secrets"))
+    monkeypatch.setattr(cce_app_mod, "CLIENT_DIR", client_dir)
+    monkeypatch.setattr(cce_app_mod, "TUNNEL_HOST", "moliply.shop")
+    monkeypatch.setattr(cce_app_mod, "TUNNEL_PORT", 8444)
+
+    async def _seed():
+        db = Database(db_path)
+        await db.connect()
+        try:
+            await db.insert_profile(
+                {
+                    "profile_id": "probe-empty",
+                    "batch_id": None,
+                    "local_proxy_port": 10001,
+                    "upstream_proxy_url": "socks5://127.0.0.1:9001",
+                    "expected_ip": "1.1.1.1",
+                    "os_type": "windows",
+                    "noise_seed": 1,
+                    "fingerprint_json": "{}",
+                }
+            )
+            await db.save_credentials("probe-empty", b"\x00")
+            await db.insert_profile(
+                {
+                    "profile_id": "real-account",
+                    "batch_id": None,
+                    "local_proxy_port": 10002,
+                    "upstream_proxy_url": "socks5://127.0.0.1:9002",
+                    "expected_ip": "1.1.1.2",
+                    "os_type": "windows",
+                    "noise_seed": 2,
+                    "fingerprint_json": "{}",
+                }
+            )
+            await db.save_credentials("real-account", b"real-encrypted-credentials-blob")
+        finally:
+            await db.close()
+
+    asyncio.run(_seed())
+    monkeypatch.setenv("CCE_DB_PATH", str(db_path))
+    monkeypatch.setattr(cce_app_mod, "DB_PATH", db_path)
+
+    test_app = cce_app_mod.create_app()
+    headers = {"x-admin-token": "cce-test-admin-token"}
+    with TestClient(test_app) as cce_client:
+        res = cce_client.get("/admin/profiles", headers=headers)
+        assert res.status_code == 200
+        by_id = {p["profile_id"]: p for p in res.json()["profiles"]}
+        assert by_id["probe-empty"]["has_credentials"] is False
+        assert by_id["real-account"]["has_credentials"] is True
+        assert by_id["real-account"]["active_key"] is None
+
+        minted = cce_client.post(
+            "/admin/keys",
+            headers=headers,
+            json={"profile_id": "real-account", "plan_tier": "pro", "valid_days": 30},
+        )
+        assert minted.status_code == 201
+        key_data = minted.json()
+
+        res2 = cce_client.get("/admin/profiles", headers=headers)
+        by_id2 = {p["profile_id"]: p for p in res2.json()["profiles"]}
+        assert by_id2["real-account"]["active_key"] == key_data["card_key"]
+
+        # Customer bundle download reuses the exact same key and does NOT mint another key
+        bundle = cce_client.get(
+            "/launcher/bundle?os_name=linux",
+            headers={
+                "authorization": f"Bearer {key_data['card_key']}",
+                "x-tunnel-secret": key_data["tunnel_secret"],
+            },
+        )
+        assert bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as zf:
+            names = set(zf.namelist())
+            assert {"cce.json", "gateway-ca.pem", "claude-box", "请先看我.txt"}.issubset(names)
+            manifest = json.loads(zf.read("cce.json").decode("utf-8"))
+            assert manifest["key"] == key_data["card_key"]
+            assert manifest["secret"] == key_data["tunnel_secret"]
+            assert (zf.getinfo("claude-box").external_attr >> 16) & 0o111 == 0o111
+
+        keys_after = cce_client.get("/admin/keys/real-account", headers=headers).json()["keys"]
+        assert len(keys_after) == 1
+
+
+def test_store_customer_cce_bundle_download_over_http(client, db, monkeypatch):
+    """Storefront bundle endpoint authenticates owner, fetches assets over HTTP without host mounts, and zips cleanly."""
+    import io
+    import json
+    import zipfile
+
+    from app.models import DeliveryType, OrderDelivery, OrderItem, OrderStatus, Product
+    from app.security import create_user_token
+    from app.services import accounts
+    from app.services.crypto import encrypt_text
+    from app.services.fulfillment import cce_delivery
+
+    owner, _ = accounts.get_or_create_user(db, "bundle-owner@example.com", "Pass123456!")
+    other, _ = accounts.get_or_create_user(db, "bundle-other@example.com", "Pass123456!")
+    product = db.query(Product).first()
+
+    order = Order(
+        order_no=f"MOLBUNDLE{uuid4().hex[:6].upper()}",
+        user_id=owner.id,
+        email=owner.email,
+        status=OrderStatus.DELIVERED,
+        amount=Decimal("99.00"),
+    )
+    db.add(order)
+    db.flush()
+    item = OrderItem(
+        order_id=order.id,
+        product_id=product.id,
+        product_name="Claude Pro 成品号",
+        spec_label="30天独享",
+        delivery_type=DeliveryType.ACCOUNT_CREDENTIALS,
+        quantity=1,
+        unit_price=Decimal("99.00"),
+    )
+    db.add(item)
+    db.flush()
+    payload_text = (
+        "CCE_KEY=cce_customer_key_1\n"
+        "TUNNEL_SECRET=secret_xyz_123\n"
+        "PROFILE=claude-pro-01\n"
+        "EXPIRES_AT=2026-12-31T00:00:00+00:00\n"
+        "HOST=https://moliply.shop/cce\n"
+    )
+    cce_deliv = OrderDelivery(
+        order_item_id=item.id,
+        kind="CCE_DELIVERY_KEY",
+        payload_enc=encrypt_text(payload_text),
+    )
+    other_deliv = OrderDelivery(
+        order_item_id=item.id,
+        kind="ACTIVATION_CODE",
+        payload_enc=encrypt_text("MOLI-XXXX-YYYY"),
+    )
+    db.add_all([cce_deliv, other_deliv])
+    db.commit()
+
+    monkeypatch.setenv("CCE_API_BASE", "http://host.docker.internal:8010")
+    monkeypatch.setenv("CCE_ADMIN_TOKEN", "admin-tok")
+    monkeypatch.setenv("CCE_GATEWAY_ADDR", "moliply.shop:8444")
+
+    requested_paths: list[str] = []
+
+    class FakeAssetResp:
+        def __init__(self, status_code: int, content: bytes = b""):
+            self.status_code = status_code
+            self.content = content
+
+    class FakeAssetClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, path, headers=None):
+            requested_paths.append(path)
+            # Simulate /launcher/client/claude-box-windows-x64.exe returning 404 (older CCE) -> falls back to /admin/client/...
+            if path == "/launcher/client/claude-box-windows-x64.exe":
+                return FakeAssetResp(404)
+            if path == "/admin/client/claude-box-windows-x64.exe":
+                assert headers and headers.get("x-admin-token") == "admin-tok"
+                return FakeAssetResp(200, b"WIN-EXE-BYTES")
+            if path == "/launcher/client/tls.crt":
+                assert headers and headers.get("authorization") == "Bearer cce_customer_key_1"
+                assert headers.get("x-tunnel-secret") == "secret_xyz_123"
+                return FakeAssetResp(200, b"CA-CERT-PEM")
+            if path == "/launcher/client/claude-box":
+                return FakeAssetResp(200, b"LINUX-ELF-BYTES")
+            return FakeAssetResp(404)
+
+    monkeypatch.setattr(cce_delivery, "_asset_http_client", lambda: FakeAssetClient())
+
+    owner_token, _ = create_user_token(owner)
+    other_token, _ = create_user_token(other)
+
+    # Non-owner is rejected with 404
+    r_other = client.get(
+        f"/api/v1/store/orders/{order.order_no}/deliveries/{cce_deliv.id}/bundle?os=windows",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert r_other.status_code == 404
+
+    # Non-CCE delivery is rejected with 400
+    r_wrong_kind = client.get(
+        f"/api/v1/store/orders/{order.order_no}/deliveries/{other_deliv.id}/bundle?os=windows",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert r_wrong_kind.status_code == 400
+
+    # Unsupported OS rejected with 400
+    r_bad_os = client.get(
+        f"/api/v1/store/orders/{order.order_no}/deliveries/{cce_deliv.id}/bundle?os=plan9",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert r_bad_os.status_code == 400
+
+    # Owner gets Windows zip cleanly via HTTP fallback
+    r_win = client.get(
+        f"/api/v1/store/orders/{order.order_no}/deliveries/{cce_deliv.id}/bundle?os=windows",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert r_win.status_code == 200
+    assert r_win.headers["content-type"] == "application/zip"
+    assert "moliply-claude-claude-pro-01-windows.zip" in r_win.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(r_win.content)) as zf:
+        assert zf.read("claude-box-windows-x64.exe") == b"WIN-EXE-BYTES"
+        assert zf.read("gateway-ca.pem") == b"CA-CERT-PEM"
+        manifest = json.loads(zf.read("cce.json").decode("utf-8"))
+        assert manifest == {
+            "key": "cce_customer_key_1",
+            "secret": "secret_xyz_123",
+            "host": "https://moliply.shop/cce",
+            "gateway": "moliply.shop:8444",
+            "ca": "gateway-ca.pem",
+        }
+        assert "双击 claude-box-windows-x64.exe" in zf.read("请先看我.txt").decode("utf-8")
+
+    # Linux zip preserves executable permission bits
+    r_linux = client.get(
+        f"/api/v1/store/orders/{order.order_no}/deliveries/{cce_deliv.id}/bundle?os=linux",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert r_linux.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r_linux.content)) as zf:
+        assert zf.read("claude-box") == b"LINUX-ELF-BYTES"
+        assert (zf.getinfo("claude-box").external_attr >> 16) & 0o111 == 0o111

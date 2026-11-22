@@ -84,8 +84,11 @@ services:
       CCE_TUNNEL_SECRETS: /data/cce.secrets
       CCE_API_BASE: ${CCE_API_BASE:-}
       CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      CCE_GATEWAY_ADDR: ${CCE_GATEWAY_ADDR:-}
       MOLIPLY_ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-}
       ARTIFACT_DIR: /artifacts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -135,7 +138,11 @@ services:
       CCE_DB_PATH: /data/cce.sqlite3
       CCE_TUNNEL_SECRETS: /data/cce.secrets
       CCE_API_BASE: ${CCE_API_BASE:-}
+      CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      CCE_GATEWAY_ADDR: ${CCE_GATEWAY_ADDR:-}
       ARTIFACT_DIR: /artifacts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -177,6 +184,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       CCE_DB_PATH: /data/cce.sqlite3
       CCE_TUNNEL_SECRETS: /data/cce.secrets
+      CCE_API_BASE: ${CCE_API_BASE:-}
+      CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      CCE_GATEWAY_ADDR: ${CCE_GATEWAY_ADDR:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
+import { CceBundleDownload } from "@/components/CceBundleDownload";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError, api } from "@/lib/api";
@@ -343,9 +344,12 @@ function PayContent() {
                             <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-6 text-slate-300">
                               {delivery.payload}
                             </pre>
+                            {delivery.kind === "CCE_DELIVERY_KEY" && (
+                              <CceBundleDownload orderNo={order.order_no} deliveryId={delivery.id} />
+                            )}
                             <p className="mt-2 text-[10px] leading-5 text-slate-600">
                               {delivery.kind === "CCE_DELIVERY_KEY"
-                                ? "请妥善保存专属交付密钥，按照上方启动命令连接即可使用。"
+                                ? "推荐直接下载上方一键整合包解压运行；也可使用命令行参数手动连接。"
                                 : "请妥善保存账号凭证，质保期内请勿擅自修改密码或安全绑定信息，以免影响质保服务。"}
                             </p>
                           </div>

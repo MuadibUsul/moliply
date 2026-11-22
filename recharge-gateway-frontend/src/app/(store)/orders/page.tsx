@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { BrandTile } from "@/components/BrandTile";
+import { CceBundleDownload } from "@/components/CceBundleDownload";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
@@ -375,6 +376,9 @@ function OrdersContent() {
                                 <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-6 text-slate-300">
                                   {delivery.payload}
                                 </pre>
+                                {delivery.kind === "CCE_DELIVERY_KEY" && (
+                                  <CceBundleDownload orderNo={selected.order_no} deliveryId={delivery.id} />
+                                )}
                               </div>
                             ),
                           )}

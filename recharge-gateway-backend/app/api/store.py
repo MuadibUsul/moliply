@@ -1,7 +1,7 @@
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,8 @@ from app.models import (
     CATEGORY_LABELS,
     DELIVERY_LABELS,
     Order,
+    OrderDelivery,
+    OrderItem,
     OrderStatus,
     Product,
     ProductCategory,
@@ -24,6 +26,8 @@ from app.services import orders as order_service
 from app.services import telemetry
 from app.services.chains import crypto_watcher
 from app.services.catalog import list_categories, money, serialize_product
+from app.services.crypto import decrypt_text
+from app.services.fulfillment import cce_delivery
 from app.services.payments import masked_order_title
 
 logger = logging.getLogger(__name__)
@@ -237,6 +241,45 @@ def mock_settle(
     order_service.settle_mock_order(db, order, channel=channel)
     order = _get_order(db, order_no, user)
     return {"order": order_service.serialize_order(db, order, reveal=True)}
+
+
+@router.get("/orders/{order_no}/deliveries/{delivery_id}/bundle")
+@limiter.limit("20/minute")
+def download_cce_bundle(
+    order_no: str,
+    delivery_id: int,
+    request: Request,
+    os_name: str = Query(default="windows", alias="os"),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Pack a ready-to-run CCE launcher zip for the customer's existing delivery key."""
+    order = _get_order(db, order_no, user)
+    if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
+        raise HTTPException(status_code=409, detail="订单尚未完成支付，无法下载整合包")
+    delivery = (
+        db.query(OrderDelivery)
+        .join(OrderItem, OrderItem.id == OrderDelivery.order_item_id)
+        .filter(OrderItem.order_id == order.id, OrderDelivery.id == delivery_id)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="交付记录不存在")
+    if delivery.kind != "CCE_DELIVERY_KEY":
+        raise HTTPException(status_code=400, detail="该交付项不支持客户端整合包下载")
+    try:
+        payload_text = decrypt_text(delivery.payload_enc)
+        filename, zip_bytes = cce_delivery.build_customer_bundle(payload_text, os_name=os_name)
+    except cce_delivery.CceBundleError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/payment-title-preview")

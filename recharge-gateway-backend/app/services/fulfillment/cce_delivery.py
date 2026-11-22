@@ -25,13 +25,18 @@ a short Redis lock to keep two workers off the same account.
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -41,6 +46,23 @@ logger = logging.getLogger(__name__)
 
 # How long an HTTP claim may hold the pick lock; a mint is two quick calls.
 _CLAIM_LOCK_SECONDS = 20
+
+CCE_OS_BINARIES: dict[str, str] = {
+    "windows": "claude-box-windows-x64.exe",
+    "linux": "claude-box",
+    "darwin-arm64": "claude-box-darwin-arm64",
+    "darwin-x64": "claude-box-darwin-x64",
+}
+
+
+class CceBundleError(RuntimeError):
+    """Structured error raised when assembling a customer one-click CCE bundle."""
+
+    def __init__(self, message: str, *, status_code: int = 409, code: str = "CCE_BUNDLE_ERROR") -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.code = code
 
 
 def _cce_api_base() -> str:
@@ -55,12 +77,55 @@ def _http_ready() -> bool:
     return bool(_cce_api_base() and _cce_admin_token())
 
 
-def _http_client() -> httpx.Client:
+def _http_client(timeout: float = 15.0) -> httpx.Client:
     return httpx.Client(
         base_url=_cce_api_base(),
         headers={"x-admin-token": _cce_admin_token()},
-        timeout=15.0,
+        timeout=timeout,
     )
+
+
+def _http_base_ready(profile: dict[str, Any]) -> bool:
+    return (
+        str(profile.get("status") or "") == "IDLE"
+        and bool(profile.get("has_credentials"))
+    )
+
+
+def _keys_have_active(keys: list[dict[str, Any]], now_iso: str) -> bool:
+    for record in keys:
+        if not isinstance(record, dict):
+            continue
+        if int(record.get("is_active", 1) or 0) != 1:
+            continue
+        if str(record.get("expires_at") or "") > now_iso:
+            return True
+    return False
+
+
+def _http_profile_has_active_key(client: httpx.Client, profile: dict[str, Any], now_iso: str) -> bool:
+    """Return True if the profile already has an active unexpired delivery key.
+
+    Newer CCE builds include ``active_key`` directly on ``/admin/profiles`` rows.
+    Older CCE builds omit the field; in that case we verify via
+    ``GET /admin/keys/{profile_id}`` and fail closed on any error so an account
+    can never be double-sold.
+    """
+    if "active_key" in profile:
+        return bool(profile.get("active_key"))
+    profile_id = str(profile.get("profile_id") or "").strip()
+    if not profile_id:
+        return True
+    try:
+        response = client.get(f"/admin/keys/{profile_id}")
+        response.raise_for_status()
+        keys = response.json().get("keys")
+        if not isinstance(keys, list):
+            return True
+        return _keys_have_active(keys, now_iso)
+    except Exception:  # noqa: BLE001 - fail closed to prevent double-selling
+        logger.warning("CCE HTTP active-key check failed for %s; failing closed", profile_id, exc_info=False)
+        return True
 
 
 def _http_deliverable(profile: dict[str, Any]) -> bool:
@@ -70,20 +135,21 @@ def _http_deliverable(profile: dict[str, Any]) -> bool:
     no live delivery key. ``job_stage`` is ignored deliberately: an operator can
     finish a stuck account by hand and the delivery is still valid.
     """
-    return (
-        str(profile.get("status") or "") == "IDLE"
-        and bool(profile.get("has_credentials"))
-        and not profile.get("active_key")
-    )
+    return _http_base_ready(profile) and not profile.get("active_key")
 
 
 def _http_available() -> int:
     try:
+        now_iso = _now_iso()
         with _http_client() as client:
             response = client.get("/admin/profiles")
-        response.raise_for_status()
-        profiles = response.json().get("profiles") or []
-        return sum(1 for profile in profiles if _http_deliverable(profile))
+            response.raise_for_status()
+            profiles = response.json().get("profiles") or []
+            count = 0
+            for profile in profiles:
+                if _http_base_ready(profile) and not _http_profile_has_active_key(client, profile, now_iso):
+                    count += 1
+            return count
     except Exception:  # noqa: BLE001 - a bridge probe must never raise
         logger.warning("CCE HTTP probe failed", exc_info=False)
         return 0
@@ -97,15 +163,21 @@ def _http_claim(plan_tier: str, valid_days: int) -> dict | None:
         if not acquired:
             return None
         try:
+            now_iso = _now_iso()
             with _http_client() as client:
                 listed = client.get("/admin/profiles")
                 listed.raise_for_status()
-                candidates = [p for p in (listed.json().get("profiles") or []) if _http_deliverable(p)]
-                if not candidates:
-                    return None
+                ready = [p for p in (listed.json().get("profiles") or []) if _http_base_ready(p)]
                 # Oldest account first, matching the SQLite ordering.
-                candidates.sort(key=lambda p: str(p.get("created_at") or ""))
-                profile_id = str(candidates[0]["profile_id"])
+                ready.sort(key=lambda p: str(p.get("created_at") or ""))
+                chosen: dict[str, Any] | None = None
+                for candidate in ready:
+                    if not _http_profile_has_active_key(client, candidate, now_iso):
+                        chosen = candidate
+                        break
+                if chosen is None:
+                    return None
+                profile_id = str(chosen["profile_id"])
 
                 minted = client.post(
                     "/admin/keys",
@@ -177,7 +249,7 @@ def available_cce_profiles() -> int:
             FROM profiles p
             WHERE p.status = 'IDLE'
               AND p.claude_credentials_enc IS NOT NULL
-              AND length(p.claude_credentials_enc) > 0
+              AND length(p.claude_credentials_enc) > 1
               AND NOT EXISTS (
                   SELECT 1 FROM delivery_keys k
                   WHERE k.profile_id = p.profile_id
@@ -239,7 +311,7 @@ def claim_and_mint_key(*, plan_tier: str = "pro", valid_days: int = 30) -> dict 
             FROM profiles p
             WHERE p.status = 'IDLE'
               AND p.claude_credentials_enc IS NOT NULL
-              AND length(p.claude_credentials_enc) > 0
+              AND length(p.claude_credentials_enc) > 1
               AND NOT EXISTS (
                   SELECT 1 FROM delivery_keys k
                   WHERE k.profile_id = p.profile_id
@@ -291,3 +363,188 @@ def claim_and_mint_key(*, plan_tier: str = "pro", valid_days: int = 30) -> dict 
         return None
     finally:
         conn.close()
+
+
+def parse_delivery_payload(payload_text: str) -> dict[str, str]:
+    """Parse KEY=VALUE lines from an OrderDelivery payload of kind CCE_DELIVERY_KEY."""
+    parsed: dict[str, str] = {}
+    for raw_line in (payload_text or "").splitlines():
+        line = raw_line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if key:
+            parsed[key] = value.strip()
+    return parsed
+
+
+def _cce_client_dir() -> Path:
+    return Path(os.environ.get("CCE_CLIENT_DIR") or "data/clients")
+
+
+def _asset_http_client() -> httpx.Client:
+    return httpx.Client(base_url=_cce_api_base(), timeout=60.0)
+
+
+def _fetch_client_asset(name: str, *, card_key: str, tunnel_secret: str) -> bytes:
+    """Fetch a launcher binary or gateway CA without mounting host directories.
+
+    When ``CCE_API_BASE`` is configured, downloads over HTTP from the host CCE
+    daemon: tries customer-authenticated ``/launcher/client/{name}`` first and
+    falls back to admin-authenticated ``/admin/client/{name}`` when the daemon
+    only exposes the admin endpoint. When HTTP is not configured, falls back to
+    ``CCE_CLIENT_DIR`` for local/co-located deployments.
+    """
+    safe_name = Path(name).name
+    if _cce_api_base():
+        try:
+            with _asset_http_client() as client:
+                resp = client.get(
+                    f"/launcher/client/{safe_name}",
+                    headers={
+                        "authorization": f"Bearer {card_key}",
+                        "x-tunnel-secret": tunnel_secret,
+                    },
+                )
+                if resp.status_code == 200:
+                    return resp.content
+                if resp.status_code in {401, 403}:
+                    raise CceBundleError(
+                        "该交付密钥已过期或已撤销，无法生成客户端整合包",
+                        status_code=403,
+                        code="KEY_REVOKED_OR_EXPIRED",
+                    )
+                if resp.status_code == 404 and _cce_admin_token():
+                    admin_resp = client.get(
+                        f"/admin/client/{safe_name}",
+                        headers={"x-admin-token": _cce_admin_token()},
+                    )
+                    if admin_resp.status_code == 200:
+                        return admin_resp.content
+                    if admin_resp.status_code == 404:
+                        raise CceBundleError(
+                            f"服务端尚未发布客户端文件 {safe_name}，请联系客服或管理员上传",
+                            status_code=409,
+                            code="CLIENT_ASSET_MISSING",
+                        )
+                    raise CceBundleError(
+                        f"获取客户端文件失败（CCE 返回 {admin_resp.status_code}）",
+                        status_code=502,
+                        code="CCE_ASSET_UPSTREAM_ERROR",
+                    )
+                if resp.status_code == 404:
+                    raise CceBundleError(
+                        f"服务端尚未发布客户端文件 {safe_name}，请联系客服或管理员上传",
+                        status_code=409,
+                        code="CLIENT_ASSET_MISSING",
+                    )
+                raise CceBundleError(
+                    f"获取客户端文件失败（CCE 返回 {resp.status_code}）",
+                    status_code=502,
+                    code="CCE_ASSET_UPSTREAM_ERROR",
+                )
+        except CceBundleError:
+            raise
+        except httpx.HTTPError as exc:
+            logger.warning("CCE HTTP asset fetch failed for %s: %s", safe_name, exc)
+            raise CceBundleError(
+                "连接 CCE 托管台超时或失败，请稍后重试",
+                status_code=502,
+                code="CCE_UNREACHABLE",
+            ) from exc
+
+    local_path = _cce_client_dir() / safe_name
+    if not local_path.is_file():
+        raise CceBundleError(
+            f"服务端尚未发布客户端文件 {safe_name}，请联系客服或管理员上传",
+            status_code=409,
+            code="CLIENT_ASSET_MISSING",
+        )
+    return local_path.read_bytes()
+
+
+def _resolve_gateway_addr(parsed: dict[str, str], host_url: str) -> str:
+    configured = (os.environ.get("CCE_GATEWAY_ADDR") or "").strip()
+    if configured:
+        return configured
+    if parsed.get("GATEWAY"):
+        return parsed["GATEWAY"]
+    hostname = urlparse(host_url).hostname or "127.0.0.1"
+    port = (os.environ.get("CCE_TUNNEL_PORT") or "8444").strip() or "8444"
+    return f"{hostname}:{port}"
+
+
+def build_customer_bundle(payload_text: str, *, os_name: str = "windows") -> tuple[str, bytes]:
+    """Assemble a ready-to-run customer zip bundle reusing the delivered key.
+
+    Never mints a new delivery key and never touches host filesystem paths when
+    ``CCE_API_BASE`` is configured.
+    """
+    os_key = (os_name or "windows").strip().lower()
+    binary_name = CCE_OS_BINARIES.get(os_key)
+    if not binary_name:
+        raise CceBundleError(
+            f"不支持的系统类型：{os_name}（可选：windows / darwin-arm64 / darwin-x64 / linux）",
+            status_code=400,
+            code="UNSUPPORTED_OS",
+        )
+
+    parsed = parse_delivery_payload(payload_text)
+    card_key = parsed.get("CCE_KEY", "")
+    tunnel_secret = parsed.get("TUNNEL_SECRET", "")
+    if not card_key or not tunnel_secret:
+        raise CceBundleError("交付凭证不完整，缺少密钥或隧道口令", status_code=422, code="INVALID_PAYLOAD")
+
+    profile_id = parsed.get("PROFILE") or "claude"
+    expires_at = parsed.get("EXPIRES_AT") or ""
+    default_host = f"{settings.public_store_url.rstrip('/')}/cce"
+    host_url = (parsed.get("HOST") or default_host).rstrip("/")
+    gateway = _resolve_gateway_addr(parsed, host_url)
+
+    binary_bytes = _fetch_client_asset(binary_name, card_key=card_key, tunnel_secret=tunnel_secret)
+    ca_bytes = _fetch_client_asset("tls.crt", card_key=card_key, tunnel_secret=tunnel_secret)
+
+    manifest = {
+        "key": card_key,
+        "secret": tunnel_secret,
+        "host": host_url,
+        "gateway": gateway,
+        "ca": "gateway-ca.pem",
+    }
+    if os_key == "windows":
+        launch_hint = f"双击 {binary_name} 就能用，不用输任何命令。\r\n"
+    else:
+        launch_hint = f"在终端进入本文件夹并执行：chmod +x ./{binary_name} && ./{binary_name}\n"
+
+    expiry_line = (
+        f"有效期到 {expires_at[:10]}，过期请联系卖家续期。\r\n"
+        if expires_at
+        else "请妥善保管本文件夹，切勿泄露给他人。\r\n"
+    )
+    readme = (
+        f"{launch_hint}"
+        "\r\n"
+        f"{expiry_line}"
+        "\r\n"
+        "如果提示找不到 claude：\r\n"
+        "  1. 先装 Claude Code 官方客户端；或\r\n"
+        "  2. 把 claude 可执行文件复制到本文件夹，再运行一次。\r\n"
+        "\r\n"
+        "跑完窗口会停住，按回车关闭。\r\n"
+    )
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("cce.json", json.dumps(manifest, indent=2))
+        archive.writestr("gateway-ca.pem", ca_bytes)
+        info = zipfile.ZipInfo(binary_name)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        if os_key != "windows":
+            info.external_attr = 0o100755 << 16
+        archive.writestr(info, binary_bytes)
+        archive.writestr("请先看我.txt", readme.encode("utf-8"))
+
+    safe_profile = re.sub(r"[^A-Za-z0-9._-]", "-", profile_id).strip("-") or "claude"
+    filename = f"moliply-claude-{safe_profile}-{os_key}.zip"
+    return filename, out.getvalue()
