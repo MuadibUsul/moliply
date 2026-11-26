@@ -61,6 +61,9 @@ REDEEMABLE_SKUS = {
     SkuType.CHATGPT_PLUS_3M,
     SkuType.CHATGPT_PLUS_12M,
     SkuType.CLAUDE_PRO_1M,
+    SkuType.GEMINI_ADVANCED_1M,
+    SkuType.GEMINI_ADVANCED_3M,
+    SkuType.GEMINI_ADVANCED_12M,
     SkuType.CHATGPT_PRO_200,
     SkuType.CHATGPT_PRO_20X_1M,
     SkuType.GPT_PRO_100,
@@ -74,6 +77,11 @@ REDEEMABLE_SKUS = {
     SkuType.SMS_VERIFY,
 }
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
+GEMINI_SKUS = {
+    SkuType.GEMINI_ADVANCED_1M,
+    SkuType.GEMINI_ADVANCED_3M,
+    SkuType.GEMINI_ADVANCED_12M,
+}
 # SMS reception needs a number, not an account: no Session pre-check at all.
 SMS_SKUS = {SkuType.CODEX_SMS_US, SkuType.SMS_VERIFY}
 # The icebreaker trial card is redeemed to confirm the delivery chain; it has no
@@ -136,7 +144,11 @@ class RedeemError(Exception):
 
 
 def _expected_session_kind(sku_type: SkuType) -> str:
-    return "claude" if sku_type in CLAUDE_SKUS else "chatgpt"
+    if sku_type in CLAUDE_SKUS:
+        return "claude"
+    if sku_type in GEMINI_SKUS:
+        return "gemini"
+    return "chatgpt"
 
 
 def _synthetic_session(code: ActivationCode) -> SessionInfo:
@@ -479,15 +491,15 @@ def _reconstruct_session(task: RechargeTask) -> SessionInfo:
     if task.encrypted_session_raw:
         return parse_session(decrypt_text(task.encrypted_session_raw))
     token = decrypt_text(task.encrypted_access_token or "")
-    if task.session_kind == "claude":
+    if task.session_kind in {"claude", "gemini"}:
         return SessionInfo(
-            kind="claude",
+            kind=task.session_kind,
             email=task.target_email,
             user_id=task.target_user_id,
-            access_token=token,
-            raw=token,
+            access_token=token or task.target_email,
+            raw=token or task.target_email,
             expires_at=utcnow() + timedelta(hours=1),
-            session_token=token,
+            session_token=token or task.target_email,
         )
     reconstructed = json.dumps(
         {

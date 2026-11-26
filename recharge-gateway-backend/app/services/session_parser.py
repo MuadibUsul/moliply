@@ -289,10 +289,38 @@ def parse_session(raw: str) -> SessionInfo:
             plan="unknown",
         )
 
+    # Google Gemini Family Group invite only requires the customer's Gmail/Google email address.
+    email_match = re.match(r"^(?:gemini:)?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})$", text)
+    looks_gemini_json = bool(
+        data
+        and not data.get("accessToken")
+        and not data.get("access_token")
+        and (data.get("kind") == "gemini" or data.get("gmail") or data.get("google_email"))
+    )
+    if email_match or looks_gemini_json:
+        raw_email = (
+            email_match.group(1)
+            if email_match
+            else str(data.get("email") or data.get("gmail") or data.get("google_email") or "").strip()
+        ).lower()
+        if not re.match(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$", raw_email):
+            raise SessionError("INVALID_SESSION_TOKEN", "请输入有效的 Google / Gmail 邮箱地址")
+        digest = hashlib.sha256(raw_email.encode("utf-8")).hexdigest()[:20]
+        return SessionInfo(
+            kind="gemini",
+            email=raw_email,
+            user_id=f"gemini-{digest}",
+            access_token=raw_email,
+            raw=raw_email,
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+            session_token=raw_email,
+            plan="free",
+        )
+
     if data is None:
         raise SessionError(
             "INVALID_SESSION_TOKEN",
-            "请粘贴完整的 Session JSON（以 { 开头），或 Claude Session Key",
+            "请粘贴完整的 Session JSON（以 { 开头）、Claude Session Key 或 Google 邮箱",
         )
 
     access_token = data.get("accessToken") or data.get("access_token")

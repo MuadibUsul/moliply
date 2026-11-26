@@ -37,6 +37,11 @@ from app.services.session_parser import SessionInfo
 logger = logging.getLogger(__name__)
 
 CLAUDE_SKUS = {SkuType.CLAUDE_PRO_1M}
+GEMINI_SKUS = {
+    SkuType.GEMINI_ADVANCED_1M,
+    SkuType.GEMINI_ADVANCED_3M,
+    SkuType.GEMINI_ADVANCED_12M,
+}
 # These redeem without an account, so the pre-check reports success without one.
 NO_SESSION_SKUS = {SkuType.CODEX_SMS_US, SkuType.SMS_VERIFY, SkuType.GENERIC_DIGITAL}
 
@@ -60,7 +65,11 @@ class PrecheckResult:
 
 
 def _expected_kind(sku_type: SkuType) -> str:
-    return "claude" if sku_type in CLAUDE_SKUS else "chatgpt"
+    if sku_type in CLAUDE_SKUS:
+        return "claude"
+    if sku_type in GEMINI_SKUS:
+        return "gemini"
+    return "chatgpt"
 
 
 def _reject(verdict: str, message: str, **kwargs) -> PrecheckResult:
@@ -92,7 +101,7 @@ def precheck_session(code: ActivationCode, session_raw: str) -> PrecheckResult:
     if session.kind != expected:
         return _reject(
             "SESSION_TYPE_MISMATCH",
-            "凭证类型与商品不匹配：ChatGPT 商品请粘贴 Session JSON，Claude 商品请粘贴 Session Key",
+            "凭证类型与商品不匹配：ChatGPT 商品请粘贴 Session JSON，Claude 商品请粘贴 Session Key，Gemini 商品请填写您的 Gmail 邮箱",
             account_email=session.masked_email,
             session=session,
         )

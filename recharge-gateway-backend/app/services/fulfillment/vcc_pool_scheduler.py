@@ -132,8 +132,11 @@ def acquire_card(db: Session, region: str, amount: Decimal | None = None) -> Vcc
         break
 
     if card is None:
-        check_watermark(db, required)
-        return None
+        if runtime.get_bool("vcc_auto_mint_enabled", getattr(settings, "vcc_auto_mint_enabled", True)):
+            card = mint_card_to_pool(db, region=region, spend_limit_usd=required)
+        if card is None:
+            check_watermark(db, required)
+            return None
     card.current_bind_count += 1
     card.reserved_balance = (card.reserved_balance or Decimal("0")) + required
     card.is_locked = True
@@ -141,6 +144,105 @@ def acquire_card(db: Session, region: str, amount: Decimal | None = None) -> Vcc
     db.add(card)
     db.commit()
     db.refresh(card)
+    return card
+
+
+DEFAULT_PH_BILLING = {
+    "line1": "123 Ayala Ave",
+    "city": "Makati",
+    "state": "Metro Manila",
+    "postal_code": "1226",
+    "country": "PH",
+}
+
+
+def mint_card_to_pool(
+    db: Session,
+    *,
+    region: str = "US",
+    spend_limit_usd: Decimal | None = None,
+    zip_code: str = "97204",
+    max_bind_count: int = 1,
+    actor: str = "auto_mint",
+) -> VccCard | None:
+    """Mint a virtual card via the shared A/B Dual-Track VCC Issuer (Track B Lithic / Track A USDT VCC)
+    and register it directly into MOLIPLY's VccCard pool.
+    """
+    import os
+    from app.services.crypto import card_fingerprint, encrypt_text
+
+    # Synchronize runtime/settings overrides into process env for the shared issuer module
+    for key in (
+        "vcc_issuer_track",
+        "lithic_api_key",
+        "lithic_api_base",
+        "vcc_api_url",
+        "vcc_api_key",
+        "vcc_api_secret",
+        "vcc_api_bin",
+    ):
+        val = runtime.get(key, getattr(settings, key, ""))
+        if val and not os.environ.get(key.upper()):
+            os.environ[key.upper()] = str(val)
+
+    try:
+        from cce_console.core.vcc_issuers import billing_profile_for_zip, mint_vcc_card
+    except Exception:  # noqa: BLE001
+        logger.debug("Shared vcc_issuers module unavailable", exc_info=False)
+        return None
+
+    limit_float = float(spend_limit_usd or Decimal("22.00"))
+    if limit_float < 22.0:
+        limit_float = 22.0
+
+    minted = mint_vcc_card(
+        spend_limit_usd=limit_float,
+        zip_code=zip_code,
+        memo=f"moliply-{region.lower()}",
+    )
+    if not minted or not minted.get("pan") or not minted.get("cvv"):
+        return None
+
+    digits = "".join(ch for ch in str(minted["pan"]) if ch.isdigit())
+    if len(digits) < 12:
+        return None
+    fp = card_fingerprint(digits)
+    existing = db.query(VccCard).filter(VccCard.card_fingerprint == fp).first()
+    if existing:
+        return existing if existing.status == VccStatus.ACTIVE and not existing.is_locked else None
+
+    avs = billing_profile_for_zip(minted.get("zip_code") or zip_code)
+    us_billing = {
+        "line1": avs["line1"],
+        "city": avs["city"],
+        "state": avs["state"],
+        "postal_code": avs.get("zip") or avs.get("zip_code") or zip_code,
+        "country": "US",
+        "external_id": minted.get("external_id") or "",
+        "issuer_track": minted.get("provider") or "AUTO",
+    }
+    exp_m = str(minted.get("exp_month") or "12").zfill(2)
+    exp_y = str(minted.get("exp_year") or "29")[-2:]
+    card = VccCard(
+        provider=str(minted.get("provider") or "API_VCC")[:32],
+        card_bin=digits[:6],
+        card_fingerprint=fp,
+        card_number_enc=encrypt_text(digits),
+        cvv_enc=encrypt_text(str(minted["cvv"])),
+        exp_month=exp_m,
+        exp_year=exp_y,
+        holder_name=avs.get("holder_name", "ALEXANDER MERCER")[:64],
+        billing_address_json=us_billing,
+        ph_billing_address_json=dict(DEFAULT_PH_BILLING),
+        available_balance=Decimal(str(limit_float)),
+        reserved_balance=Decimal("0.00"),
+        max_bind_count=max(1, max_bind_count),
+        status=VccStatus.ACTIVE,
+    )
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+    logger.info("Minted new VCC card id=%s provider=%s bin=%s into pool", card.id, card.provider, card.card_bin)
     return card
 
 
@@ -279,6 +381,15 @@ def check_watermark(db: Session, required: Decimal) -> int:
 
 
 def mark_closed(db: Session, card: VccCard) -> None:
+    billing = card.billing_address_json or {}
+    ext_id = billing.get("external_id") if isinstance(billing, dict) else None
+    if ext_id:
+        try:
+            from cce_console.core.vcc_issuers import close_remote_card_sync
+
+            close_remote_card_sync(str(card.provider or ""), str(ext_id))
+        except Exception:  # noqa: BLE001
+            logger.debug("Remote card close skipped for card id=%s", card.id, exc_info=False)
     card.status = VccStatus.CLOSED
     card.available_balance = Decimal("0")
     card.reserved_balance = Decimal("0")

@@ -158,7 +158,13 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
   async function startRecharge() {
     if (!verify) return;
     if (needsSession && !sessionRaw.trim()) {
-      setSubmitError(verify.session_kind === "claude" ? "请先粘贴 Claude Session Key" : "请先粘贴 ChatGPT Session JSON");
+      setSubmitError(
+        verify.session_kind === "claude"
+          ? "请先粘贴 Claude Session Key"
+          : verify.session_kind === "gemini"
+            ? "请先填写您的 Gmail / Google 邮箱地址"
+            : "请先粘贴 ChatGPT Session JSON",
+      );
       return;
     }
     setSubmitting(true);
@@ -316,14 +322,18 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
                   ? "自助取号收码"
                   : verify.session_kind === "claude"
                     ? "提交 Claude Session Key"
-                    : "提交 Session JSON"}
+                    : verify.session_kind === "gemini"
+                      ? "填写您的 Gmail 邮箱（免密上车）"
+                      : "提交 Session JSON"}
               </h2>
               <p className="mt-2 text-xs leading-6 text-slate-500">
                 {verify.sms
                   ? "取号后把号码填入目标平台，验证码到达会自动显示；收不到可免费换号。"
                   : verify.session_kind === "claude"
                     ? "按指引粘贴 Claude sessionKey，由上游通道完成账户核验与充值。"
-                    : "按照指引粘贴 ChatGPT Session JSON，由后台进行账号状态预检。"}
+                    : verify.session_kind === "gemini"
+                      ? "输入您要升级的 Gmail 邮箱，系统自动为您分配 Google One AI Premium (2TB + Gemini Advanced) 家庭组席位。"
+                      : "按照指引粘贴 ChatGPT Session JSON，由后台进行账号状态预检。"}
               </p>
 
               <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-3.5 py-3 text-[11px]">
@@ -342,16 +352,22 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
 
                   <div className="mt-5 flex items-center justify-between">
                     <label htmlFor="session-raw" className="text-[11px] text-slate-400">
-                      {verify.session_kind === "claude" ? "Claude Session Key" : "ChatGPT Session JSON"}
+                      {verify.session_kind === "claude"
+                        ? "Claude Session Key"
+                        : verify.session_kind === "gemini"
+                          ? "您的 Gmail / Google 邮箱"
+                          : "ChatGPT Session JSON"}
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setGuideOpen(true)}
-                      className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200"
-                    >
-                      <FileJson size={12} />
-                      图文指引
-                    </button>
+                    {verify.session_kind !== "gemini" && (
+                      <button
+                        type="button"
+                        onClick={() => setGuideOpen(true)}
+                        className="inline-flex items-center gap-1 text-[10px] text-brand-300 hover:text-brand-200"
+                      >
+                        <FileJson size={12} />
+                        图文指引
+                      </button>
+                    )}
                   </div>
                   <textarea
                     id="session-raw"
@@ -360,9 +376,13 @@ export function RedeemWizard({ initialCode = "" }: { initialCode?: string }) {
                     placeholder={
                       verify.session_kind === "claude"
                         ? "sessionKey=sk-ant-..."
-                        : '{\n  "user": { "email": "user@example.com" },\n  "accessToken": "…",\n  "expires": "…"\n}'
+                        : verify.session_kind === "gemini"
+                          ? "your.account@gmail.com"
+                          : '{\n  "user": { "email": "user@example.com" },\n  "accessToken": "…",\n  "expires": "…"\n}'
                     }
-                    className="field mt-2 min-h-[210px] resize-y font-mono text-[11px] leading-6"
+                    className={`field mt-2 resize-y font-mono text-[11px] leading-6 ${
+                      verify.session_kind === "gemini" ? "min-h-[84px]" : "min-h-[210px]"
+                    }`}
                     spellCheck={false}
                   />
                   <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-600">

@@ -326,7 +326,7 @@ def seed_demo_data(db: Session) -> None:
     claude_account = _product(
         slug="claude-pro-account",
         name="Claude Pro",
-        subtitle="1个月独享成品号 · 满月质保",
+        subtitle="1个月独享成品号 · 专属住宅 IP 一键整合包 · 满 30 天",
         category=ProductCategory.AI_MEMBERSHIP,
         brand="Claude",
         logo_key="claude",
@@ -336,28 +336,28 @@ def seed_demo_data(db: Session) -> None:
         sold_count=1268,
         base_sales_count=268,
         badge="推荐",
-        tags=["独享账号", "满月质保", "自动发货"],
-        warranty="30 天质保 · 掉会员按天折算赔付",
-        delivery_note="付款后自动发送邮箱、密码与辅助邮箱",
+        tags=["独享账号", "一键整合包", "满 30 天质保"],
+        warranty="自交付起满 30 天质保 · 专属美国住宅 IP 隧道防封",
+        delivery_note="付款后自动签发专属交付密钥，并支持在订单页一键下载 Windows / macOS / Linux 免配置整合包",
         description=(
-            "Claude Pro 美区 iOS 内购成品号，开通独立的 Pro 会员权益。"
-            "账号与辅助邮箱一并交付，可自行修改密码，适合需要稳定使用 Claude 的重度用户。\n\n"
-            "成品号均为独立生产，一卡一号，不含共享账号。"
+            "Claude Pro 高权重美区独享成品号，经 3 天原生美国住宅 ISP 环境自然养号沉淀后按单开通，自交付起算满 30 天有效期。\n\n"
+            "付款后订单页直接提供一键客户端整合包（Windows / macOS / Linux），内置该账号绑定的专属静态住宅出口隧道与登录凭证，解压双击即用，无需梯子与复杂配置。"
         ),
         usage_steps=[
-            "下单并完成支付",
-            "在订单详情查看完整账密",
-            "首次登录后修改密码并绑定辅助邮箱",
-            "如遇登录异常，保留订单号联系售后",
+            "下单并完成支付（如遇按单实时激活 Pro，约 1–3 分钟自动完成）",
+            "在订单交付页点击「一键下载整合包」（支持 Windows / macOS / Linux）",
+            "解压压缩包后双击启动器即可直连专属住宅 IP 使用 Claude Pro",
+            "如遇问题保留订单号联系在线客服",
         ],
         faq=[
-            {"q": "成品号和代充有什么区别？", "a": "成品号是已开通会员的独立账号，直接交付账密；代充是在你自己的账号上升级会员。"},
-            {"q": "可以修改密码吗？", "a": "可以，交付后会同时提供辅助邮箱，建议首次登录后立即修改密码。"},
-            {"q": "质保如何计算？", "a": "自交付日起 30 天内如因账号本身掉会员，按剩余天数折算赔付或补发。"},
+            {"q": "什么是专属住宅 IP 一键整合包？", "a": "每个账号终身绑定一个独立的美国静态住宅 IP，整合包内置了免配置加密隧道与登录凭证，双击即可从该固定 IP 登录使用，大幅降低异地登录封号风险。"},
+            {"q": "订阅有效期是满 30 天吗？", "a": "是的。号池采用成熟白号按单实时激活 Pro 或微热备机制，确保交付到手的订阅周期足月。"},
+            {"q": "质保如何计算？", "a": "自交付日起 30 天内如因账号本身异常，按剩余天数折算赔付或免费换新。"},
         ],
-        variants=[{"label": "1个月", "months": 1, "price": "188.00", "original_price": "218.00"}],
+        variants=[{"label": "1个月（独享整合包）", "months": 1, "price": "188.00", "original_price": "218.00"}],
         sort_order=2,
     )
+    claude_account.fulfillment_strategy = FulfillmentStrategy.CCE_ACCOUNT_KEY
     chatgpt_account = _product(
         slug="chatgpt-plus-account",
         name="ChatGPT Plus",
@@ -777,4 +777,189 @@ def upsert_gpt_pro_products(db: Session) -> int:
         db.add(product)
         created += 1
     db.commit()
+    return created
+
+
+def upsert_gemini_products(db: Session, *, seed_inventory: bool | None = None) -> int:
+    """Idempotently add the two Google Gemini Advanced products:
+    1) ``gemini-advanced-family-1m``: 1-to-5 Google One AI Premium (2TB) Family Group invite via /redeem
+    2) ``gemini-advanced-account``: Dedicated Google Gemini Advanced full-month account with 2FA TOTP secret
+    """
+    should_seed_inv = settings.seed_demo_inventory if seed_inventory is None else seed_inventory
+    created = 0
+
+    family_slug = "gemini-advanced-family-1m"
+    family_prod = db.query(Product).filter(Product.slug == family_slug).first()
+    if not family_prod:
+        family_prod = _product(
+            slug=family_slug,
+            name="Google Gemini Advanced 个人号免密直升 · 2TB 家庭组车位",
+            subtitle="填自己 Gmail 免密上车 · 享 Gemini 2.5 Pro + 2TB 云盘 · MOLI 激活码",
+            category=ProductCategory.AI_MEMBERSHIP,
+            brand="Google",
+            logo_key="gemini",
+            delivery_type=DeliveryType.ACTIVATION_CODE,
+            price="49.00",
+            original_price="145.00",
+            sold_count=0,
+            base_sales_count=410,
+            badge="零封号推荐",
+            tags=["免密直充自己号", "含 2TB Google One", "独立隐私不互通"],
+            warranty="订阅周期内全程质保 · 掉车免费补邀",
+            delivery_note="付款后自动发放 MOLI 激活码，前往充能中心填写您的 Gmail 邮箱即可收到官方家庭组邀请",
+            description=(
+                "通过 Google One AI Premium (2TB) 官方家庭组共享机制，直接将您自己原有的 Gmail 账号升级为 "
+                "Gemini Advanced 会员。无需提供账号密码，聊天记录与云盘文件 100% 独立私密，0 封号风险。"
+            ),
+            usage_steps=[
+                "下单支付获取 MOLI 激活码",
+                "前往免密充能中心 (/redeem) 输入激活码并填写您的 Gmail 邮箱",
+                "点击邮件或核销页给出的 Google Family 邀请链接确认加入，即刻生效",
+            ],
+            faq=[
+                {
+                    "q": "家庭组其他成员能看到我的 Gemini 聊天记录或云盘文件吗？",
+                    "a": "完全看不到。Google 官方家庭组仅共享订阅权益与 2TB 总额度，每个人的聊天记录、邮件和云盘文件完全隔离。",
+                },
+                {
+                    "q": "需要提供我的 Google 密码吗？",
+                    "a": "不需要！只需在核销中心填写您的 Gmail 邮箱地址接收官方邀请即可。",
+                },
+            ],
+            variants=[
+                {
+                    "label": "1 个月车位",
+                    "months": 1,
+                    "price": "49.00",
+                    "original_price": "145.00",
+                    "sku_type": "GEMINI_ADVANCED_1M",
+                    "channel_mode": "HYBRID_SELF_FIRST",
+                },
+                {
+                    "label": "3 个月车位",
+                    "months": 3,
+                    "price": "138.00",
+                    "original_price": "435.00",
+                    "sku_type": "GEMINI_ADVANCED_3M",
+                    "channel_mode": "HYBRID_SELF_FIRST",
+                },
+                {
+                    "label": "12 个月年付车位",
+                    "months": 12,
+                    "price": "499.00",
+                    "original_price": "1740.00",
+                    "sku_type": "GEMINI_ADVANCED_12M",
+                    "channel_mode": "HYBRID_SELF_FIRST",
+                },
+            ],
+            sort_order=5,
+        )
+        db.add(family_prod)
+        db.flush()
+        created += 1
+
+        if should_seed_inv:
+            for sku, cnt in (
+                (SkuType.GEMINI_ADVANCED_1M, 30),
+                (SkuType.GEMINI_ADVANCED_3M, 10),
+                (SkuType.GEMINI_ADVANCED_12M, 6),
+            ):
+                for _ in range(cnt):
+                    db.add(
+                        ActivationCode(
+                            code=generate_code(),
+                            sku_type=sku,
+                            channel_mode=ChannelMode.HYBRID_SELF_FIRST,
+                            status=CodeStatus.UNUSED,
+                            note="Gemini 家庭组演示库存",
+                        )
+                    )
+            # Park 2 demo Google One AI Premium Family Host accounts (each has 5 seats = 10 customer capacity)
+            for idx in range(1, 3):
+                host_email = f"family.host.{idx:02d}@gmail.com"
+                db.add(
+                    FreeAccountPool(
+                        product_id=family_prod.id,
+                        email=host_email,
+                        password_enc=encrypt_text("GoogleOneHost!2026"),
+                        recovery_enc=encrypt_text(f"recovery.host.{idx:02d}@moliply.test"),
+                        session_raw_enc=encrypt_text(f"https://families.google.com/join/promo?host={idx:02d}"),
+                        note="Google One AI Premium 2TB 家庭主号 [seats:0/5]",
+                        status=FreeAccountStatus.AVAILABLE,
+                    )
+                )
+
+    account_slug = "gemini-advanced-account"
+    account_prod = db.query(Product).filter(Product.slug == account_slug).first()
+    if not account_prod:
+        account_prod = _product(
+            slug=account_slug,
+            name="Google Gemini Advanced 独享满月成品号 · 带 2FA 自动取码",
+            subtitle="美区高权重老 Gmail 底子 · 含 Gemini 2.5 Pro + 2TB · 订单页直接生成 2FA 验证码",
+            category=ProductCategory.AI_MEMBERSHIP,
+            brand="Google",
+            logo_key="gemini",
+            delivery_type=DeliveryType.ACCOUNT_CREDENTIALS,
+            price="89.00",
+            original_price="145.00",
+            sold_count=0,
+            base_sales_count=265,
+            badge="独享成品号",
+            tags=["美区老号防风控", "内置 2FA 动态取码", "已关自动续费"],
+            warranty="30 天独享质保",
+            delivery_note="付款后自动发放老 Gmail 账号、密码、辅助邮箱及 2FA 密钥，订单页可直接查看实时 6 位 2FA 验证码",
+            description=(
+                "采用满月以上美区高权重老 Gmail 账号 + 独立美区 VCC 开通 Google One AI Premium (Gemini Advanced)，"
+                "已关闭次月自动续费。交付页内置 2FA 动态验证码实时生成器，无需安装身份验证器 App 即可一键复制 6 位登录验证码。"
+            ),
+            usage_steps=[
+                "下单支付后在订单交付页查看 Gmail 账号与密码",
+                "打开 gemini.google.com 输入账号密码登录",
+                "当 Google 提示输入两步验证码 (2FA) 时，直接复制订单页实时刷新的 6 位动态验证码即可完成登录",
+            ],
+            faq=[
+                {
+                    "q": "登录时提示需要 Google Authenticator 两步验证怎么办？",
+                    "a": "无需下载任何软件！本商城订单交付卡片已内置 2FA 动态码生成器，每 30 秒自动刷新 6 位验证码，点一下复制粘贴即可。",
+                },
+                {
+                    "q": "可以修改密码和辅助邮箱吗？",
+                    "a": "独享号归您个人使用。建议在新设备稳定登录 48 小时后再修改密码，以防触发 Google 异地风控。",
+                },
+            ],
+            variants=[
+                {
+                    "label": "独享满月成品号（带 2FA）",
+                    "months": 1,
+                    "price": "89.00",
+                    "original_price": "145.00",
+                }
+            ],
+            sort_order=6,
+        )
+        db.add(account_prod)
+        db.flush()
+        created += 1
+
+        if should_seed_inv:
+            demo_totp_secrets = [
+                "JBSWY3DPEHPK3PXP",
+                "GEZDGNBVGY3TQOJQ",
+                "MFRGGZDFMZTWQ2LK",
+                "KRSXG5CTMVRXEZLU",
+            ]
+            for idx, secret in enumerate(demo_totp_secrets, start=1):
+                email = f"gemini.pro.{idx:03d}@gmail.com"
+                payload = f"{email}----GeminiPass!2026----recovery.gemini.{idx:03d}@moliply.test----{secret}"
+                db.add(
+                    AccountInventory(
+                        product_id=account_prod.id,
+                        label=mask_email(email),
+                        payload_enc=encrypt_text(payload),
+                        status=InventoryStatus.AVAILABLE,
+                    )
+                )
+
+    if created:
+        db.commit()
     return created

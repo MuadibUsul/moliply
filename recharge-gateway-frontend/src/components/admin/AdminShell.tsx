@@ -43,7 +43,7 @@ const NAV_GROUPS = [
       { href: "/admin/cards", label: "VCC 卡池", icon: CreditCard },
       { href: "/admin/channels", label: "渠道状态", icon: ServerCog },
       { href: "/admin/channels/supplier", label: "上游渠道", icon: PlugZap },
-      { href: "/cce/ui", label: "Claude 账号", icon: KeyRound, external: true },
+      { href: "/admin/claude", label: "Claude 号池", icon: KeyRound },
     ],
   },
   {
@@ -64,6 +64,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/cards": "VCC 卡池",
   "/admin/channels": "渠道状态",
   "/admin/channels/supplier": "上游渠道",
+  "/admin/claude": "Claude 高权重号池与自动交付",
   "/cce/ui": "Claude 账号",
   "/admin/settings": "系统设置",
 };

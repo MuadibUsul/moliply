@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +26,7 @@ from core.cloudflare import open_with_challenge_retry
 logger = logging.getLogger(__name__)
 
 PLANS_URL = "https://claude.ai/upgrade"
+BILLING_SETTINGS_URL = "https://claude.ai/settings/billing"
 CHECKOUT_HOSTS = ("claude.ai", "stripe.com", "checkout.stripe.com", "pay.openai.com")
 
 UPGRADE_LABELS = (
@@ -58,6 +60,23 @@ ZIP_SELECTORS = (
     'input[autocomplete="postal-code"]',
     'input[name="postalCode"]',
     'input[placeholder*="ZIP"]',
+)
+NAME_SELECTORS = (
+    'input[name="billingName"]',
+    'input[autocomplete="cc-name"]',
+    'input[name="name"]',
+    'input[placeholder*="Full name"]',
+    'input[placeholder*="Name on card"]',
+)
+LINE1_SELECTORS = (
+    'input[name="addressLine1"]',
+    'input[autocomplete="billing address-line1"]',
+    'input[autocomplete="address-line1"]',
+)
+CITY_SELECTORS = (
+    'input[name="locality"]',
+    'input[autocomplete="billing address-level2"]',
+    'input[autocomplete="address-level2"]',
 )
 
 # A 3DS challenge surfaces as one of these.
@@ -163,8 +182,13 @@ async def run_subscribe(
         return SubscribeOutcome("needs_human", "结账页没有找到卡号输入框（可能已是 3DS 或改版）", url=page.url)
     await _fill_in_any_frame(page, EXPIRY_SELECTORS, f"{month}/{year}")
     await _fill_in_any_frame(page, CVC_SELECTORS, str(card.get("cvv") or ""))
-    if card.get("zip"):
-        await _fill_in_any_frame(page, ZIP_SELECTORS, str(card["zip"]))
+    from core import vcc_issuers
+
+    avs = vcc_issuers.billing_profile_for_zip(str(card.get("zip") or "97204"), str(card.get("holder") or ""))
+    await _fill_in_any_frame(page, NAME_SELECTORS, avs["holder_name"])
+    await _fill_in_any_frame(page, LINE1_SELECTORS, avs["line1"])
+    await _fill_in_any_frame(page, CITY_SELECTORS, avs["city"])
+    await _fill_in_any_frame(page, ZIP_SELECTORS, avs["zip"])
     await asyncio.sleep(0.8)
 
     await _click_in_any_frame(page, CHECKOUT_LABELS)
@@ -185,10 +209,49 @@ async def run_subscribe(
         if any(marker in lowered for marker in ("declined", "card was declined", "insufficient funds")):
             return SubscribeOutcome("failed", f"卡片被拒：{body[:120]}", url=url)
         if any(marker in lowered for marker in ("you're now on pro", "now on the pro plan", "payment successful", "thanks for subscribing")):
-            return SubscribeOutcome("subscribed", "订阅成功", url=url)
+            cancelled = False
+            if os.environ.get("CCE_CANCEL_AUTORENEW", "true").strip().lower() not in {"0", "false", "no"}:
+                cancelled = await _best_effort_cancel_autorenew(page)
+            msg = "订阅成功（已关闭自动续费）" if cancelled else "订阅成功"
+            return SubscribeOutcome("subscribed", msg, url=url)
         await asyncio.sleep(check_interval)
 
     return SubscribeOutcome("needs_human", "结账提交后未见明确结果，需人工确认", url=page.url)
+
+
+CANCEL_PLAN_LABELS = (
+    r"cancel plan",
+    r"cancel subscription",
+    r"cancel auto[- ]?renew",
+    r"取消订阅",
+)
+CONFIRM_CANCEL_LABELS = (
+    r"confirm cancellation",
+    r"cancel plan",
+    r"cancel subscription",
+    r"yes,\s*cancel",
+    r"确认取消",
+)
+
+
+async def _best_effort_cancel_autorenew(page: Any) -> bool:
+    """Turn off month-2 auto-renewal after Pro activates so a reusable VCC is not drained.
+
+    Never raises: if Anthropic changes the billing settings layout, the paid
+    subscription is still valid and must proceed to credential extraction.
+    """
+    try:
+        await page.goto(BILLING_SETTINGS_URL, wait_until="domcontentloaded", timeout=20_000)
+        await asyncio.sleep(2.5)
+        if not await _click_in_any_frame(page, CANCEL_PLAN_LABELS):
+            return False
+        await asyncio.sleep(2.0)
+        await _click_in_any_frame(page, CONFIRM_CANCEL_LABELS)
+        await asyncio.sleep(2.0)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.debug("Best-effort auto-renew cancellation skipped", exc_info=True)
+        return False
 
 
 __all__ = ["SubscribeError", "SubscribeOutcome", "run_subscribe"]

@@ -55,6 +55,16 @@ class ChangePasswordRequest(StrictModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class ForgotPasswordRequest(StrictModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(StrictModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=8)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class AdminResetPasswordRequest(StrictModel):
     email: EmailStr
     new_password: str = Field(min_length=8, max_length=128)

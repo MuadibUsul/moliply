@@ -68,6 +68,18 @@ const TILES: Record<string, TileSpec> = {
       </span>
     ),
   },
+  gemini: {
+    background: "linear-gradient(145deg, #60a5fa 0%, #6366f1 50%, #a855f7 100%)",
+    glow: "rgba(99, 102, 241, 0.38)",
+    glyph: (size) => (
+      <svg width={size * 0.48} height={size * 0.48} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path
+          d="M16 2C16 10.5 21.5 16 30 16C21.5 16 16 21.5 16 30C16 21.5 10.5 16 2 16C10.5 16 16 10.5 16 2Z"
+          fill="white"
+        />
+      </svg>
+    ),
+  },
   cursor: {
     background: "linear-gradient(145deg, #a78bfa 0%, #7c3aed 55%, #4c1d95 100%)",
     glow: "rgba(124, 58, 237, 0.36)",

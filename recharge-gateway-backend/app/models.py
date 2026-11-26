@@ -113,6 +113,9 @@ class SkuType(str, enum.Enum):
     CHATGPT_PLUS_3M = "CHATGPT_PLUS_3M"
     CHATGPT_PLUS_12M = "CHATGPT_PLUS_12M"
     CLAUDE_PRO_1M = "CLAUDE_PRO_1M"
+    GEMINI_ADVANCED_1M = "GEMINI_ADVANCED_1M"
+    GEMINI_ADVANCED_3M = "GEMINI_ADVANCED_3M"
+    GEMINI_ADVANCED_12M = "GEMINI_ADVANCED_12M"
     CHATGPT_PRO_200 = "CHATGPT_PRO_200"
     CHATGPT_PRO_20X_1M = "CHATGPT_PRO_20X_1M"
     GPT_PRO_100 = "GPT_PRO_100"
@@ -139,6 +142,9 @@ SKU_LABELS: dict[str, str] = {
     "CHATGPT_PLUS_3M": "ChatGPT Plus · 3 个月",
     "CHATGPT_PLUS_12M": "ChatGPT Plus · 12 个月",
     "CLAUDE_PRO_1M": "Claude Pro · 1 个月",
+    "GEMINI_ADVANCED_1M": "Gemini Advanced · 1 个月",
+    "GEMINI_ADVANCED_3M": "Gemini Advanced · 3 个月",
+    "GEMINI_ADVANCED_12M": "Gemini Advanced · 12 个月",
     "CHATGPT_PRO_200": "ChatGPT Pro · 1 个月",
     "CHATGPT_PRO_20X_1M": "ChatGPT Pro 20x · 1 个月",
     "GPT_PRO_100": "GPT Pro · 100",

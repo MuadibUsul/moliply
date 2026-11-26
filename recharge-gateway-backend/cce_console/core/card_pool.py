@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from core import vcc_issuers
 from core.crypto import decrypt_blob, encrypt_blob
 from db.database import Database
 
@@ -86,6 +87,12 @@ async def issue_card(
 
 
 def _public_row(row: dict[str, Any]) -> dict[str, Any]:
+    holder = str(row.get("holder") or "")
+    source = "manual"
+    if holder.startswith("lithic:"):
+        source = "lithic"
+    elif holder.startswith("api:"):
+        source = "category_a"
     return {
         "id": row["id"],
         "card_bin": row["card_bin"],
@@ -96,6 +103,7 @@ def _public_row(row: dict[str, Any]) -> dict[str, Any]:
         "balance_usd": row["balance_usd"],
         "last_error": row["last_error"],
         "used_at": row["used_at"],
+        "source": source,
     }
 
 
@@ -113,43 +121,113 @@ async def list_cards(db: Database) -> dict[str, Any]:
             "used": counts.get("used", 0),
             "dead": counts.get("dead", 0),
         },
+        "issuer": vcc_issuers.issuer_status(),
     }
 
 
-async def lease_card(db: Database) -> LeasedCard:
-    """Earmark one available card, atomically."""
+async def mint_cards_to_pool(
+    db: Database,
+    *,
+    count: int = 1,
+    amount_usd: float | None = None,
+    billing_zip: str = "",
+    memo: str = "CCE-Pool",
+    geo: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Mint one or more virtual cards via the active A/B API provider and save them to the pool."""
+    created: list[dict[str, Any]] = []
+    for idx in range(max(1, min(int(count), 20))):
+        try:
+            issued = await vcc_issuers.mint_card(
+                memo=f"{memo}-{idx + 1}",
+                amount_usd=amount_usd,
+                billing_zip=billing_zip,
+                geo=geo,
+            )
+        except vcc_issuers.VccIssuerError as exc:
+            raise CardError(str(exc)) from exc
+        row = await issue_card(
+            db,
+            pan=issued.pan,
+            cvv=issued.cvv,
+            exp_month=issued.exp_month,
+            exp_year=issued.exp_year,
+            billing_zip=issued.billing_zip,
+            holder=issued.holder,
+            balance_usd=issued.balance_usd,
+        )
+        created.append(row)
+    return created
+
+
+async def lease_card(
+    db: Database,
+    *,
+    profile_id: str = "",
+    billing_zip: str = "",
+    geo: dict[str, Any] | None = None,
+) -> LeasedCard:
+    """Earmark one available card, or auto-mint one via the A/B VCC API when the pool is empty."""
+    row: dict[str, Any] | None = None
     async with db.transaction() as conn:
         cursor = await conn.execute(
             "SELECT * FROM subscription_cards WHERE status = 'available' ORDER BY id LIMIT 1"
         )
-        row = await cursor.fetchone()
+        fetched = await cursor.fetchone()
         await cursor.close()
+        if fetched is not None:
+            cursor = await conn.execute(
+                "UPDATE subscription_cards SET status = 'in_use', used_at = CURRENT_TIMESTAMP"
+                " WHERE id = ? AND status = 'available'",
+                (fetched["id"],),
+            )
+            if cursor.rowcount != 1:
+                raise CardError("卡片已被并发占用，请重试")
+            row = dict(fetched)
+
+    if row is None:
+        if vcc_issuers.auto_mint_enabled():
+            minted = await mint_cards_to_pool(
+                db,
+                count=1,
+                billing_zip=billing_zip,
+                memo=f"CCE-{profile_id or 'auto'}",
+                geo=geo,
+            )
+            card_id = int(minted[0]["id"])
+            async with db.transaction() as conn:
+                cursor = await conn.execute(
+                    "UPDATE subscription_cards SET status = 'in_use', used_at = CURRENT_TIMESTAMP"
+                    " WHERE id = ? AND status = 'available'",
+                    (card_id,),
+                )
+                if cursor.rowcount != 1:
+                    raise CardError("自动开出的卡片已被并发占用，请重试")
+            row = await db.fetch_one("SELECT * FROM subscription_cards WHERE id = ?", (card_id,))
         if row is None:
-            raise CardError("没有可用卡，请先在卡片页导入")
-        cursor = await conn.execute(
-            "UPDATE subscription_cards SET status = 'in_use', used_at = CURRENT_TIMESTAMP"
-            " WHERE id = ? AND status = 'available'",
-            (row["id"],),
-        )
-        if cursor.rowcount != 1:
-            raise CardError("卡片已被并发占用，请重试")
+            raise CardError("没有可用卡，请先在卡片页导入或配置自动发卡 API")
+
     pan = decrypt_blob(row["pan_enc"]).decode()
     cvv = decrypt_blob(row["cvv_enc"]).decode()
+    resolved_zip = str(row["billing_zip"] or "").strip() or vcc_issuers.zip_for_geo(geo, fallback=billing_zip)
     return LeasedCard(
         card_id=row["id"],
         pan=pan,
         cvv=cvv,
         exp=f"{row['exp_month']}/{row['exp_year']}",
-        zip=row["billing_zip"],
+        zip=resolved_zip,
     )
 
 
 async def settle_card(db: Database, card_id: int, *, success: bool, reason: str = "") -> None:
-    """Retire a charged card, return a soft failure, bury a dead one."""
+    """Retire a charged card, return a soft failure, bury a dead one, and close single-use remote cards."""
+    row = await db.fetch_one("SELECT holder FROM subscription_cards WHERE id = ?", (card_id,))
+    holder_tag = str(row["holder"] or "") if row else ""
     if success:
         await db.execute(
             "UPDATE subscription_cards SET status = 'used', last_error = '' WHERE id = ?", (card_id,)
         )
+        await vcc_issuers.close_remote_card(holder_tag)
         return
     lowered = (reason or "").lower()
     dead = any(word in lowered for word in ("declined", "insufficient", "expired", "invalid"))
@@ -157,6 +235,8 @@ async def settle_card(db: Database, card_id: int, *, success: bool, reason: str 
         "UPDATE subscription_cards SET status = ?, last_error = ? WHERE id = ?",
         ("dead" if dead else "available", (reason or "")[:200], card_id),
     )
+    if dead:
+        await vcc_issuers.close_remote_card(holder_tag)
 
 
 async def release_card(db: Database, card_id: int) -> None:
@@ -167,4 +247,41 @@ async def release_card(db: Database, card_id: int) -> None:
     )
 
 
-__all__ = ["CardError", "LeasedCard", "issue_card", "lease_card", "list_cards", "release_card", "settle_card"]
+async def reset_card(db: Database, card_id: int) -> dict[str, Any]:
+    """Return a dead or stranded card back to available so it can be retried."""
+    row = await db.fetch_one("SELECT * FROM subscription_cards WHERE id = ?", (card_id,))
+    if row is None:
+        raise CardError("卡片不存在")
+    if row["status"] == "in_use":
+        raise CardError("卡片正在扣款中，请稍后再试")
+    await db.execute(
+        "UPDATE subscription_cards SET status = 'available', last_error = '' WHERE id = ?",
+        (card_id,),
+    )
+    updated = await db.fetch_one("SELECT * FROM subscription_cards WHERE id = ?", (card_id,))
+    assert updated is not None
+    return _public_row(updated)
+
+
+async def delete_card(db: Database, card_id: int) -> None:
+    """Remove a card that is not actively leased."""
+    row = await db.fetch_one("SELECT * FROM subscription_cards WHERE id = ?", (card_id,))
+    if row is None:
+        raise CardError("卡片不存在")
+    if row["status"] == "in_use":
+        raise CardError("卡片正在扣款中，不能删除")
+    await db.execute("DELETE FROM subscription_cards WHERE id = ?", (card_id,))
+
+
+__all__ = [
+    "CardError",
+    "LeasedCard",
+    "delete_card",
+    "issue_card",
+    "lease_card",
+    "list_cards",
+    "mint_cards_to_pool",
+    "release_card",
+    "reset_card",
+    "settle_card",
+]

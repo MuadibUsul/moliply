@@ -27,7 +27,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from core import card_pool, pipeline
+from core import card_pool, pipeline, warmup
 from core.browser_pool import BrowserPool
 from core.crypto import CryptoError, decrypt_blob
 from core.lifecycle import COOLDOWN, cooldown_until, sweep_reaperable
@@ -82,15 +82,32 @@ class AccountImport(BaseModel):
 
     text: str = Field(min_length=3, max_length=200_000)
     proxy_template: str = Field(default="", max_length=200)
+    warmup_days: int | None = Field(default=None, ge=0, le=14)
+    plan: str = Field(default="", max_length=32)
 
 
 class CardIssue(BaseModel):
     items: list[dict[str, Any]] = Field(min_length=1, max_length=200)
 
 
+class CardMint(BaseModel):
+    count: int = Field(default=1, ge=1, le=20)
+    amount_usd: float | None = Field(default=None, ge=1.0, le=500.0)
+    billing_zip: str = Field(default="", max_length=16)
+
+
 class JobRun(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
     concurrency: int = Field(default=2, ge=1, le=5)
+
+
+class PoolPromote(BaseModel):
+    count: int = Field(default=1, ge=1, le=10)
+    wait: bool = False
+
+
+class HotStandbyConfig(BaseModel):
+    target: int = Field(default=0, ge=0, le=50)
 
 
 class JobProxy(BaseModel):
@@ -242,9 +259,7 @@ async def _worker_loop(interval: float) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            if not await state.db.fetch_one(
-                "SELECT profile_id FROM account_jobs WHERE stage = 'queued' LIMIT 1"
-            ):
+            if not await pipeline.has_actionable_jobs(state.db):
                 continue
             await pipeline.run_pending(state.db, state.pool, limit=1, concurrency=1)
         except asyncio.CancelledError:
@@ -259,29 +274,32 @@ def create_app() -> FastAPI:
     async def _requeue_orphans() -> int:
         """Put jobs left mid-flight by the last process back in the queue.
 
-        The worker only drains `queued`, and a restart kills the browser under
-        any `registering`/`registered`/`subscribing` job. Without this the job
-        stays in a stage nothing advances and the account is silently lost
-        until someone notices. Only safe at startup: no browser owns them yet.
+        Accounts resting in the multi-day warm-up pool (`stage = 'registered'`
+        with `warmup_completed > 0` or `next_action_at IS NOT NULL`) are kept
+        in `registered` and only have their profile lease freed to `IDLE`.
         """
         rows = await state.db.fetch_all(
-            "SELECT profile_id FROM account_jobs WHERE stage IN ('registering', 'registered', 'subscribing')"
+            "SELECT profile_id, stage, COALESCE(warmup_completed, 0) AS warmup_completed, next_action_at"
+            " FROM account_jobs WHERE stage IN ('registering', 'registered', 'subscribing')"
         )
+        requeued = 0
         for row in rows:
-            # The interrupted attempt already counted in `attempts`, so this is
-            # a straight re-run rather than a retry decision.
-            await state.db.execute(
-                "UPDATE account_jobs SET stage = 'queued', updated_at = CURRENT_TIMESTAMP"
-                " WHERE profile_id = ? AND stage <> 'queued'",
-                (row["profile_id"],),
+            in_warmup_pool = row["stage"] == "registered" and (
+                int(row["warmup_completed"] or 0) > 0 or row.get("next_action_at") is not None
             )
-            # A killed browser leaves the row BUSY; claim_session only takes IDLE.
+            if not in_warmup_pool:
+                await state.db.execute(
+                    "UPDATE account_jobs SET stage = 'queued', updated_at = CURRENT_TIMESTAMP"
+                    " WHERE profile_id = ? AND stage <> 'queued'",
+                    (row["profile_id"],),
+                )
+                requeued += 1
             await state.db.set_status(row["profile_id"], "IDLE")
         # Also release any subscription cards stranded in_use by the crashed process.
         await state.db.execute(
             "UPDATE subscription_cards SET status = 'available' WHERE status = 'in_use'"
         )
-        return len(rows)
+        return requeued
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -361,9 +379,7 @@ def create_app() -> FastAPI:
 
     # -- console -----------------------------------------------------------
 
-    @app.get("/ui", response_class=HTMLResponse)
-    async def console() -> HTMLResponse:
-        """The operator console. Data calls still need the admin token."""
+    def _render_console_html() -> HTMLResponse:
         html = CONSOLE_PATH.read_text(encoding="utf-8")
         if BASE_PATH:
             html = html.replace(
@@ -373,13 +389,18 @@ def create_app() -> FastAPI:
             )
         return HTMLResponse(html)
 
+    @app.get("/ui", response_class=HTMLResponse)
+    async def console() -> HTMLResponse:
+        """The operator console. Data calls still need the admin token."""
+        return _render_console_html()
+
     # -- health ------------------------------------------------------------
 
     @app.get("/")
     async def index(request: Request) -> Response:
         """Landing page: the console for a browser, a small index for tooling."""
         if "text/html" in request.headers.get("accept", ""):
-            return HTMLResponse(CONSOLE_PATH.read_text(encoding="utf-8"))
+            return _render_console_html()
         return JSONResponse(
             {
                 "service": "claude-cluster-engine",
@@ -448,6 +469,7 @@ def create_app() -> FastAPI:
         counts = await state.db.fetch_all(
             "SELECT stage, count(*) AS n FROM account_jobs GROUP BY stage"
         )
+        pool_summary = await pipeline.pool_inventory_summary(state.db)
         return {
             "ready": not problems,
             "problems": problems,
@@ -461,7 +483,10 @@ def create_app() -> FastAPI:
                 "queued": int(queued["n"]) if queued else 0,
             },
             "cards": cards["summary"],
+            "vcc_issuer": cards.get("issuer"),
+            "pool": pool_summary,
             "stages": {row["stage"]: int(row["n"]) for row in counts},
+            "clients": sorted(_client_files().keys()),
         }
 
     @app.get("/admin/client", dependencies=[admin])
@@ -470,12 +495,17 @@ def create_app() -> FastAPI:
 
     @app.get("/admin/bundle/{profile_id}", dependencies=[admin])
     async def download_bundle(
-        request: Request, profile_id: str, os_name: str = "windows"
+        request: Request,
+        profile_id: str,
+        os_name: str = "windows",
+        card_key: str | None = None,
     ) -> Response:
         """One-click handover: a zip that runs by double-clicking.
 
         Ships the launcher, the gateway CA and a `cce.json` carrying this
         profile's credentials, so the customer needs no terminal and no flags.
+        When `card_key` is provided, reuses that existing active key instead of
+        minting a new one.
         """
         if await state.db.get_profile(profile_id) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
@@ -493,22 +523,35 @@ def create_app() -> FastAPI:
         if ca is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "gateway CA not published yet")
 
-        card_key = new_card_key()
-        tunnel_secret = new_token(18)
-        expires = (_now() + timedelta(days=30)).isoformat()
-        await state.db.insert_delivery_key(
-            {
-                "card_key": card_key,
-                "profile_id": profile_id,
-                "plan_tier": "pro",
-                "tunnel_secret": tunnel_secret,
-                "expires_at": expires,
-            }
-        )
-        await _export_secrets()
+        if card_key:
+            existing = await state.db.get_delivery_key(card_key)
+            if (
+                existing is None
+                or existing["profile_id"] != profile_id
+                or not existing.get("is_active")
+                or str(existing.get("expires_at") or "") <= _now_iso()
+            ):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "指定的交付密钥无效或已过期")
+            use_key = str(existing["card_key"])
+            tunnel_secret = str(existing["tunnel_secret"])
+            expires = str(existing["expires_at"])
+        else:
+            use_key = new_card_key()
+            tunnel_secret = new_token(18)
+            expires = (_now() + timedelta(days=30)).isoformat()
+            await state.db.insert_delivery_key(
+                {
+                    "card_key": use_key,
+                    "profile_id": profile_id,
+                    "plan_tier": "pro",
+                    "tunnel_secret": tunnel_secret,
+                    "expires_at": expires,
+                }
+            )
+            await _export_secrets()
 
         bundle_bytes = _pack_bundle_zip(
-            card_key=card_key,
+            card_key=use_key,
             tunnel_secret=tunnel_secret,
             host=request_base(request).rstrip("/"),
             expires=expires,
@@ -520,7 +563,7 @@ def create_app() -> FastAPI:
         return Response(
             content=bundle_bytes,
             media_type="application/zip",
-            headers={"content-disposition": f'attachment; filename="{profile_id}.zip"'},
+            headers={"content-disposition": f'attachment; filename="{profile_id}-{os_name}.zip"'},
         )
 
     @app.get("/launcher/bundle")
@@ -617,6 +660,9 @@ def create_app() -> FastAPI:
             item["last_error"] = job["last_error"] if job else ""
             item["attempts"] = job["attempts"] if job else 0
             item["plan"] = job["plan"] if job else ""
+            item["warmup_days"] = job["warmup_days"] if job else 0
+            item["warmup_completed"] = job["warmup_completed"] if job else 0
+            item["next_action_at"] = job["next_action_at"] if job else None
             # The console's fix-proxy form needs the current value to prefill.
             item["proxy_url"] = row.get("upstream_proxy_url", "")
             items.append(item)
@@ -628,6 +674,30 @@ def create_app() -> FastAPI:
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
         return _public_profile(row)
+
+    @app.delete("/admin/profiles/{profile_id}", dependencies=[admin])
+    async def delete_profile(profile_id: str, force: bool = False) -> dict[str, Any]:
+        """Remove a test or retired profile cleanly."""
+        row = await state.db.get_profile(profile_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "账号不存在")
+        if not force:
+            if row["status"] == "BUSY":
+                raise HTTPException(status.HTTP_409_CONFLICT, "该账号正在使用中，请先释放后再删除")
+            active_keys = await state.db.active_delivery_keys_by_profile(_now_iso())
+            if profile_id in active_keys:
+                raise HTTPException(status.HTTP_409_CONFLICT, "该账号仍有生效中的客户密钥，请先撤销密钥后再删除")
+        await state.db.execute("DELETE FROM delivery_keys WHERE profile_id = ?", (profile_id,))
+        await state.db.execute("DELETE FROM account_jobs WHERE profile_id = ?", (profile_id,))
+        await state.db.execute("DELETE FROM profiles WHERE profile_id = ?", (profile_id,))
+        state.singbox.unregister(int(row["local_proxy_port"]))
+        if state.singbox.available:
+            try:
+                await state.singbox.reload()
+            except SingBoxError:
+                pass
+        await _export_secrets()
+        return {"deleted": profile_id}
 
     @app.patch("/admin/profiles/{profile_id}/proxy", dependencies=[admin])
     async def set_profile_proxy(profile_id: str, body: JobProxy) -> dict[str, Any]:
@@ -728,6 +798,8 @@ def create_app() -> FastAPI:
         created: list[str] = []
         failed = list(errors)
         for row in rows:
+            if body.plan:
+                row.plan = body.plan
             if not row.ip:
                 # The row carried a proxy but no IP. Probing here keeps the
                 # wizard to two columns instead of making the operator look up
@@ -738,7 +810,9 @@ def create_app() -> FastAPI:
                     continue
                 row.ip = probe["ip"]
             try:
-                job = await pipeline.create_job(state.db, state.profiles, row)
+                job = await pipeline.create_job(
+                    state.db, state.profiles, row, warmup_days=body.warmup_days
+                )
                 created.append(job["profile_id"])
             except pipeline.PipelineError as exc:
                 failed.append(f"{row.email}：{exc}")
@@ -774,6 +848,43 @@ def create_app() -> FastAPI:
         except pipeline.PipelineError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
         return {"job": job}
+
+    @app.post("/admin/jobs/{profile_id}/fast-track", dependencies=[admin])
+    async def fast_track_job(profile_id: str) -> dict[str, Any]:
+        """Graduate an account from the warm-up pool immediately and upgrade it to Pro."""
+        try:
+            job = await pipeline.run_job(state.db, state.pool, profile_id, fast_track=True)
+        except pipeline.PipelineError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        return {"job": job}
+
+    @app.post("/admin/jobs/promote", dependencies=[admin])
+    async def promote_mature_jobs(body: PoolPromote) -> dict[str, Any]:
+        """Promote one or more mature free accounts from the warm-up pool into Pro.
+
+        Called automatically by the storefront when a paid order arrives and the
+        hot-standby Pro shelf is empty (`wait=False`), or by an operator/test.
+        """
+        promoted: list[str] = []
+        for _ in range(body.count):
+            pid = await pipeline.next_mature_free_profile_id(state.db)
+            if not pid or pid in promoted:
+                break
+            promoted.append(pid)
+            if body.wait:
+                await pipeline.run_job(state.db, state.pool, pid, fast_track=True)
+            else:
+                asyncio.create_task(pipeline.run_job(state.db, state.pool, pid, fast_track=True))
+        return {"promoted": promoted, "count": len(promoted)}
+
+    @app.post("/admin/pool/hot-standby", dependencies=[admin])
+    async def configure_hot_standby(body: HotStandbyConfig) -> dict[str, Any]:
+        """Set how many ready Pro accounts to keep pre-activated on the shelf (0 = pure JIT)."""
+        target = warmup.set_hot_standby_target(body.target)
+        summary = await pipeline.pool_inventory_summary(state.db)
+        if summary["hot_standby_deficit"] > 0 and WORKER_INTERVAL > 0:
+            asyncio.create_task(pipeline.run_pending(state.db, state.pool, limit=1, concurrency=1))
+        return {"hot_standby_target": target, "pool": summary}
 
     @app.patch("/admin/jobs/{profile_id}/proxy", dependencies=[admin])
     async def set_job_proxy(profile_id: str, body: JobProxy) -> dict[str, Any]:
@@ -872,6 +983,35 @@ def create_app() -> FastAPI:
             except (card_pool.CardError, ValueError) as exc:
                 failed.append(f"第 {index} 张：{exc}")
         return {"created": created, "failed": failed}
+
+    @app.post("/admin/cards/mint", dependencies=[admin], status_code=201)
+    async def mint_cards(body: CardMint) -> dict[str, Any]:
+        try:
+            minted = await card_pool.mint_cards_to_pool(
+                state.db,
+                count=body.count,
+                amount_usd=body.amount_usd,
+                billing_zip=body.billing_zip,
+            )
+        except card_pool.CardError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return {"created": len(minted), "items": minted}
+
+    @app.post("/admin/cards/{card_id}/reset", dependencies=[admin])
+    async def reset_card(card_id: int) -> dict[str, Any]:
+        try:
+            card = await card_pool.reset_card(state.db, card_id)
+        except card_pool.CardError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return {"card": card}
+
+    @app.delete("/admin/cards/{card_id}", dependencies=[admin])
+    async def delete_card(card_id: int) -> dict[str, Any]:
+        try:
+            await card_pool.delete_card(state.db, card_id)
+        except card_pool.CardError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return {"deleted": card_id}
 
     @app.get("/admin/singbox", dependencies=[admin])
     async def singbox_state() -> dict[str, Any]:

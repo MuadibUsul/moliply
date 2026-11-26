@@ -28,9 +28,28 @@ if ! docker exec -i "$DB_CONTAINER" pg_restore --list < "$OUT" >/dev/null 2>&1; 
 fi
 chmod 600 "$OUT"
 
-# Also snapshot CCE SQLite consistently if the API container has /data/cce.sqlite3.
+# Also snapshot CCE SQLite consistently (prefer host systemd DB, fall back to API container).
 CCE_OUT="$BACKUP_DIR/cce/cce-$STAMP.sqlite3"
-if docker ps --format '{{.Names}}' | grep -qx "$API_CONTAINER"; then
+CCE_HOST_DB="${CCE_HOST_DB:-}"
+if [ -z "$CCE_HOST_DB" ]; then
+  for candidate in /home/deploy/cce/server/data/cce.sqlite3 /home/deploy/cce/data/cce.sqlite3; do
+    if [ -f "$candidate" ]; then
+      CCE_HOST_DB="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -n "$CCE_HOST_DB" ] && [ -r "$CCE_HOST_DB" ] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$CCE_HOST_DB" "$CCE_OUT" <<'PY' && chmod 600 "$CCE_OUT" || rm -f "$CCE_OUT"
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.close()
+src.close()
+PY
+elif docker ps --format '{{.Names}}' | grep -qx "$API_CONTAINER"; then
   if docker exec "$API_CONTAINER" test -f /data/cce.sqlite3 2>/dev/null; then
     docker exec "$API_CONTAINER" python -c \
       "import sqlite3; src=sqlite3.connect('/data/cce.sqlite3'); dst=sqlite3.connect('/tmp/cce-bak.sqlite3'); src.backup(dst); dst.close(); src.close()" \
@@ -40,17 +59,26 @@ if docker ps --format '{{.Names}}' | grep -qx "$API_CONTAINER"; then
   fi
 fi
 
-# Keep a copy of .env so a restore also has the matching AES key.
+# Keep a copy of .env and cce.env so a restore also has the matching AES / master keys.
 ENV_OUT=""
 if [ -f "$BASE/.env" ]; then
   ENV_OUT="$BACKUP_DIR/env/env-$STAMP"
   cp "$BASE/.env" "$ENV_OUT"
   chmod 600 "$ENV_OUT"
 fi
+CCE_ENV_OUT=""
+for cce_env_candidate in "${CCE_HOST_ENV:-}" /home/deploy/cce/cce.env /home/deploy/cce/server/.env; do
+  if [ -n "$cce_env_candidate" ] && [ -r "$cce_env_candidate" ] && [ -f "$cce_env_candidate" ]; then
+    CCE_ENV_OUT="$BACKUP_DIR/env/cce-env-$STAMP"
+    cp "$cce_env_candidate" "$CCE_ENV_OUT"
+    chmod 600 "$CCE_ENV_OUT"
+    break
+  fi
+done
 
 # Optional GPG encryption at rest when BACKUP_GPG_RECIPIENT is configured.
 if [ -n "${BACKUP_GPG_RECIPIENT:-}" ] && command -v gpg >/dev/null 2>&1; then
-  for f in "$OUT" "$CCE_OUT" "$ENV_OUT"; do
+  for f in "$OUT" "$CCE_OUT" "$ENV_OUT" "$CCE_ENV_OUT"; do
     if [ -n "$f" ] && [ -f "$f" ]; then
       gpg --batch --yes --trust-model always -e -r "$BACKUP_GPG_RECIPIENT" -o "$f.gpg" "$f"
       chmod 600 "$f.gpg"

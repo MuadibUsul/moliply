@@ -88,6 +88,21 @@ class Database:
                     " WHERE status = 'BUSY' AND last_heartbeat_at IS NULL",
                     (_now_iso(),),
                 )
+            job_cursor = await self.conn.execute("PRAGMA table_info(account_jobs)")
+            job_columns = {row[1] for row in await job_cursor.fetchall()}
+            await job_cursor.close()
+            if "warmup_days" not in job_columns:
+                await self.conn.execute(
+                    "ALTER TABLE account_jobs ADD COLUMN warmup_days INTEGER NOT NULL DEFAULT 3"
+                )
+            if "warmup_completed" not in job_columns:
+                await self.conn.execute(
+                    "ALTER TABLE account_jobs ADD COLUMN warmup_completed INTEGER NOT NULL DEFAULT 0"
+                )
+            if "next_action_at" not in job_columns:
+                await self.conn.execute(
+                    "ALTER TABLE account_jobs ADD COLUMN next_action_at TIMESTAMP"
+                )
             await self.conn.commit()
 
     @asynccontextmanager

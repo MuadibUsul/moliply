@@ -3,219 +3,308 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude 账号托管台</title>
+<title>Claude 账号工作台</title>
 <style>
   :root {
-    --bg: #0e0e10;
-    --panel: #17171a;
-    --panel-2: #1e1e22;
-    --line: #2a2a30;
-    --text: #ededf0;
-    --muted: #8b8b96;
+    --bg: #0d0f14;
+    --panel: #151821;
+    --panel-2: #1b1f2a;
+    --line: #262b38;
+    --line-2: #323848;
+    --text: #eef0f5;
+    --muted: #8f96a8;
+    --faint: #5d6476;
     --accent: #4f8dfd;
-    --accent-dim: #2b4f8f;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --bad: #f85149;
-    --radius: 10px;
+    --accent-soft: #4f8dfd1c;
+    --ok: #34c77b;
+    --ok-soft: #34c77b1a;
+    --warn: #f0b03f;
+    --warn-soft: #f0b03f1a;
+    --bad: #f5655b;
+    --bad-soft: #f5655b17;
+    --radius: 14px;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 14.5px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
   button, input, select, textarea { font: inherit; color: inherit; }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 20px 90px; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 26px 20px 100px; }
+  [hidden] { display: none !important; }
 
-  h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
-  .sub { color: var(--muted); font-size: 12.5px; }
-
+  /* ---------- buttons ---------- */
   .btn {
-    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-    padding: 7px 13px; border-radius: 8px; cursor: pointer; white-space: nowrap;
-    transition: background .13s, border-color .13s, opacity .13s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text);
+    padding: 9px 16px; border-radius: 10px; cursor: pointer; white-space: nowrap;
+    transition: background .14s, border-color .14s, opacity .14s, transform .06s;
   }
-  .btn:hover:not(:disabled) { background: #26262c; border-color: #3a3a42; }
-  .btn:disabled { opacity: .4; cursor: default; }
-  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 560; }
-  .btn-primary:hover:not(:disabled) { background: #3f7ce8; border-color: #3f7ce8; }
-  .btn-sm { padding: 5px 10px; font-size: 12.5px; border-radius: 7px; }
+  .btn:hover:not(:disabled) { background: #232838; border-color: #3d4458; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: #3e7cee; border-color: #3e7cee; }
+  .btn-ok { background: var(--ok); border-color: var(--ok); color: #06210f; font-weight: 650; }
+  .btn-ok:hover:not(:disabled) { background: #2db36d; border-color: #2db36d; }
+  .btn-lg { padding: 12px 22px; font-size: 15.5px; border-radius: 12px; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
   .btn-ghost { background: none; border-color: transparent; color: var(--muted); }
   .btn-ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
   .btn-danger { color: var(--bad); }
-  .btn-danger:hover:not(:disabled) { background: #f8514915; border-color: #f8514955; }
-
-  .gate { max-width: 420px; margin: 14vh auto; text-align: center; }
-  .gate h1 { font-size: 21px; margin-bottom: 8px; }
-  .gate p { color: var(--muted); margin: 0 0 20px; }
-  .gate input { width: 100%; text-align: center; font-family: ui-monospace, Consolas, monospace; }
+  .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: #f5655b66; }
 
   input, textarea, select {
-    width: 100%; background: #101013; border: 1px solid var(--line);
-    padding: 8px 10px; border-radius: 8px; outline: none;
+    width: 100%; background: #0f1218; border: 1px solid var(--line-2);
+    padding: 10px 12px; border-radius: 10px; outline: none;
   }
-  input:focus, textarea:focus, select:focus { border-color: var(--accent-dim); }
-  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-  .field { margin-bottom: 12px; }
-  .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #4f8dfd22; }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 13px; resize: vertical; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .field { margin-bottom: 14px; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
 
-  /* ---- status header ---- */
-  .topbar { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-  .topbar .titles { flex: 1; min-width: 190px; }
-  .metrics { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-  .metric {
-    flex: 1 1 178px; text-align: left; padding: 10px 13px; border-radius: 10px;
-    border: 1px solid var(--line); background: var(--panel); cursor: default;
+  /* ---------- login ---------- */
+  .gate { max-width: 400px; margin: 16vh auto; padding: 0 20px; text-align: center; }
+  .gate .logo { width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 18px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #4f8dfd, #7b5cff); font-size: 26px; }
+  .gate h1 { font-size: 22px; margin: 0 0 8px; }
+  .gate p { color: var(--muted); margin: 0 0 22px; }
+  .gate input { text-align: center; margin-bottom: 12px; }
+
+  /* ---------- header ---------- */
+  .head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  .head h1 { font-size: 21px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+  .head .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .head .grow { flex: 1; min-width: 200px; }
+
+  /* ---------- guide (today's one thing) ---------- */
+  .guide {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 20px 22px; border-radius: var(--radius); margin-bottom: 16px;
+    background: linear-gradient(135deg, #1a2440, #161a26 60%); border: 1px solid #2c3a63;
+  }
+  .guide.bad { background: linear-gradient(135deg, #3a1d22, #1a1619 65%); border-color: #6b2c2c; }
+  .guide.ok { background: linear-gradient(135deg, #15301f, #151a1a 65%); border-color: #25553a; }
+  .guide.warn { background: linear-gradient(135deg, #3a2e15, #1a1816 65%); border-color: #6b5420; }
+  .guide .icon { font-size: 30px; width: 54px; height: 54px; border-radius: 14px; display: grid; place-items: center; background: #ffffff10; flex: none; }
+  .guide .txt { flex: 1; min-width: 220px; }
+  .guide .t { font-size: 17px; font-weight: 700; }
+  .guide .d { color: #c5cbda; font-size: 13.5px; margin-top: 3px; }
+
+  /* ---------- setup checklist ---------- */
+  .setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 22px; }
+  .chk {
+    display: flex; align-items: center; gap: 12px; padding: 13px 15px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line); cursor: pointer; text-align: left;
     transition: border-color .14s, background .14s;
   }
-  button.metric { cursor: pointer; }
-  button.metric:hover { border-color: #3a3a42; background: var(--panel-2); }
-  .metric .k { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
-  .metric .v { font-size: 15px; font-weight: 620; margin-top: 3px; }
-  .metric.good .v { color: var(--ok); }
-  .metric.warn .v { color: var(--warn); }
-  .metric.bad .v { color: var(--bad); }
-  .metric.alarm { border-color: #f8514966; background: #f8514910; animation: alarm 1.6s ease-in-out infinite; }
-  @keyframes alarm { 50% { border-color: #f85149cc; background: #f8514920; } }
-  .metric .detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .chk:hover { border-color: var(--line-2); background: var(--panel-2); }
+  .chk .dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; flex: none; font-weight: 700; }
+  .chk.good .dot { background: var(--ok-soft); color: var(--ok); }
+  .chk.bad .dot { background: var(--bad-soft); color: var(--bad); }
+  .chk.warn .dot { background: var(--warn-soft); color: var(--warn); }
+  .chk .k { font-size: 13.5px; font-weight: 600; }
+  .chk .v { font-size: 12.5px; color: var(--muted); }
+  .chk .go { margin-left: auto; color: var(--faint); font-size: 18px; }
 
-  /* ---- filters ---- */
-  .filters { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
-  .pill-filter {
-    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
-    border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
-    color: var(--muted); cursor: pointer; font-size: 12.5px;
+  /* ---------- flow tabs ---------- */
+  .flow { display: flex; align-items: stretch; gap: 0; margin-bottom: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; overflow-x: auto; }
+  .tab {
+    flex: 1; min-width: 132px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 10px 14px; border-radius: 10px; border: 0; background: none; cursor: pointer; text-align: left;
+    color: var(--muted); position: relative;
   }
-  .pill-filter:hover { color: var(--text); border-color: #3a3a42; }
-  .pill-filter.on { background: #4f8dfd1f; border-color: #4f8dfd66; color: #cfe0ff; }
-  .pill-filter .n {
-    font-variant-numeric: tabular-nums; font-size: 11px; padding: 0 5px;
-    border-radius: 999px; background: #ffffff14;
-  }
-  .pill-filter.hot .n { background: #f8514933; color: #ffb4b0; }
+  .tab + .tab::before { content: "›"; position: absolute; left: -6px; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 18px; }
+  .tab:hover { background: var(--panel-2); color: var(--text); }
+  .tab.on { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+  .tab .n { font-size: 22px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .tab .l { font-size: 12.5px; }
+  .tab.todo .n { color: var(--bad); }
+  .tab.ready .n { color: var(--ok); }
+  .tab.warmup .n { color: #58d5c9; }
+  .tab.auto .n { color: var(--accent); }
+  .tab.done .n { color: #b39bff; }
+  .tab.zero .n { color: var(--faint); }
 
-  /* ---- cards ---- */
-  .grid { display: grid; gap: 11px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 14px 16px;
-  }
-  .card.is-running { border-color: #4f8dfd88; animation: breathe 2.2s ease-in-out infinite; }
-  @keyframes breathe { 50% { border-color: #4f8dfd33; } }
-  .card-top { display: flex; align-items: flex-start; gap: 12px; }
-  .name { font-weight: 620; font-size: 14.5px; word-break: break-all; }
-  .meta { color: var(--muted); font-size: 11.5px; margin-top: 3px; font-family: ui-monospace, Consolas, monospace; }
+  .section-tip { color: var(--muted); font-size: 13px; margin: -6px 2px 14px; }
 
-  .pill {
-    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
-    border: 1px solid transparent; white-space: nowrap; font-weight: 550;
-  }
-  .p-idle { color: var(--ok); background: #3fb9501a; border-color: #3fb95038; }
-  .p-busy { color: var(--accent); background: #4f8dfd1a; border-color: #4f8dfd38; }
-  .p-cooldown { color: var(--warn); background: #d299221a; border-color: #d2992238; }
-  .p-bad { color: var(--bad); background: #f851491a; border-color: #f8514938; }
-  .p-dead { color: var(--muted); background: #8b8b961a; border-color: #8b8b9638; }
+  /* ---------- account cards ---------- */
+  .list { display: grid; gap: 12px; }
+  .acct { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+  .acct.running { border-color: #4f8dfd88; animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { border-color: #4f8dfd30; } }
+  .acct-top { display: flex; align-items: flex-start; gap: 12px; }
+  .acct .who { flex: 1; min-width: 0; }
+  .acct .email { font-weight: 650; font-size: 15px; word-break: break-all; }
+  .acct .meta { color: var(--faint); font-size: 12px; margin-top: 2px; }
+  .badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; white-space: nowrap; font-weight: 600; border: 1px solid transparent; }
+  .b-bad { color: #ffb3ad; background: var(--bad-soft); border-color: #f5655b40; }
+  .b-warn { color: #ffd88a; background: var(--warn-soft); border-color: #f0b03f40; }
+  .b-ok { color: #9ff0c4; background: var(--ok-soft); border-color: #34c77b40; }
+  .b-run { color: #bcd4ff; background: var(--accent-soft); border-color: #4f8dfd40; }
+  .b-done { color: #d3c6ff; background: #8f6bff1c; border-color: #8f6bff40; }
+  .b-mute { color: var(--muted); background: #ffffff0a; border-color: var(--line); }
 
-  .actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
-  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-  .note.warn { color: #e6b455; }
-  .note.bad { color: #ffb4b0; }
+  .say { margin-top: 12px; font-size: 14px; }
+  .say b { color: #fff; }
+  .why { margin-top: 10px; padding: 11px 13px; border-radius: 10px; background: #0f1218; border: 1px solid var(--line); font-size: 13.5px; }
+  .why .lbl { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  details.raw { margin-top: 6px; }
+  details.raw summary { cursor: pointer; color: var(--faint); font-size: 12px; }
+  details.raw div { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-all; font-family: ui-monospace, Consolas, monospace; }
 
-  .nextstep {
-    margin-top: 9px; padding: 7px 10px; border-radius: 7px; font-size: 12.5px;
-    background: #4f8dfd14; border: 1px solid #4f8dfd3d; color: #cfe0ff;
-  }
+  .fix { margin-top: 12px; padding: 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2); }
+  .fix .ttl { font-weight: 650; margin-bottom: 4px; }
+  .fix .desc { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .fix .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 640px) { .fix .row { grid-template-columns: 1fr; } }
+  .steps-ol { margin: 0 0 12px; padding-left: 20px; color: #c5cbda; font-size: 13.5px; }
+  .steps-ol li { margin-bottom: 3px; }
 
-  .fixbox { margin-top: 10px; padding: 11px 12px; border: 1px solid #f8514933; background: #f851490d; border-radius: 9px; }
-  .fixbox .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .fixbox .row > * { flex: 1 1 210px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .more { position: relative; margin-left: auto; }
+  .more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 190px; background: #1d2130; border: 1px solid var(--line-2); border-radius: 12px; padding: 6px; box-shadow: 0 14px 40px #0009; }
+  .more-menu button { display: block; width: 100%; text-align: left; padding: 8px 11px; border: 0; background: none; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+  .more-menu button:hover { background: #2a3044; }
+  .more-menu button.danger { color: var(--bad); }
+  .more-menu .sep { height: 1px; background: var(--line); margin: 5px 4px; }
 
-  /* ---- proxy verdict ---- */
-  .verdict { margin-top: 9px; padding: 9px 11px; border-radius: 8px; font-size: 12px; border: 1px solid var(--line); }
-  .verdict.good { background: #16301d; border-color: #3fb95066; color: #bff3cb; }
-  .verdict.ok { background: #2f2a16; border-color: #e6b45566; color: #f0d79a; }
-  .verdict.bad, .verdict.unreachable { background: #3a1d1f; border-color: #f8514966; color: #ffc9c6; }
-  .verdict b { display: block; margin-bottom: 4px; font-size: 13px; }
-  .verdict ul { margin: 4px 0 0; padding-left: 17px; }
-  .verdict .meta { opacity: .8; margin-top: 5px; font-size: 11.5px; }
+  /* progress */
+  .prog { display: flex; gap: 6px; margin-top: 14px; }
+  .prog .s { flex: 1; text-align: center; font-size: 11.5px; color: var(--faint); }
+  .prog .bar { height: 6px; border-radius: 6px; background: #ffffff10; margin-bottom: 6px; }
+  .prog .s.done .bar { background: var(--ok); }
+  .prog .s.done { color: var(--muted); }
+  .prog .s.cur .bar { background: linear-gradient(90deg, var(--accent), #7fb0ff, var(--accent)); background-size: 200% 100%; animation: flow 1.4s linear infinite; }
+  .prog .s.cur { color: #cfe0ff; font-weight: 600; }
+  @keyframes flow { to { background-position: -200% 0; } }
 
-  .empty { text-align: center; padding: 46px 20px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .verdict { margin-top: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line); }
+  .verdict.good { background: #13291b; border-color: #34c77b66; color: #bff3cb; }
+  .verdict.ok { background: #2d2714; border-color: #f0b03f66; color: #f6dc9f; }
+  .verdict.bad, .verdict.unreachable { background: #34191b; border-color: #f5655b66; color: #ffc9c6; }
+  .verdict b { display: block; margin-bottom: 3px; }
+  .verdict ul { margin: 4px 0 0; padding-left: 18px; }
+  .verdict .m { opacity: .8; margin-top: 4px; font-size: 12px; }
 
-  /* ---- drawer ---- */
-  .scrim { position: fixed; inset: 0; background: #000000b0; opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 40; }
+  .empty { text-align: center; padding: 50px 20px; color: var(--muted); border: 1px dashed var(--line-2); border-radius: var(--radius); }
+  .empty .big { font-size: 34px; margin-bottom: 8px; }
+  .empty .t { color: var(--text); font-weight: 650; font-size: 15.5px; margin-bottom: 4px; }
+
+  /* ---------- drawer ---------- */
+  .scrim { position: fixed; inset: 0; background: #000000a8; opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 40; }
   .scrim.open { opacity: 1; pointer-events: auto; }
   .drawer {
-    position: fixed; top: 0; right: 0; height: 100vh; width: min(720px, 96vw);
+    position: fixed; top: 0; right: 0; height: 100vh; width: min(680px, 100vw);
     background: var(--panel); border-left: 1px solid var(--line); z-index: 50;
     transform: translateX(102%); transition: transform .22s ease; display: flex; flex-direction: column;
   }
   .drawer.open { transform: translateX(0); }
-  .drawer-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-  .drawer-head h2 { font-size: 15px; margin: 0; flex: 1; }
-  .drawer-body { padding: 16px 18px 26px; overflow: auto; flex: 1; }
-  .drawer-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 13px 18px; border-top: 1px solid var(--line); }
+  .drawer-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+  .drawer-head h2 { font-size: 17px; margin: 0; flex: 1; }
+  .drawer-body { padding: 20px 22px 28px; overflow: auto; flex: 1; }
+  .drawer-foot { display: flex; gap: 10px; justify-content: flex-end; align-items: center; padding: 14px 22px; border-top: 1px solid var(--line); }
+  .drawer-foot .left { margin-right: auto; color: var(--muted); font-size: 13px; }
 
-  table.preview { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 10px; }
-  table.preview th { text-align: left; color: var(--muted); font-weight: 550; padding: 5px 6px; border-bottom: 1px solid var(--line); }
-  table.preview td { padding: 5px 6px; border-bottom: 1px solid #ffffff0d; font-family: ui-monospace, Consolas, monospace; }
-  table.preview tr.bad td { background: #f8514914; color: #ffb4b0; }
-  table.preview td.st { font-family: inherit; }
-  .pv { padding: 1px 7px; border-radius: 20px; font-size: 11px; }
-  .pv.good { background: #3fb95026; color: #bff3cb; }
-  .pv.ok { background: #e6b45526; color: #f0d79a; }
-  .pv.bad, .pv.unreachable { background: #f8514926; color: #ffc9c6; }
+  .wiz { display: flex; gap: 8px; margin-bottom: 20px; }
+  .wiz .w { flex: 1; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--faint); }
+  .wiz .w i { font-style: normal; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: #ffffff10; font-size: 12px; font-weight: 700; flex: none; }
+  .wiz .w.on { color: var(--text); }
+  .wiz .w.on i { background: var(--accent); color: #fff; }
+  .wiz .w.done i { background: var(--ok); color: #06210f; }
 
-  pre {
-    background: #0a0a0c; border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px; overflow: auto; font: 12px/1.6 ui-monospace, Consolas, monospace;
-    white-space: pre-wrap; word-break: break-all; margin: 0;
+  .box { padding: 14px 16px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); margin-bottom: 14px; }
+  .box.tip { background: #4f8dfd12; border-color: #4f8dfd38; color: #d6e4ff; }
+  .box.warnbox { background: var(--warn-soft); border-color: #f0b03f44; color: #f6dc9f; }
+  .box.okbox { background: var(--ok-soft); border-color: #34c77b44; color: #c4f5d8; }
+  .box h4 { margin: 0 0 6px; font-size: 14px; }
+  .box p { margin: 0; font-size: 13.5px; }
+
+  .osgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+  .os {
+    padding: 14px; border-radius: 12px; border: 1.5px solid var(--line-2); background: var(--panel-2);
+    cursor: pointer; text-align: left; display: flex; gap: 12px; align-items: center;
   }
-  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .os:hover:not(:disabled) { border-color: #4a5370; }
+  .os.on { border-color: var(--accent); background: var(--accent-soft); }
+  .os:disabled { opacity: .4; cursor: not-allowed; }
+  .os .ic { font-size: 24px; }
+  .os .nm { font-weight: 650; font-size: 14px; }
+  .os .ds { font-size: 12px; color: var(--muted); }
+  .seg { display: flex; gap: 8px; flex-wrap: wrap; }
+  .seg button { padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel-2); cursor: pointer; }
+  .seg button.on { border-color: var(--accent); background: var(--accent-soft); color: #d6e4ff; }
 
-  /* ---- toasts ---- */
-  .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 380px; }
-  .toast {
-    background: #22313f; border: 1px solid #3f566e; padding: 10px 14px; border-radius: 9px;
-    font-size: 12.5px; box-shadow: 0 8px 24px #00000066;
-  }
-  .toast.err { background: #3a1d1f; border-color: #f8514977; color: #ffc9c6; }
-  .toast.ok { background: #16301d; border-color: #3fb95077; color: #bff3cb; }
+  table.pv { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+  table.pv th { text-align: left; color: var(--muted); font-weight: 550; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  table.pv td { padding: 7px 8px; border-bottom: 1px solid #ffffff0b; word-break: break-all; }
+  table.pv tr.bad td { background: #f5655b10; color: #ffb3ad; }
+  .pill { padding: 2px 8px; border-radius: 20px; font-size: 11.5px; white-space: nowrap; }
+  .pill.good { background: #34c77b26; color: #bff3cb; }
+  .pill.ok { background: #f0b03f26; color: #f6dc9f; }
+  .pill.bad, .pill.unreachable, .pill.dead { background: #f5655b26; color: #ffc9c6; }
+  .pill.available { background: #34c77b26; color: #bff3cb; }
+  .pill.in_use { background: #4f8dfd26; color: #cfe0ff; }
+  .pill.used { background: #ffffff12; color: var(--muted); }
+
+  pre { background: #0a0c10; border: 1px solid var(--line); border-radius: 10px; padding: 13px; overflow: auto;
+    font: 12.5px/1.65 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; }
+  .msgbox { white-space: pre-wrap; font-size: 13.5px; line-height: 1.75; font-family: inherit; }
+
+  .cardrow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #ffffff0b; font-size: 13.5px; }
+  .cardrow .num { flex: 1; font-family: ui-monospace, Consolas, monospace; }
+  .cardrow .err { color: var(--faint); font-size: 12px; }
+
+  .faq h4 { margin: 18px 0 6px; font-size: 14.5px; }
+  .faq p, .faq li { color: #c5cbda; font-size: 13.5px; }
+  .flowmap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 16px; }
+  .flowmap span { padding: 7px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line-2); font-size: 13px; }
+  .flowmap em { color: var(--faint); font-style: normal; }
+
+  /* ---------- toasts ---------- */
+  .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 200; max-width: 400px; }
+  .toast { background: #1f2a3a; border: 1px solid #3a4f6b; padding: 11px 15px; border-radius: 11px; font-size: 13.5px; box-shadow: 0 10px 30px #0008; }
+  .toast.err { background: #34191b; border-color: #f5655b77; color: #ffc9c6; }
+  .toast.ok { background: #13291b; border-color: #34c77b77; color: #bff3cb; }
 </style>
 </head>
 <body>
 
-<div class="wrap" id="app" hidden>
-  <div class="topbar">
-    <div class="titles">
-      <h1>Claude 账号托管台</h1>
-      <div class="sub" id="fleet-line">加载中…</div>
-    </div>
-    <div class="actions" style="margin-top:0">
-      <button class="btn btn-primary" id="btn-import">＋ 批量导入账号</button>
-      <button class="btn" id="btn-cards">客户与客户端</button>
-      <button class="btn btn-ghost" id="btn-logout">退出</button>
-    </div>
-  </div>
-
-  <div class="metrics" id="metrics"></div>
-  <div class="filters" id="filters"></div>
-  <div class="grid" id="list"></div>
-  <div class="empty" id="list-empty" hidden>没有账号。点右上角「批量导入账号」开始。</div>
+<!-- ============================== login ============================== -->
+<div class="gate" id="gate" style="display:none">
+  <div class="logo">✦</div>
+  <h1>Claude 账号工作台</h1>
+  <p>已登录运营后台会自动进入；否则请输入管理密码</p>
+  <input id="token" type="password" placeholder="管理密码" autocomplete="current-password">
+  <button class="btn btn-primary btn-lg" id="btn-login" style="width:100%">进入工作台</button>
 </div>
 
-<div class="gate" id="gate" style="display:none">
-  <h1>Claude 账号托管台</h1>
-  <p>已登录运营后台可直接进入；否则输入管理密码</p>
-  <div class="field"><input id="token" type="password" placeholder="管理密码" autocomplete="current-password"></div>
-  <button class="btn btn-primary" id="btn-login" style="width:100%">进入</button>
+<!-- ============================== app ============================== -->
+<div class="wrap" id="app" hidden>
+  <div class="head">
+    <div class="grow">
+      <h1>Claude 账号工作台</h1>
+      <div class="sub" id="fleet-line">加载中…</div>
+    </div>
+    <button class="btn btn-primary" data-open="import">＋ 添加账号</button>
+    <button class="btn btn-ghost" data-open="help">使用说明</button>
+    <button class="btn btn-ghost" id="btn-logout">退出</button>
+  </div>
+
+  <div class="guide" id="guide"></div>
+  <div class="setup" id="setup"></div>
+  <div class="flow" id="flow"></div>
+  <div class="section-tip" id="section-tip"></div>
+  <div class="list" id="list"></div>
+  <div class="empty" id="list-empty" hidden></div>
 </div>
 
 <div class="scrim" id="scrim"></div>
-
 <aside class="drawer" id="drawer" aria-hidden="true">
   <div class="drawer-head">
     <h2 id="drawer-title">—</h2>
-    <button class="btn btn-ghost" id="drawer-close">关闭</button>
+    <button class="btn btn-ghost btn-sm" id="drawer-close">关闭 ✕</button>
   </div>
   <div class="drawer-body" id="drawer-body"></div>
   <div class="drawer-foot" id="drawer-foot"></div>
@@ -227,93 +316,166 @@
 const B = window.CCE_BASE ?? location.pathname.replace(/\/ui$/, "").replace(/\/$/, "");
 let TOKEN = localStorage.getItem("cce_token") || "";
 
-/* ------------------------------------------------------------------ utils */
+/* =================================================================== utils */
 
-const $ = (sel) => document.querySelector(sel);
+const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const enc = encodeURIComponent;
+const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
+const daysLeft = (iso) => {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.max(0, Math.ceil(ms / 86400000));
+};
 
 function toast(message, kind) {
   const el = document.createElement("div");
   el.className = "toast" + (kind ? " " + kind : "");
   el.textContent = message;
   $("#toasts").appendChild(el);
-  setTimeout(() => el.remove(), kind === "err" ? 6000 : 3200);
+  setTimeout(() => el.remove(), kind === "err" ? 6500 : 3400);
 }
 
-/** Every request goes through here: prefix, auth, cookie, error reporting. */
 async function apiFetch(path, options = {}) {
   const headers = { "content-type": "application/json", ...(options.headers || {}) };
   if (TOKEN) headers["x-admin-token"] = TOKEN;
   const res = await fetch(B + path, { ...options, credentials: "same-origin", headers });
-  hideBoot();
   let body = null;
   const text = await res.text();
   try { body = text ? JSON.parse(text) : null; } catch { body = { detail: text }; }
   if (res.status === 401) {
-    logout();
-    if ($("#gate").style.display !== "") throw new Error("未登录");
-    throw new Error("密码不对");
+    showGate();
+    throw new Error("未登录或密码不对");
   }
   if (!res.ok) {
-    const detail = body?.detail || body?.error || `HTTP ${res.status}`;
-    toast(detail, "err");
+    const detail = typeof body?.detail === "string" ? body.detail : (body?.error || `请求失败（${res.status}）`);
+    if (!options.quiet) toast(humanizeError(detail), "err");
     throw new Error(detail);
   }
   return body;
 }
 
-function hideBoot() { const b = $("#boot"); if (b) b.hidden = true; }
-
-function logout() {
-  TOKEN = "";
-  localStorage.removeItem("cce_token");
-  $("#app").hidden = true;
-  $("#gate").style.display = "";
+function humanizeError(detail) {
+  const map = [
+    [/no (\S+) client published yet/i, "服务器上还没有放这个系统的客户端程序，请先在「客户端文件」里上传。"],
+    [/gateway CA not published yet/i, "服务器上还没有网关证书（tls.crt），请联系技术同事放到客户端目录。"],
+    [/profile not found/i, "找不到这个账号，可能已被删除，请刷新页面。"],
+    [/admin token not configured/i, "服务器没有配置管理密码（CCE_ADMIN_TOKEN）。"],
+  ];
+  for (const [re, msg] of map) if (re.test(detail)) return msg;
+  return detail;
 }
 
-/* ------------------------------------------------------------------ store */
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
 
-const STORE = { profiles: [], status: null, filter: "all", timer: null, closed: new Set() };
+async function copyText(text, okMsg = "已复制") {
+  try { await navigator.clipboard.writeText(text); toast(okMsg, "ok"); return true; }
+  catch { toast("浏览器不允许自动复制，请手动选中文字复制", "err"); return false; }
+}
 
-const STAGE = {
-  queued:       { label: "排队中", cls: "p-dead", bucket: "active" },
-  registering:  { label: "注册中", cls: "p-busy", bucket: "active" },
-  registered:   { label: "已注册", cls: "p-busy", bucket: "active" },
-  subscribing:  { label: "开 Pro 中", cls: "p-busy", bucket: "active" },
-  subscribed:   { label: "已开通 Pro", cls: "p-busy", bucket: "needcred" },
-  needs_human:  { label: "待人工", cls: "p-cooldown", bucket: "human" },
-  failed:       { label: "流程失败", cls: "p-bad", bucket: "human" },
-  ready:        { label: "就绪", cls: "p-idle", bucket: "ready" },
+/* =================================================================== model */
+
+const STORE = { profiles: [], status: null, tab: null, timer: null, openMenu: null, drafts: {} };
+
+const OS_LIST = [
+  { key: "windows", file: "claude-box-windows-x64.exe", icon: "🪟", name: "Windows", desc: "大多数客户选这个" },
+  { key: "darwin-arm64", file: "claude-box-darwin-arm64", icon: "🍎", name: "Mac（M 芯片）", desc: "2020 年后的苹果电脑" },
+  { key: "darwin-x64", file: "claude-box-darwin-x64", icon: "🍏", name: "Mac（Intel 芯片）", desc: "较老的苹果电脑" },
+  { key: "linux", file: "claude-box", icon: "🐧", name: "Linux", desc: "服务器 / 开发机" },
+];
+
+const AUTO_STAGES = ["queued", "registering", "registered", "subscribing"];
+const PROGRESS = [
+  { key: "queued", label: "排队" },
+  { key: "registering", label: "注册白号" },
+  { key: "registered", label: "养号池沉淀" },
+  { key: "subscribing", label: "绑卡开 Pro" },
+  { key: "creds", label: "取登录凭证" },
+  { key: "ready", label: "可以交付" },
+];
+
+/** Translate a raw backend reason into one of a few problem types a beginner can act on. */
+function issueOf(p) {
+  const reason = `${p.human_note || ""} ${p.last_error || ""}`.toLowerCase();
+  if (p.status === "AUTH_EXPIRED") return "auth";
+  if (p.status === "PROXY_DEAD" || /代理|proxy|ip_drift|出口|socks|timed out|unreachable|kill.?switch/.test(reason)) return "proxy";
+  if (/应用专用密码|app.?password|imap|gmail.*(登录|认证|auth)|authenticationfailed|收不到.*验证码|验证码.*(超时|未收到|没收到)/.test(reason)) return "mail";
+  if (/没有可用卡|declined|insufficient|card|充值卡|拒付|支付失败/.test(reason)) return "card";
+  if (/phone|sms|手机/.test(reason)) return "phone";
+  if (/拦截|captcha|cloudflare|turnstile|人机|challenge|输入框|blocked|找不到/.test(reason)) return "blocked";
+  if (p.job_stage === "failed") return "failed";
+  if (p.job_stage === "needs_human") return "blocked";
+  return "unknown";
+}
+
+const ISSUE_TEXT = {
+  proxy: { title: "代理（网络出口）有问题", say: "这个账号用的代理连不上，或者出口 IP 变了。换一个能用的代理就能继续。" },
+  mail: { title: "Gmail 收验证码失败", say: "系统登录不了这个 Gmail 去收验证码，通常是「应用专用密码」填错了或没开两步验证。" },
+  card: { title: "充值卡扣款失败", say: "开通 Pro 时卡被拒了或者没有可用的卡。先补充充值卡，再重试。" },
+  phone: { title: "网站要求手机验证", say: "注册时网站要求绑定手机，自动流程过不去。建议换一个 Gmail 重新导入，或人工完成后标记。" },
+  blocked: { title: "被网站的安全检查拦住了", say: "注册页面弹出了人机验证或页面没加载出来，自动程序过不去。多数情况下直接重试或换一个更干净的住宅代理就能过。" },
+  auth: { title: "登录状态失效了", say: "这个账号之前的登录凭证过期了，需要重新登录一次拿新凭证（一键完成）。" },
+  failed: { title: "流程中断了", say: "上一次自动开通中途失败。可以直接重试；同一个原因反复失败，就先换代理。" },
+  unknown: { title: "需要人工确认", say: "流程停住了。可以先重试一次，不行再看下面的技术详情。" },
 };
 
-const STATUS_LABEL = {
-  IDLE: ["空闲", "p-idle"], BUSY: ["使用中", "p-busy"], COOLDOWN: ["冷却中", "p-cooldown"],
-  AUTH_EXPIRED: ["登录失效", "p-bad"], PROXY_DEAD: ["出口异常", "p-bad"], BANNED: ["已封禁", "p-dead"],
-};
-
-function bucketOf(p) {
-  if (p.job_stage) return STAGE[p.job_stage]?.bucket || "other";
-  return p.has_credentials ? "ready" : "needcred";
+function isWarmupPool(p) {
+  const stage = p.job_stage || "";
+  return stage === "registered" && (
+    Number(p.warmup_completed || 0) > 0 || Boolean(p.next_action_at) || p.plan === "free_pool"
+  );
 }
 
-function labelFor(p) {
-  if (!p.has_credentials && (p.job_stage === "ready" || !p.job_stage)) return ["缺凭证", "p-cooldown"];
-  if (p.job_stage) return [STAGE[p.job_stage]?.label || p.job_stage, STAGE[p.job_stage]?.cls || "p-dead"];
-  return STATUS_LABEL[p.status] || [p.status, "p-dead"];
+/** One grouping a beginner understands: what do I have to do with this account? */
+function classify(p) {
+  const stage = p.job_stage || "";
+  if (p.status === "BANNED") return { group: "retired", badge: ["已封禁", "b-mute"] };
+  if (p.active_key) {
+    return p.status === "BUSY"
+      ? { group: "done", badge: ["客户正在使用", "b-done"] }
+      : { group: "done", badge: ["已交付", "b-done"] };
+  }
+  if (p.status === "PROXY_DEAD" || p.status === "AUTH_EXPIRED") return { group: "todo", badge: ["需要处理", "b-bad"], issue: issueOf(p) };
+  if (stage === "needs_human" || stage === "failed") return { group: "todo", badge: ["需要处理", "b-bad"], issue: issueOf(p) };
+  if (isWarmupPool(p)) {
+    const done = Number(p.warmup_completed || 0);
+    const total = Math.max(1, Number(p.warmup_days || 3));
+    if (p.plan === "free_pool" && done >= total) {
+      return { group: "warmup", badge: [`成熟白号 (${done}/${total}天)`, "b-ok"] };
+    }
+    return { group: "warmup", badge: [`养号池 ${done}/${total} 天`, "b-run"] };
+  }
+  if (AUTO_STAGES.includes(stage)) return { group: "auto", badge: ["自动开通中", "b-run"] };
+  if (p.status === "COOLDOWN") return { group: "auto", badge: ["休息中，会自动恢复", "b-warn"] };
+  if (p.status === "BUSY") return { group: "auto", badge: ["占用中", "b-run"] };
+  if (!p.has_credentials) return { group: "todo", badge: ["差最后一步", "b-warn"], issue: "creds" };
+  if (p.status === "IDLE") return { group: "ready", badge: ["可以交付", "b-ok"] };
+  return { group: "auto", badge: [p.status, "b-mute"] };
 }
 
-const deliverable = (p) =>
-  p.status === "IDLE" && p.has_credentials && (!p.job_stage || p.job_stage === "ready");
+function clientsReady() {
+  const files = STORE.status?.clients || [];
+  return {
+    files,
+    ca: files.includes("tls.crt"),
+    os: OS_LIST.filter((o) => files.includes(o.file)).map((o) => o.key),
+  };
+}
 
-/* ---------------------------------------------------------------- refresh */
+/* ================================================================= refresh */
 
 async function refreshAll() {
-  let data;
   try {
     const [status, profiles] = await Promise.all([
-      apiFetch("/admin/status"),
-      apiFetch("/admin/profiles"),
+      apiFetch("/admin/status", { quiet: true }),
+      apiFetch("/admin/profiles", { quiet: true }),
     ]);
     STORE.status = status;
     STORE.profiles = profiles.profiles || [];
@@ -326,478 +488,525 @@ async function refreshAll() {
 
 function schedule() {
   if (STORE.timer) clearTimeout(STORE.timer);
-  const active = STORE.profiles.some((p) =>
-    ["queued", "registering", "registered", "subscribing"].includes(p.job_stage || ""));
-  STORE.timer = setTimeout(refreshAll, active ? 3000 : 15000);
+  const busy = STORE.profiles.some((p) => AUTO_STAGES.includes(p.job_stage || ""));
+  STORE.timer = setTimeout(() => {
+    // Do not wipe a half-typed repair form under the operator's fingers.
+    const typing = document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
+      && $("#list").contains(document.activeElement);
+    if (typing) return schedule();
+    refreshAll();
+  }, busy ? 4000 : 15000);
 }
 
-/* ----------------------------------------------------------------- render */
+/* ================================================================== render */
+
+function counts() {
+  const c = { todo: 0, warmup: 0, ready: 0, auto: 0, done: 0, retired: 0, all: STORE.profiles.length };
+  for (const p of STORE.profiles) c[classify(p).group] += 1;
+  return c;
+}
 
 function renderAll() {
-  const counts = { all: STORE.profiles.length, human: 0, active: 0, needcred: 0, ready: 0 };
-  for (const p of STORE.profiles) {
-    const b = bucketOf(p);
-    if (b in counts) counts[b] += 1;
-  }
-  STORE.counts = counts;
-  renderMetrics();
-  renderFilters();
+  const c = counts();
+  STORE.counts = c;
+  if (!STORE.tab) STORE.tab = c.todo ? "todo" : c.ready ? "ready" : c.warmup ? "warmup" : c.auto ? "auto" : c.done ? "done" : "todo";
+  renderGuide(c);
+  renderSetup();
+  renderFlow(c);
   renderList();
+  $("#fleet-line").textContent = c.all
+    ? `共 ${c.all} 个账号 · 养号池 ${c.warmup} · 可交付 ${c.ready} · 已交付 ${c.done}${c.todo ? ` · 待处理 ${c.todo}` : ""}`
+    : "还没有账号，从「添加账号」开始";
 }
 
-function renderMetrics() {
-  const s = STORE.status;
-  if (!s) return;
+function renderGuide(c) {
+  const s = STORE.status || {};
   const cards = s.cards || {};
-  const available = cards.available || 0;
-  const running = s.worker?.busy;
-
-  const readyCls = s.ready ? "good" : "bad";
-  const readyText = s.ready ? "正常" : "异常";
-  const readyDetail = s.ready ? "全部组件就绪" : s.problems.join("；");
-
-  const workerCls = !s.worker?.enabled ? "bad" : running ? "warn" : "good";
-  const workerText = !s.worker?.enabled ? "已停止" : running ? "正在执行" : "运行中";
-  const workerDetail = running
-    ? `${s.worker.running_email || s.worker.running_profile} · ${s.worker.running_stage}`
-    : s.worker?.queued ? `排队 ${s.worker.queued} 条` : "空闲";
-
-  $("#metrics").innerHTML = [
-    `<div class="metric ${readyCls}"><div class="k">系统就绪</div><div class="v">${readyText}</div><div class="detail">${esc(readyDetail)}</div></div>`,
-    `<button class="metric ${workerCls}" data-open="worker"><div class="k">调度引擎</div><div class="v">${workerText}</div><div class="detail">${esc(workerDetail)}</div></button>`,
-    `<button class="metric ${available ? "good" : "bad alarm"}" data-open="cards"><div class="k">充值卡弹药</div><div class="v">可用 ${available}</div><div class="detail">使用中 ${cards.in_use || 0} · 已废 ${cards.dead || 0} · 已用 ${cards.used || 0}</div></button>`,
-  ].join("");
-
-  $("#metrics").querySelectorAll("[data-open]").forEach((el) => {
-    el.onclick = () => openDrawer(el.dataset.open);
-  });
+  const issuer = s.vcc_issuer || {};
+  const hasCardSupply = Boolean((cards.available || 0) || issuer.auto_mint);
+  let g;
+  if (s.ready === false) {
+    g = { cls: "bad", icon: "⚠️", t: "系统还没准备好", d: `服务器缺少必要配置：${(s.problems || []).join("；")}。请把这句话发给技术同事处理。`, btn: null };
+  } else if (s.worker && !s.worker.enabled) {
+    g = { cls: "bad", icon: "⏸", t: "自动开通引擎没有运行", d: "账号不会自动推进。可以先手动推进一次，并通知技术同事检查服务。", btn: ["立即推进一次", "run-worker"] };
+  } else if (c.todo) {
+    g = { cls: "warn", icon: "🛠", t: `有 ${c.todo} 个账号需要你处理`, d: "每个账号下面都写好了原因和怎么修，照着点按钮就行。", btn: ["去处理", "tab:todo"] };
+  } else if (!c.all && !hasCardSupply) {
+    g = { cls: "", icon: "①", t: "第一步：先准备充值卡", d: "开通 Claude Pro 需要扣款。你可以手动添卡，或者配置 A类/B类(Lithic) 发卡 API 全自动出卡。", btn: ["添加充值卡", "open:cards"] };
+  } else if (!c.all) {
+    g = { cls: "", icon: "②", t: "第二步：添加要开通的 Gmail 账号", d: "填写 Gmail、应用专用密码与代理，系统会自动注册、绑卡开 Pro、取凭证。", btn: ["添加账号", "open:import"] };
+  } else if (c.ready) {
+    g = { cls: "ok", icon: "🎁", t: `有 ${c.ready} 个账号可以交付`, d: "商城售出时会自动分配；你也可以手动交付给客户，一键生成整合包。", btn: ["去交付", "tab:ready"] };
+  } else if (c.auto) {
+    g = { cls: "", icon: "⏳", t: `系统正在自动开通 ${c.auto} 个账号`, d: "不需要你做任何事，页面会自动刷新。完成后会出现在「可以交付」。", btn: null };
+  } else if (c.all && !hasCardSupply) {
+    g = { cls: "warn", icon: "💳", t: "充值卡用完了", d: "新导入的账号会卡在开通 Pro 这一步。建议现在补充充值卡或开启 API 自动开卡。", btn: ["添加充值卡", "open:cards"] };
+  } else {
+    g = { cls: "ok", icon: "✅", t: "一切正常", d: "暂时没有要处理的事。需要更多库存时，点「添加账号」。", btn: ["添加账号", "open:import"] };
+  }
+  $("#guide").className = `guide ${g.cls}`;
+  $("#guide").innerHTML = `<div class="icon">${g.icon}</div>
+    <div class="txt"><div class="t">${esc(g.t)}</div><div class="d">${esc(g.d)}</div></div>
+    ${g.btn ? `<button class="btn btn-primary btn-lg" data-go="${g.btn[1]}">${esc(g.btn[0])} →</button>` : ""}`;
 }
 
-function renderFilters() {
-  const c = STORE.counts;
-  const defs = [
-    ["all", "全部", c.all, false],
-    ["human", "待人工 / 失败", c.human, true],
-    ["active", "队列与执行中", c.active, false],
-    ["needcred", "缺凭证待同步", c.needcred, false],
-    ["ready", "就绪可交付", c.ready, false],
+function renderSetup() {
+  const s = STORE.status || {};
+  const cards = s.cards || {};
+  const avail = cards.available || 0;
+  const issuer = s.vcc_issuer || {};
+  const cl = clientsReady();
+  const worker = s.worker || {};
+  const cardCls = avail >= 3 || issuer.auto_mint ? "good" : avail ? "warn" : "bad";
+  const cardDot = avail || issuer.auto_mint ? "✓" : "!";
+  const cardVal = issuer.auto_mint
+    ? `自动发卡已就绪（本地备卡 ${avail} 张）`
+    : avail ? `还能用 ${avail} 张${avail < 3 ? "（快用完了）" : ""}` : "没有可用的卡";
+  const items = [
+    {
+      cls: cardCls,
+      dot: cardDot,
+      k: "充值卡",
+      v: cardVal,
+      open: "cards",
+    },
+    {
+      cls: cl.ca && cl.os.length ? (cl.os.length >= 2 ? "good" : "warn") : "bad",
+      dot: cl.ca && cl.os.length ? "✓" : "!",
+      k: "客户端文件",
+      v: cl.ca && cl.os.length
+        ? `已支持 ${cl.os.map((k) => OS_LIST.find((o) => o.key === k).name).join("、")}`
+        : "未上传，客户无法一键下载",
+      open: "clients",
+    },
+    {
+      cls: s.ready === false ? "bad" : !worker.enabled ? "bad" : "good",
+      dot: s.ready === false || !worker.enabled ? "!" : "✓",
+      k: "自动引擎",
+      v: s.ready === false ? "配置缺失" : !worker.enabled ? "已停止"
+        : worker.busy ? `正在处理 ${worker.running_email || worker.running_profile}` : worker.queued ? `排队 ${worker.queued} 个` : "空闲待命",
+      open: "engine",
+    },
   ];
-  $("#filters").innerHTML = defs.map(([key, label, n, hot]) =>
-    `<button class="pill-filter ${STORE.filter === key ? "on" : ""} ${hot && n ? "hot" : ""}" data-filter="${key}">
-       ${label}<span class="n">${n}</span>
-     </button>`).join("");
-  $("#filters").querySelectorAll("[data-filter]").forEach((el) => {
-    el.onclick = () => { STORE.filter = el.dataset.filter; renderAll(); };
+  const pool = s.pool || {};
+  const hotTarget = Number(pool.hot_standby_target || 0);
+  items.push({
+    cls: "good",
+    dot: "⚡",
+    k: "Pro 热备与时间保值",
+    v: hotTarget === 0
+      ? `零损耗模式（客户付款才开 Pro · 池内熟号 ${pool.mature_free || 0}）`
+      : `常备 ${hotTarget} 个秒发（现成 ${pool.ready_pro || 0} · 池内熟号 ${pool.mature_free || 0}）`,
+    open: "standby",
   });
+  $("#setup").innerHTML = items.map((i) => `<button class="chk ${i.cls}" data-open="${i.open}">
+      <span class="dot">${i.dot}</span>
+      <span><div class="k">${i.k}</div><div class="v">${esc(i.v)}</div></span>
+      <span class="go">›</span>
+    </button>`).join("");
+}
+
+const TABS = [
+  ["todo", "需要你处理", "照着提示点按钮修好它们。"],
+  ["warmup", "白号养号池", "已注册成功的免费号在这里每天自动自然对话 2–3 天沉淀权重（防 KYC / 秒封），养满后自动或一键出池开 Pro。"],
+  ["auto", "自动开通中", "系统正在自动注册和开通，无需操作，等着就行。"],
+  ["ready", "可以交付", "这些账号已经开好，可以卖给客户。商城下单会自动分配，也可以在这里手动交付。"],
+  ["done", "已交付", "已经发给客户的账号。可以重新下载整合包，或到期前撤销收回。"],
+  ["all", "全部", "所有账号。"],
+];
+
+function renderFlow(c) {
+  $("#flow").innerHTML = TABS.map(([key, label]) => {
+    const n = key === "all" ? c.all : c[key];
+    return `<button class="tab ${key} ${STORE.tab === key ? "on" : ""} ${n ? "" : "zero"}" data-tab="${key}">
+      <span class="n">${n}</span><span class="l">${label}</span></button>`;
+  }).join("");
+  $("#section-tip").textContent = TABS.find((t) => t[0] === STORE.tab)?.[2] || "";
 }
 
 function renderList() {
-  const rows = STORE.filter === "all"
-    ? STORE.profiles
-    : STORE.profiles.filter((p) => bucketOf(p) === STORE.filter);
-  $("#list-empty").hidden = rows.length > 0;
-  $("#list-empty").textContent = STORE.profiles.length
-    ? "该分类下没有账号。"
-    : "没有账号。点右上角「批量导入账号」开始。";
-  $("#list").innerHTML = rows.map(card).join("");
-  $("#list").querySelectorAll("[data-act]").forEach((el) => {
-    el.onclick = () => onAction(el.dataset.act, el.dataset.id);
-  });
-  $("#fleet-line").textContent = STORE.profiles.length
-    ? `${STORE.profiles.length} 个账号 · 待人工 ${STORE.counts.human} · 就绪 ${STORE.counts.ready}`
-    : "尚无账号";
+  const rows = STORE.profiles
+    .filter((p) => STORE.tab === "all" || classify(p).group === STORE.tab)
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  const empty = $("#list-empty");
+  empty.hidden = rows.length > 0;
+  if (!rows.length) {
+    const E = {
+      todo: ["🎉", "没有需要你处理的账号", "所有账号都在正常推进。"],
+      warmup: ["🌱", "养号池里还没有白号", "添加账号时选择「2–3 天高权重养号」，注册成功后会自动进入这里每天对话沉淀权重。"],
+      auto: ["😴", "现在没有正在开通的账号", "点右上角「添加账号」，系统会自动开始。"],
+      ready: ["📦", "暂时没有可交付的账号", STORE.counts.warmup ? "养号池里有白号正在沉淀权重，也可以去养号池点「立即出池开 Pro」。" : STORE.counts.auto ? "有账号正在自动开通，完成后会出现在这里。" : "先添加账号，开通完成后会出现在这里。"],
+      done: ["📭", "还没有交付过账号", "在「可以交付」里点「交付给客户」即可。"],
+      all: ["👋", "还没有任何账号", "按页面顶部的提示一步步来。"],
+    }[STORE.tab];
+    empty.innerHTML = `<div class="big">${E[0]}</div><div class="t">${E[1]}</div><div>${E[2]}</div>`;
+  }
+  $("#list").innerHTML = rows.map(acctCard).join("");
+  restoreDrafts();
 }
 
-function card(p) {
-  const [label, cls] = labelFor(p);
+function acctCard(p) {
+  const k = classify(p);
+  const id = esc(p.profile_id);
   const running = STORE.status?.worker?.running_profile === p.profile_id;
-  const trouble = p.status === "PROXY_DEAD" || p.status === "AUTH_EXPIRED";
-  const reason = p.human_note || p.last_error || "";
-  const needCred = !p.has_credentials && (!p.job_stage || p.job_stage === "ready" || p.job_stage === "subscribed");
-  const canDeliver = deliverable(p);
-  const next = nextStep(p, { needCred, trouble, canDeliver });
-
-  return `<div class="card ${running ? "is-running" : ""}">
-    <div class="card-top">
-      <div style="flex:1">
-        <div class="name">${esc(p.email || p.profile_id)}</div>
-        <div class="meta">${esc(p.profile_id)} · 出口 ${esc(p.expected_ip)} · 端口 ${esc(p.local_proxy_port)}</div>
+  const head = `<div class="acct-top">
+      <div class="who">
+        <div class="email">${esc(p.email || p.profile_id)}</div>
+        <div class="meta">编号 ${id}${p.expected_ip ? ` · 出口 ${esc(p.expected_ip)}` : ""}</div>
       </div>
-      <span class="pill ${cls}">${label}</span>
-    </div>
+      <span class="badge ${k.badge[1]}">${esc(k.badge[0])}</span>
+    </div>`;
 
-    ${next ? `<div class="nextstep">下一步：${esc(next.hint)}</div>` : ""}
-    ${reason ? `<div class="note ${p.job_stage === "needs_human" ? "warn" : "bad"}">${esc(friendly(reason))}</div>` : ""}
+  let body = "";
+  let actions = "";
+  if (k.group === "todo") ({ body, actions } = todoBody(p, k.issue));
+  else if (k.group === "warmup") ({ body, actions } = warmupBody(p, running));
+  else if (k.group === "auto") ({ body, actions } = autoBody(p, running));
+  else if (k.group === "ready") ({ body, actions } = readyBody(p));
+  else if (k.group === "done") ({ body, actions } = doneBody(p));
+  else body = `<div class="say">这个账号已停用，不会再被交付。</div>`;
 
-    ${p.job_stage === "needs_human" || (!p.job_stage && trouble) ? fixBox(p) : ""}
-
-    <div class="actions">
-      ${next?.act ? `<button class="btn btn-primary btn-sm" data-act="${next.act}" data-id="${esc(p.profile_id)}">${esc(next.label)}</button>` : ""}
-      ${p.job_stage && !["ready"].includes(p.job_stage) && !running
-        ? `<button class="btn btn-sm" data-act="resume" data-id="${esc(p.profile_id)}">重跑流程</button>` : ""}
-      ${canDeliver ? `<button class="btn btn-sm" data-act="bundle" data-id="${esc(p.profile_id)}">整合包</button>` : ""}
-      <button class="btn btn-sm btn-ghost" data-act="stealth" data-id="${esc(p.profile_id)}">检测环境</button>
-      ${(p.status === "BUSY" || p.status === "COOLDOWN")
-        ? `<button class="btn btn-sm btn-danger" data-act="release" data-id="${esc(p.profile_id)}">释放</button>` : ""}
-    </div>
+  return `<div class="acct ${running ? "running" : ""}" data-pid="${id}">
+    ${head}${body}
+    <div class="actions">${actions}${moreMenu(p, k)}</div>
   </div>`;
 }
 
-/** The one thing this account needs next, so the operator never has to choose. */
-function nextStep(p, { needCred, trouble, canDeliver }) {
+function rawDetails(p) {
+  const raw = [p.human_note, p.last_error].filter(Boolean).join(" ｜ ");
+  return raw ? `<details class="raw"><summary>技术详情（给技术同事看）</summary><div>${esc(raw)}${p.attempts ? ` · 已尝试 ${p.attempts} 次` : ""}</div></details>` : "";
+}
+
+function proxyForm(p, open = true) {
+  const id = esc(p.profile_id);
+  return `<div class="fix" id="pxbox-${id}" ${open ? "" : "hidden"}>
+    <div class="ttl">换一个代理</div>
+    <div class="desc">粘贴新的住宅代理地址，先点「检测」看能不能用，显示「可以用」后再点「保存并重试」。出口 IP 不用填，系统会自动识别。</div>
+    <div class="row">
+      <div class="field"><label>新代理地址</label>
+        <input data-draft="px-${id}" id="px-${id}" placeholder="socks5://用户名:密码@地址:端口" value="${esc(p.proxy_url || "")}"></div>
+      <div class="field"><label>出口 IP（可不填）</label>
+        <input data-draft="ip-${id}" id="ip-${id}" placeholder="留空自动识别"></div>
+    </div>
+    <div class="actions" style="margin-top:0">
+      <button class="btn btn-sm" data-act="proxychk" data-id="${id}">① 检测这个代理</button>
+      <button class="btn btn-primary btn-sm" data-act="fixproxy" data-id="${id}">② 保存并重试</button>
+    </div>
+    <div class="verdict" id="v-${id}" hidden></div>
+  </div>`;
+}
+
+function todoBody(p, issue) {
+  const id = esc(p.profile_id);
+  if (issue === "creds") {
+    return {
+      body: `<div class="say">账号已经开通好了，<b>还差最后一步：取登录凭证</b>（客户靠它直接用，不需要密码）。点一下按钮，系统会自动完成，大约 1 分钟。</div>`,
+      actions: `<button class="btn btn-primary" data-act="sync" data-id="${id}">取登录凭证</button>
+        <button class="btn" data-act="importcred" data-id="${id}">手动导入已有凭证</button>`,
+    };
+  }
+  const info = ISSUE_TEXT[issue] || ISSUE_TEXT.unknown;
+  let fix = "";
+  let actions = "";
+  if (issue === "proxy") {
+    fix = proxyForm(p);
+  } else if (issue === "mail") {
+    fix = `<div class="fix">
+      <div class="ttl">重新填写 Gmail 应用专用密码</div>
+      <ol class="steps-ol">
+        <li>用这个 Gmail 登录 <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Google 应用专用密码页面</a>（需要先开启两步验证）</li>
+        <li>随便起个名字，生成一个 <b>16 位</b>密码，复制过来</li>
+        <li>先点「测试」，显示可用后点「保存并重试」</li>
+      </ol>
+      <div class="field"><input data-draft="pw-${id}" id="pw-${id}" placeholder="abcd efgh ijkl mnop"></div>
+      <div class="actions" style="margin-top:0">
+        <button class="btn btn-sm" data-act="testmail" data-id="${id}">① 测试</button>
+        <button class="btn btn-primary btn-sm" data-act="fixmail" data-id="${id}">② 保存并重试</button>
+      </div>
+    </div>`;
+  } else if (issue === "card") {
+    actions = `<button class="btn btn-primary" data-go="open:cards">添加充值卡</button>
+      <button class="btn" data-act="resume" data-id="${id}">已补卡，重试</button>`;
+  } else if (issue === "auth") {
+    actions = `<button class="btn btn-primary" data-act="sync" data-id="${id}">重新登录取凭证</button>`;
+  } else if (issue === "phone") {
+    actions = `<button class="btn" data-act="resume" data-id="${id}">再试一次</button>
+      <button class="btn btn-danger" data-act="delete" data-id="${id}">放弃这个账号</button>`;
+  } else {
+    actions = `<button class="btn btn-primary" data-act="resume" data-id="${id}">直接重试</button>
+      <button class="btn" data-act="toggleproxy" data-id="${id}">换代理再试</button>
+      <button class="btn" data-act="skip" data-id="${id}">我已手动搞定，标为完成</button>`;
+    fix = proxyForm(p, false);
+  }
+  return {
+    body: `<div class="why"><div class="lbl">出了什么问题</div><b>${esc(info.title)}</b><div style="color:#c5cbda;margin-top:2px">${esc(info.say)}</div>${rawDetails(p)}</div>${fix}`,
+    actions,
+  };
+}
+
+function warmupBody(p, running) {
+  const id = esc(p.profile_id);
+  const done = Number(p.warmup_completed || 0);
+  const total = Math.max(1, Number(p.warmup_days || 3));
+  const nextAt = p.next_action_at ? String(p.next_action_at).slice(0, 16).replace("T", " ") + " UTC" : "";
+  const steps = Array.from({ length: total }, (_, idx) => {
+    const dayNum = idx + 1;
+    const cls = dayNum <= done ? "done" : (dayNum === done + 1 && running) ? "cur" : "";
+    return `<div class="s ${cls}"><div class="bar"></div>第 ${dayNum} 天自然对话</div>`;
+  }).join("");
+  const mature = done >= total;
+  const say = mature && p.plan === "free_pool"
+    ? `🌱 <b>已完成全部 ${done}/${total} 天高权重养号</b>，目前作为成熟免费白号存放在池子里（不消耗充值卡）。有订单时点下方按钮即可立刻绑卡升级 Pro。`
+    : mature
+      ? `🌱 已完成 ${done}/${total} 天自然对话，正在最后冷却，预计 <b>${esc(nextAt || "即将")}</b> 自动绑卡升级 Pro。`
+      : `🌱 正在白号养号池沉淀权重（已完成 <b>${done}/${total} 天</b> 自然对话，固定同一静态住宅 IP 与 Cookie）。下次自动对话：<b>${esc(nextAt || "排队中")}</b>。`;
+  return {
+    body: `<div class="say">${say}</div><div class="prog">${steps}</div>`,
+    actions: `<button class="btn btn-primary btn-sm" data-act="fasttrack" data-id="${id}">⚡ 立即出池开通 Pro</button>
+      ${!mature ? `<button class="btn btn-sm" data-act="resume" data-id="${id}">现在跑一次今天对话</button>` : ""}`,
+  };
+}
+
+function autoBody(p, running) {
   const stage = p.job_stage || "";
-  if (trouble && ["AUTH_EXPIRED"].includes(p.status))
-    return { hint: "登录态失效了，需要重新登一次拿新凭证。", act: "sync", label: "重新登录取凭证" };
-  if (trouble) return { hint: "出口 IP 变了或代理断了。填入新代理后点①检测，通过再保存。" };
-  if (stage === "failed") return { hint: "上次失败了，可以直接重跑；同一原因反复失败就先修代理。" , act: "resume", label: "重跑" };
-  if (canDeliver) return { hint: "已经可以交付给客户了。", act: "deliver", label: "复制交付指令，发给客户" };
-  if (needCred) return { hint: "账号已开通，还差登录凭证（客户靠它登录）。", act: "sync", label: "取登录凭证" };
-  if (stage === "subscribed") return { hint: "Pro 已开通，下一步取登录凭证。", act: "sync", label: "取登录凭证" };
-  if (stage === "ready" && p.has_credentials) return { hint: "已就绪，可以交付。", act: "deliver", label: "交付" };
-  if (["queued", "registering", "registered", "subscribing"].includes(stage))
-    return { hint: `流程正在自己跑（${STAGE[stage]?.label || stage}），等它。` };
-  if (stage === "needs_human") return { hint: "卡住了，需要人处理。下面按原因给了修复框。" };
-  return { hint: "没有在流程里。检查环境后手动标为就绪。", act: "skip", label: "标为就绪" };
+  let idx = PROGRESS.findIndex((s) => s.key === stage);
+  if (stage === "registered") idx = 1;
+  if (idx < 0) idx = 0;
+  const bar = `<div class="prog">${PROGRESS.map((s, i) =>
+    `<div class="s ${i < idx ? "done" : i === idx ? "cur" : ""}"><div class="bar"></div>${s.label}</div>`).join("")}</div>`;
+  let say;
+  if (p.status === "COOLDOWN") say = `账号在<b>休息</b>（用得太频繁被限流），到 ${esc(String(p.cooldown_until || "").slice(5, 16).replace("T", " "))} 会自动恢复，不用管。`;
+  else if (p.status === "BUSY" && !stage) say = "账号被临时占用，用完会自动释放。";
+  else if (stage === "queued") say = p.human_note
+    ? `上次没成功（${esc(friendlyShort(p.human_note))}），系统会<b>自动再试</b>，不用管。`
+    : "已排进队列，系统会<b>按顺序自动开始</b>，不用管。";
+  else say = running ? "系统<b>正在处理</b>这个账号，请耐心等几分钟…" : "系统正在自动推进，不用管。";
+  return { body: `<div class="say">${say}</div>${AUTO_STAGES.includes(stage) ? bar : ""}`, actions: "" };
 }
 
-// Backend errors are written for whoever debugs the pipeline.
-const ERROR_HINTS = [
-  [/gmail|imap|应用专用密码/i, "Gmail 收不到验证码：应用专用密码不对或没开两步验证。"],
-  [/ip_drift|egress ip drift/i, "代理出口 IP 和登记的不一致，得换成同一个 IP。"],
-  [/proxy timed out|proxy unreachable/i, "代理连不上：地址、端口或账号密码有错，也可能已经过期。"],
-  [/human|captcha|challenge|cloudflare/i, "被人机验证拦住了，需要人工过一下。"],
-  [/phone|sms|手机/i, "要手机验证，自动流程过不了。"],
-  [/card|declined|insufficient/i, "充值卡被拒了，换一张卡或看看卡余额。"],
-];
-function friendly(text) {
-  for (const [re, hint] of ERROR_HINTS) if (re.test(text)) return `${hint}（原始：${text}）`;
-  return text;
+function friendlyShort(text) {
+  const t = String(text || "");
+  return t.length > 40 ? t.slice(0, 40) + "…" : t;
 }
 
-/** Repair affordances, chosen from what the backend actually complained about. */
-function fixBox(p) {
-  const reason = (p.human_note || p.last_error || "").toLowerCase();
-  const proxyIssue = reason.includes("代理") || p.status === "PROXY_DEAD" || reason.includes("ip");
-  const mailIssue = reason.includes("验证码") || reason.includes("gmail") || reason.includes("邮箱");
-  const manualGate = !proxyIssue && !mailIssue;
+function readyBody(p) {
+  const id = esc(p.profile_id);
+  return {
+    body: `<div class="say">账号已开通 Claude Pro，<b>可以交付给客户</b>。商城有人下单时会自动分配给他；也可以手动交付。</div>`,
+    actions: `<button class="btn btn-ok" data-act="deliver" data-id="${id}">交付给客户 →</button>`,
+  };
+}
 
-  if (proxyIssue) {
-    return `<div class="fixbox">
-      <div class="field"><label>新的住宅代理 URL</label>
-        <input id="px-${esc(p.profile_id)}" value="${esc(p.proxy_url || "")}" placeholder="socks5://user:pass@host:port"></div>
-      <div class="field"><label>该代理的真实出口 IP（留空则自动探测）</label>
-        <input id="ip-${esc(p.profile_id)}" value="${esc(p.expected_ip || "")}" placeholder="留空自动识别"></div>
-      <div class="actions" style="margin-top:0">
-        <button class="btn btn-sm" data-act="proxychk" data-id="${esc(p.profile_id)}">① 先检测这个代理</button>
-        <button class="btn btn-primary btn-sm" data-act="fixproxy" data-id="${esc(p.profile_id)}">② 保存并重排</button>
-      </div>
-      <div class="verdict" id="v-${esc(p.profile_id)}" hidden></div>
-    </div>`;
-  }
-  if (mailIssue) {
-    return `<div class="fixbox">
-      <div class="field"><label>Gmail 应用专用密码（16 位，可在 Google 账号 → 安全性 生成）</label>
-        <input id="pw-${esc(p.profile_id)}" placeholder="abcd efgh ijkl mnop"></div>
-      <div class="actions" style="margin-top:0">
-        <button class="btn btn-sm" data-act="testmail" data-id="${esc(p.profile_id)}">测试 IMAP</button>
-        <button class="btn btn-primary btn-sm" data-act="fixmail" data-id="${esc(p.profile_id)}">保存并重排</button>
-      </div>
-    </div>`;
-  }
-  return `<div class="fixbox">
-    <div class="note" style="margin-top:0">多半卡在人机校验。先去「检测环境」确认出口与指纹，人工过掉验证后点「标为就绪」。</div>
-    <div class="actions" style="margin-top:8px">
-      <button class="btn btn-primary btn-sm" data-act="skip" data-id="${esc(p.profile_id)}">我已手动处理，标为就绪</button>
+function doneBody(p) {
+  const id = esc(p.profile_id);
+  const left = daysLeft(p.active_key_expires_at);
+  const inUse = p.status === "BUSY";
+  return {
+    body: `<div class="say">${inUse ? "客户<b>正在使用</b>中。" : "已交付给客户。"}
+      有效期到 <b>${esc(day(p.active_key_expires_at))}</b>${left !== null ? `（还剩 ${left} 天）` : ""}。</div>`,
+    actions: `<button class="btn" data-act="redownload" data-id="${id}">重新下载整合包</button>
+      <button class="btn btn-danger" data-act="revoke" data-id="${id}">撤销收回</button>`,
+  };
+}
+
+function moreMenu(p, k) {
+  const id = esc(p.profile_id);
+  const items = [];
+  if (p.job_stage && p.job_stage !== "ready" && k.group !== "auto") items.push(["resume", "重新跑一遍自动流程"]);
+  if (k.group === "todo" || k.group === "ready") items.push(["toggleproxy", "更换代理"]);
+  items.push(["importcred", "手动导入已有凭证（.claude）"]);
+  items.push(["stealth", "检查网络环境是否正常"]);
+  if (k.group === "todo" && k.issue !== "creds") items.push(["skip", "我已手动处理好，标记为完成"]);
+  if (p.status === "BUSY" || p.status === "COOLDOWN") items.push(["release", "强制释放（会断开正在用的客户）"]);
+  const danger = [["delete", "删除这个账号"]];
+  return `<div class="more">
+    <button class="btn btn-ghost btn-sm" data-menu="${id}">更多 ▾</button>
+    <div class="more-menu" id="menu-${id}" hidden>
+      ${items.map(([a, l]) => `<button data-act="${a}" data-id="${id}">${l}</button>`).join("")}
+      <div class="sep"></div>
+      ${danger.map(([a, l]) => `<button class="danger" data-act="${a}" data-id="${id}">${l}</button>`).join("")}
     </div>
   </div>`;
 }
 
-/* ---------------------------------------------------------------- actions */
+/* Keep typed text across auto-refresh. */
+function restoreDrafts() {
+  document.querySelectorAll("[data-draft]").forEach((el) => {
+    const key = el.dataset.draft;
+    if (key in STORE.drafts) el.value = STORE.drafts[key];
+    el.addEventListener("input", () => { STORE.drafts[key] = el.value; });
+  });
+  for (const id of STORE.openProxy || []) {
+    const box = document.getElementById(`pxbox-${id}`);
+    if (box) box.hidden = false;
+  }
+}
 
-// `checks` keys are the inspector's vocabulary; the operator is not.
+/* ================================================================= actions */
+
 const CHECK_NAME = {
   ip_matches: "出口 IP 变了", ua_matches: "浏览器标识不符", cores_matches: "CPU 核数不符",
   locale_matches: "语言与地区不符", timezone_matches: "时区与出口不符",
-  screen_matches: "分辨率不符", webdriver_hidden: "被识别为自动化",
+  screen_matches: "分辨率不符", webdriver_hidden: "被识别为自动化程序",
 };
-const checkName = (k) => CHECK_NAME[k] || k;
 
 function verdictHtml(r) {
-  const head = `<b>${esc(r.verdict || "检测完成")}</b>`;
-  const why = (r.reasons || []).length
-    ? `<ul>${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
-  const drift = r.reason === "ip_drift" ? `<div class="meta">⚠ ${esc(r.detail)}</div>` : "";
+  const good = r.grade === "good";
+  const head = `<b>${good ? "✅ 这个代理可以用" : r.grade === "ok" ? "⚠️ 能用但不够理想" : "❌ 这个代理不能用"}</b>`;
+  const why = (r.reasons || []).length ? `<ul>${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
   const meta = r.ip
-    ? `<div class="meta">出口 ${esc(r.ip)} · ${esc(r.country || "")} ${esc(r.city || "")}<br>${esc(r.isp || "")} ${esc(r.asn || "")}</div>`
-    : `<div class="meta">${esc(r.detail || "")}</div>`;
-  return head + why + drift + meta;
+    ? `<div class="m">出口 ${esc(r.ip)} · ${esc(r.country || "")} ${esc(r.city || "")} · ${esc(r.isp || "")}</div>`
+    : `<div class="m">${esc(r.detail || r.verdict || "")}</div>`;
+  return head + why + meta;
 }
 
 async function onAction(act, id) {
   const p = STORE.profiles.find((x) => x.profile_id === id);
-  if (!p) return;
+  if (!p && act !== "run-worker") return;
+  closeMenus();
   try {
     if (act === "resume") {
-      toast("正在推进，可能要几分钟…");
-      await apiFetch(`/admin/jobs/${id}/run`, { method: "POST" });
-    } else if (act === "sync") {
-      toast("正在打开账号环境取凭证…");
-      await apiFetch(`/admin/profiles/${id}/sync-credentials`, { method: "POST" });
-      toast("凭证已同步", "ok");
-    } else if (act === "stealth") {
-      toast("正在检测出口与指纹…");
-      const r = await apiFetch(`/admin/profiles/${id}/stealth-check`, { method: "POST" });
-      const failed = Object.entries(r.checks || {}).filter(([, ok]) => !ok).map(([k]) => k);
-      toast(failed.length ? `不一致：${failed.map(checkName).join("、")}` : "出口与指纹一致", failed.length ? "err" : "ok");
-    } else if (act === "proxychk") {
-      const proxy = $(`#px-${id}`).value.trim();
-      if (!proxy) return toast("先填代理 URL", "err");
-      // Blank IP means "probe and tell me what it is"; a filled one is checked
-      // against the probe so a stale paste is caught before saving.
-      const typedIp = $(`#ip-${id}`).value.trim();
-      const box = $(`#v-${id}`);
-      box.hidden = false;
-      box.className = "verdict";
-      box.textContent = "检测中…";
-      const r = await apiFetch(`/admin/proxy-check`, {
-        method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: typedIp }),
-      });
-      box.className = `verdict ${r.grade}`;
-      box.innerHTML = verdictHtml(r);
-      if (!typedIp && r.ip) $(`#ip-${id}`).value = r.ip;
-      if (r.grade === "good") toast("这个代理可以用", "ok");
-    } else if (act === "skip") {
-      await apiFetch(`/admin/jobs/${id}/skip`, { method: "POST" });
-      toast("已标为就绪", "ok");
-    } else if (act === "release") {
-      if (!confirm(`释放 ${id}？正在跑的客户会被断开。`)) return;
-      await apiFetch(`/admin/profiles/${id}/release`, { method: "POST" });
-    } else if (act === "bundle") {
-      const os = /Win/i.test(navigator.platform) ? "windows" : "linux";
-      toast("正在打包…");
-      const res = await fetch(`${B}/admin/bundle/${id}?os_name=${os}`, {
-        headers: TOKEN ? { "x-admin-token": TOKEN } : {},
-        credentials: "same-origin",
-      });
-      if (!res.ok) throw new Error(`打包失败 HTTP ${res.status}`);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url; a.download = `${id}-${os}.zip`; a.click();
-      URL.revokeObjectURL(url);
-    } else if (act === "deliver") {
-      await copyDelivery(id);
-    } else if (act === "fixproxy") {
-      const proxy = $(`#px-${id}`).value.trim();
-      let ip = $(`#ip-${id}`).value.trim();
-      if (!proxy) return toast("代理 URL 必填", "err");
-      if (!ip) {
-        // Discovering the IP beats making the operator look it up in a third
-        // place; it is also the only value that can be right.
-        toast("正在识别出口 IP…");
-        const probe = await apiFetch(`/admin/proxy-check`, {
-          method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: "" }),
-        });
-        if (!probe.ip) return toast(probe.detail || "识别不到出口 IP，先点①检测", "err");
-        ip = probe.ip;
-        $(`#ip-${id}`).value = ip;
-      }
-      // A profile imported before the pipeline existed has no job row; fix the
-      // profile itself in that case so the box still works.
-      await apiFetch(p.job_stage ? `/admin/jobs/${id}/proxy` : `/admin/profiles/${id}/proxy`, {
-        method: "PATCH",
-        body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: ip }),
-      });
-      toast(p.job_stage ? "已保存，已重新排队" : "已保存", "ok");
-    } else if (act === "testmail") {
-      const pw = $(`#pw-${id}`).value.trim();
-      if (!pw) return toast("先填应用专用密码", "err");
-      const r = await apiFetch(`/admin/mail/check?email=${encodeURIComponent(p.email)}&app_password=${encodeURIComponent(pw)}`);
-      toast(r.ok ? "IMAP 可用" : r.error, r.ok ? "ok" : "err");
-    } else if (act === "fixmail") {
-      const pw = $(`#pw-${id}`).value.trim();
-      if (!pw) return toast("先填应用专用密码", "err");
-      await apiFetch(`/admin/jobs/${id}/mail`, {
-        method: "PATCH", body: JSON.stringify({ app_password: pw }),
-      });
-      toast("已保存并重排", "ok");
+      apiFetch(`/admin/jobs/${enc(id)}/run`, { method: "POST" }).then(refreshAll).catch(refreshAll);
+      toast("已开始推进，几分钟内会看到结果", "ok");
+      setTimeout(refreshAll, 1500);
+      return;
     }
-  } catch {
-    /* apiFetch already reported it */
-  }
+    if (act === "fasttrack") {
+      if (!confirm("确定跳过剩余养号时间，现在立刻绑卡为该账号开通 Claude Pro 吗？")) return;
+      apiFetch(`/admin/jobs/${enc(id)}/fast-track`, { method: "POST" }).then(refreshAll).catch(refreshAll);
+      toast("⚡ 已开始出池绑卡开通 Pro，请稍候…", "ok");
+      setTimeout(refreshAll, 1500);
+      return;
+    }
+    if (act === "sync") {
+      toast("正在自动登录取凭证，大约需要 1 分钟…");
+      await apiFetch(`/admin/profiles/${enc(id)}/sync-credentials`, { method: "POST" });
+      toast("登录凭证已取到，账号可以交付了", "ok");
+    } else if (act === "stealth") {
+      toast("正在检查网络环境…");
+      const r = await apiFetch(`/admin/profiles/${enc(id)}/stealth-check`, { method: "POST" });
+      const failed = Object.entries(r.checks || {}).filter(([, ok]) => !ok).map(([k]) => CHECK_NAME[k] || k);
+      toast(failed.length ? `发现问题：${failed.join("、")}` : "网络环境正常", failed.length ? "err" : "ok");
+    } else if (act === "toggleproxy") {
+      STORE.openProxy = new Set([...(STORE.openProxy || []), id]);
+      if (classify(p).group !== "todo") { STORE.tab = "all"; renderAll(); }
+      const box = document.getElementById(`pxbox-${id}`);
+      if (box) { box.hidden = false; box.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      else openDrawer("proxy", { id });
+      return;
+    } else if (act === "proxychk") {
+      await checkProxyInto(id);
+      return;
+    } else if (act === "fixproxy") {
+      await saveProxy(p);
+    } else if (act === "testmail") {
+      const pw = ($(`#pw-${id}`)?.value || "").trim();
+      if (!pw) return toast("请先粘贴 16 位应用专用密码", "err");
+      const r = await apiFetch(`/admin/mail/check?email=${enc(p.email)}&app_password=${enc(pw)}`);
+      toast(r.ok ? "✅ 密码正确，可以保存了" : `❌ 密码不对：${r.error || "无法登录"}`, r.ok ? "ok" : "err");
+      return;
+    } else if (act === "fixmail") {
+      const pw = ($(`#pw-${id}`)?.value || "").trim();
+      if (!pw) return toast("请先粘贴 16 位应用专用密码", "err");
+      await apiFetch(`/admin/jobs/${enc(id)}/mail`, { method: "PATCH", body: JSON.stringify({ app_password: pw }) });
+      delete STORE.drafts[`pw-${id}`];
+      toast("已保存，系统会自动重新开始", "ok");
+    } else if (act === "skip") {
+      if (!confirm("确认你已经在别处把这个账号处理好了吗？\n标记后系统会把它当作已开通。")) return;
+      await apiFetch(`/admin/jobs/${enc(id)}/skip`, { method: "POST" });
+      toast("已标记为完成", "ok");
+    } else if (act === "release") {
+      if (!confirm("强制释放后，正在使用的客户会被断开。确定吗？")) return;
+      await apiFetch(`/admin/profiles/${enc(id)}/release`, { method: "POST" });
+      toast("已释放", "ok");
+    } else if (act === "delete") {
+      if (!confirm(`确定删除 ${p.email || id} 吗？删除后不能恢复。`)) return;
+      try {
+        await apiFetch(`/admin/profiles/${enc(id)}`, { method: "DELETE", quiet: true });
+      } catch (e) {
+        if (!confirm(`${e.message}\n\n仍要强制删除吗？（客户密钥会一起失效）`)) return;
+        await apiFetch(`/admin/profiles/${enc(id)}?force=true`, { method: "DELETE" });
+      }
+      toast("已删除", "ok");
+    } else if (act === "deliver") {
+      openDrawer("deliver", { id });
+      return;
+    } else if (act === "importcred") {
+      openDrawer("importcred", { id });
+      return;
+    } else if (act === "redownload") {
+      openDrawer("deliver", { id, reuse: true });
+      return;
+    } else if (act === "revoke") {
+      if (!confirm(`撤销后客户将立刻无法使用这个账号，账号会回到「可以交付」。\n确定撤销 ${p.email || id} 吗？`)) return;
+      await apiFetch(`/admin/keys/${enc(p.active_key)}`, { method: "DELETE" });
+      toast("已撤销，账号可以重新交付", "ok");
+    } else if (act === "run-worker") {
+      toast("已手动推进一次");
+      apiFetch("/admin/jobs/run", { method: "POST", body: JSON.stringify({ limit: 1, concurrency: 1 }) })
+        .then(refreshAll).catch(refreshAll);
+      return;
+    }
+  } catch { /* already reported */ }
   refreshAll();
 }
 
-/** Mint a key and put the whole customer command on the clipboard. */
-async function copyDelivery(id) {
-  const key = await apiFetch("/admin/keys", {
-    method: "POST",
-    body: JSON.stringify({ profile_id: id, plan_tier: "pro", valid_days: 30 }),
-  });
-  const host = location.origin + B;
-  const files = (await apiFetch("/admin/client")).files || [];
-  const gateway = files.includes("tls.crt") ? `${location.hostname}:8444` : "<网关地址>";
-  const win = files.includes("claude-box-windows-x64.exe");
-  const cmd = win
-    ? [
-        "# 1. 下载启动器和证书（只需一次），放到同一个文件夹",
-        `curl.exe -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o claude-box.exe "${host}/launcher/client/claude-box-windows-x64.exe"`,
-        `curl.exe -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
-        "",
-        "# 2. 在该文件夹里打开 PowerShell，每次用这个",
-        `$env:CCE_TUNNEL_CA="$PWD\\gateway-ca.pem"`,
-        `.\\claude-box.exe cli \``,
-        `  --key ${key.card_key} \``,
-        `  --secret ${key.tunnel_secret} \``,
-        `  --host ${host} --gateway ${gateway}`,
-      ].join("\n")
-    : [
-        "# 1. 下载启动器和证书（只需一次）",
-        `curl -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o claude-box "${host}/launcher/client/claude-box"`,
-        `curl -H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}" -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
-        "chmod +x claude-box",
-        "",
-        "# 2. 启动（每次用这个）",
-        `CCE_TUNNEL_CA=./gateway-ca.pem ./claude-box cli \\`,
-        `  --key ${key.card_key} \\`,
-        `  --secret ${key.tunnel_secret} \\`,
-        `  --host ${host} --gateway ${gateway}`,
-      ].join("\n");
+async function checkProxyInto(id) {
+  const proxy = ($(`#px-${id}`)?.value || "").trim();
+  if (!proxy) return toast("请先粘贴代理地址", "err");
+  const ipEl = $(`#ip-${id}`);
+  const typedIp = (ipEl?.value || "").trim();
+  const box = $(`#v-${id}`);
+  box.hidden = false; box.className = "verdict"; box.textContent = "正在检测，约 5–15 秒…";
   try {
-    await navigator.clipboard.writeText(cmd);
-    toast(`交付指令已复制，30 天后失效（${key.expires_at.slice(0, 10)}）`, "ok");
-  } catch {
-    openDrawer("deliver", { id, cmd, expires: key.expires_at });
-    return;
+    const r = await apiFetch("/admin/proxy-check", {
+      method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: typedIp }),
+    });
+    box.className = `verdict ${r.grade}`;
+    box.innerHTML = verdictHtml(r);
+    if (!typedIp && r.ip && ipEl) { ipEl.value = r.ip; STORE.drafts[`ip-${id}`] = r.ip; }
+    return r;
+  } catch (e) {
+    box.className = "verdict bad"; box.textContent = `检测失败：${e.message}`;
   }
-  openDrawer("deliver", { id, cmd, expires: key.expires_at });
 }
 
-/* ----------------------------------------------------------------- drawer */
+async function saveProxy(p) {
+  const id = p.profile_id;
+  const proxy = ($(`#px-${id}`)?.value || "").trim();
+  let ip = ($(`#ip-${id}`)?.value || "").trim();
+  if (!proxy) return toast("请先粘贴代理地址", "err");
+  if (!ip) {
+    toast("正在自动识别出口 IP…");
+    const probe = await apiFetch("/admin/proxy-check", {
+      method: "POST", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: "" }),
+    });
+    if (!probe.ip) return toast("这个代理连不上，识别不到出口 IP，请换一个", "err");
+    ip = probe.ip;
+  }
+  await apiFetch(p.job_stage ? `/admin/jobs/${enc(id)}/proxy` : `/admin/profiles/${enc(id)}/proxy`, {
+    method: "PATCH", body: JSON.stringify({ upstream_proxy_url: proxy, expected_ip: ip }),
+  });
+  delete STORE.drafts[`px-${id}`]; delete STORE.drafts[`ip-${id}`];
+  STORE.openProxy?.delete?.(id);
+  toast(p.job_stage ? "已保存，系统会自动重新开始" : "代理已保存", "ok");
+}
+
+function closeMenus() {
+  document.querySelectorAll(".more-menu").forEach((m) => { m.hidden = true; });
+}
+
+/* ================================================================== drawer */
 
 function openDrawer(kind, ctx = {}) {
-  const body = $("#drawer-body");
-  const foot = $("#drawer-foot");
-  foot.innerHTML = "";
+  closeMenus();
+  $("#drawer-foot").innerHTML = "";
+  $("#drawer-body").innerHTML = "";
   $("#drawer").classList.add("open");
   $("#drawer").setAttribute("aria-hidden", "false");
   $("#scrim").classList.add("open");
-
-  if (kind === "worker") {
-    $("#drawer-title").textContent = "调度引擎";
-    const s = STORE.status || {};
-    body.innerHTML = `<div class="note">自动调度每 ${s.worker?.interval ?? 20} 秒取一条排队任务，一次一个浏览器。</div>
-      <div class="note">当前：${s.worker?.busy ? `${esc(s.worker.running_email)} · ${esc(s.worker.running_stage)}` : "空闲"}</div>
-      <div class="note">排队：${s.worker?.queued ?? 0} 条</div>`;
-    foot.innerHTML = `<button class="btn btn-primary" id="d-run">立即推进一次</button>`;
-    $("#d-run").onclick = async () => {
-      toast("已手动触发");
-      await apiFetch("/admin/jobs/run", { method: "POST", body: JSON.stringify({ limit: 1, concurrency: 1 }) });
-      refreshAll();
-    };
-    return;
-  }
-
-  if (kind === "cards") {
-    $("#drawer-title").textContent = "充值卡";
-    body.innerHTML = `<div class="note">每行 <code>卡号,月,年,CVV,邮编</code>。开 Pro 按顺序取一张可用卡，硬拒付标废不再重试。</div>
-      <div class="field" style="margin-top:12px"><textarea id="d-cards" rows="7" placeholder="4242424242424242,12,2029,123,10001"></textarea></div>
-      <div id="d-cards-list" class="note">加载中…</div>`;
-    foot.innerHTML = `<button class="btn btn-primary" id="d-cards-add">导入卡片</button>`;
-    $("#d-cards-add").onclick = async () => {
-      const items = $("#d-cards").value.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
-        const [pan, month, year, cvv, zip] = line.split(",").map((c) => (c || "").trim());
-        return { pan, exp_month: month, exp_year: year, cvv, billing_zip: zip };
-      }).filter((i) => i.pan && i.cvv);
-      if (!items.length) return toast("没有可导入的行", "err");
-      const r = await apiFetch("/admin/cards", { method: "POST", body: JSON.stringify({ items }) });
-      toast(`导入 ${r.created} 张${r.failed.length ? `，失败 ${r.failed.length}` : ""}`, r.failed.length ? "err" : "ok");
-      $("#d-cards").value = "";
-      loadCardsInto();
-      refreshAll();
-    };
-    loadCardsInto();
-    return;
-  }
-
-  if (kind === "import") {
-    $("#drawer-title").textContent = "批量导入账号";
-    body.innerHTML = `
-      <div class="note"><b>每行：邮箱, Gmail 应用专用密码, 代理URL</b>。出口 IP 不用填，系统会自己探。
-        想手填就把 IP 插在密码后面。可直接从 Excel 复制多行。</div>
-      <div class="field" style="margin-top:12px"><label>代理模板（可选，只有 IP 没有完整代理时用）</label>
-        <input id="d-tpl" placeholder="socks5://user:pass@{ip}:1080"></div>
-      <div class="field"><label>粘贴内容</label>
-        <textarea id="d-import" rows="7" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,http://user:pass@203.0.113.9:1080"></textarea></div>
-      <div class="actions" style="margin-top:0">
-        <button class="btn btn-sm" id="d-check">先批量体检代理</button>
-      </div>
-      <div class="note" id="d-preview-hint">粘贴后这里实时预览解析结果。</div>
-      <div id="d-preview"></div>`;
-    foot.innerHTML = `<button class="btn btn-primary" id="d-do-import">导入并开始</button>`;
-    const reparse = () => renderPreview();
-    $("#d-import").addEventListener("input", reparse);
-    $("#d-tpl").addEventListener("input", reparse);
-    $("#d-check").onclick = async () => {
-      const { rows } = parseRows();
-      const withProxy = rows.filter((r) => r.proxy);
-      if (!withProxy.length) return toast("没有带代理的行", "err");
-      const box = $("#d-preview-hint");
-      box.textContent = `正在逐个体检 ${withProxy.length} 条代理…`;
-      for (const [i, r] of withProxy.entries()) {
-        box.textContent = `体检 ${i + 1}/${withProxy.length}：${r.email}`;
-        try {
-          r.probe = await apiFetch("/admin/proxy-check", {
-            method: "POST", body: JSON.stringify({ upstream_proxy_url: r.proxy, expected_ip: r.ip }),
-          });
-        } catch { r.probe = { grade: "unreachable", verdict: "检测失败" }; }
-      }
-      renderPreview(rows);
-      const bad = withProxy.filter((r) => r.probe?.grade !== "good").length;
-      box.textContent = `体检完成：${withProxy.length - bad} 条可用，${bad} 条有问题（见下表）。`;
-    };
-    $("#d-do-import").onclick = async () => {
-      const { rows } = parseRows();
-      if (!rows.length) return toast("没有可导入的行", "err");
-      const bad = rows.filter((r) => r.problems.length).length;
-      if (bad && !confirm(`有 ${bad} 行格式不完整，仍要导入其余 ${rows.length - bad} 行吗？`)) return;
-      const r = await apiFetch("/admin/jobs/import", {
-        method: "POST",
-        body: JSON.stringify({
-          text: $("#d-import").value,
-          proxy_template: $("#d-tpl").value.trim(),
-        }),
-      });
-      toast(`已建 ${r.created} 个环境${r.failed.length ? `，${r.failed.length} 行失败` : ""}`, r.failed.length ? "err" : "ok");
-      closeDrawer();
-      refreshAll();
-    };
-    renderPreview();
-    return;
-  }
-
-  if (kind === "deliver") {
-    $("#drawer-title").textContent = "交付指令";
-    body.innerHTML = `<div class="note">把下面整段发给客户，30 天后失效（${esc(ctx.expires?.slice(0, 10) || "")}）。</div>
-      <pre style="margin-top:12px">${esc(ctx.cmd)}</pre>`;
-    foot.innerHTML = `<button class="btn btn-primary" id="d-copy">复制</button>`;
-    $("#d-copy").onclick = async () => {
-      try { await navigator.clipboard.writeText(ctx.cmd); toast("已复制", "ok"); }
-      catch { toast("浏览器拒绝剪贴板，请手动选中", "err"); }
-    };
-    return;
-  }
-
-  if (kind === "client") {
-    $("#drawer-title").textContent = "客户端与证书";
-    body.innerHTML = `<div class="note">给客户的文件都从这里发。</div><div id="d-client" class="note">加载中…</div>`;
-    apiFetch("/admin/client").then((data) => {
-      const files = data.files || [];
-      $("#d-client").innerHTML = files.length ? files.map((f) =>
-        `<div class="actions"><a class="btn btn-sm" href="${B}/admin/client/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`
-      ).join("") : "服务器上还没有放客户端程序。";
-    });
-    return;
-  }
+  const fn = DRAWERS[kind];
+  if (fn) fn(ctx);
 }
 
 function closeDrawer() {
@@ -806,107 +1015,724 @@ function closeDrawer() {
   $("#scrim").classList.remove("open");
 }
 
-async function loadCardsInto() {
-  const box = $("#d-cards-list");
-  if (!box) return;
+const setTitle = (t) => { $("#drawer-title").textContent = t; };
+const body = () => $("#drawer-body");
+const foot = () => $("#drawer-foot");
+
+const DRAWERS = {
+  /* ---------------- deliver wizard ---------------- */
+  deliver(ctx) {
+    const p = STORE.profiles.find((x) => x.profile_id === ctx.id);
+    if (!p) return closeDrawer();
+    const cl = clientsReady();
+    const state = { os: cl.os[0] || "windows", days: 30, key: null };
+    const reuse = Boolean(ctx.reuse && p.active_key);
+    setTitle(reuse ? "重新下载整合包" : "交付给客户");
+
+    const step1 = () => {
+      body().innerHTML = `
+        <div class="wiz"><div class="w on"><i>1</i>选择客户电脑</div><div class="w"><i>2</i>下载并发给客户</div></div>
+        <div class="box tip"><p>交付账号：<b>${esc(p.email || p.profile_id)}</b>${reuse ? `（沿用现有密钥，到期日 ${esc(day(p.active_key_expires_at))}，不会多扣库存）` : ""}</p></div>
+        ${!cl.ca || !cl.os.length ? `<div class="box warnbox"><h4>服务器还没放客户端程序</h4><p>暂时只能发「命令行指令」给懂技术的客户。想让客户双击就能用，请先让技术同事把客户端程序和 tls.crt 放到客户端目录。</p></div>` : ""}
+        <label>客户用的是什么电脑？</label>
+        <div class="osgrid">${OS_LIST.map((o) => {
+          const ok = cl.ca && cl.os.includes(o.key);
+          return `<button class="os ${state.os === o.key ? "on" : ""}" data-os="${o.key}" ${ok || !cl.os.length ? "" : "disabled"}>
+            <span class="ic">${o.icon}</span><span><div class="nm">${o.name}</div><div class="ds">${ok ? o.desc : (cl.os.length ? "未上传此系统的程序" : o.desc)}</div></span></button>`;
+        }).join("")}</div>
+        ${reuse ? "" : `<label>给客户用多久？</label>
+        <div class="seg" id="days">${[7, 30, 90].map((d) => `<button data-days="${d}" class="${state.days === d ? "on" : ""}">${d} 天</button>`).join("")}</div>
+        <div class="hint">到期后客户自动无法使用，账号可以收回再卖。</div>`}`;
+      body().querySelectorAll("[data-os]").forEach((b) => b.onclick = () => { state.os = b.dataset.os; step1(); });
+      body().querySelectorAll("[data-days]").forEach((b) => b.onclick = () => { state.days = Number(b.dataset.days); step1(); });
+      const canZip = cl.ca && cl.os.includes(state.os);
+      foot().innerHTML = `<span class="left">${canZip ? "会下载一个压缩包，客户解压后双击即可使用" : "将生成命令行指令"}</span>
+        <button class="btn btn-ok btn-lg" id="d-go">${canZip ? "生成并下载整合包" : "生成交付指令"}</button>`;
+      $("#d-go").onclick = () => go(canZip);
+    };
+
+    const go = async (canZip) => {
+      const btn = $("#d-go");
+      btn.disabled = true; btn.textContent = "正在生成…";
+      try {
+        if (reuse) {
+          state.key = { card_key: p.active_key, expires_at: p.active_key_expires_at, tunnel_secret: null };
+        } else {
+          state.key = await apiFetch("/admin/keys", {
+            method: "POST", body: JSON.stringify({ profile_id: p.profile_id, plan_tier: "pro", valid_days: state.days }),
+          });
+        }
+        if (canZip) {
+          const res = await fetch(`${B}/admin/bundle/${enc(p.profile_id)}?os_name=${enc(state.os)}&card_key=${enc(state.key.card_key)}`, {
+            headers: TOKEN ? { "x-admin-token": TOKEN } : {}, credentials: "same-origin",
+          });
+          if (!res.ok) {
+            let d = `HTTP ${res.status}`;
+            try { d = (await res.json()).detail || d; } catch { /* ignore */ }
+            throw new Error(humanizeError(d));
+          }
+          downloadBlob(await res.blob(), `Claude-${p.profile_id}-${state.os}.zip`);
+        }
+        step2(canZip);
+        refreshAll();
+      } catch (e) {
+        toast(e.message || "生成失败", "err");
+        btn.disabled = false; btn.textContent = "重试";
+        if (state.key && !reuse) refreshAll();
+      }
+    };
+
+    const step2 = (zipped) => {
+      const os = OS_LIST.find((o) => o.key === state.os);
+      const run = state.os === "windows"
+        ? `双击文件夹里的 ${os.file}`
+        : `打开「终端」，进入解压后的文件夹，输入：chmod +x ./${os.file} && ./${os.file}`;
+      const msg = [
+        "您好，您的 Claude Pro 已经开通好了 ✅",
+        "",
+        "使用方法：",
+        "1. 把附件压缩包解压到任意文件夹",
+        `2. ${run}`,
+        "3. 第一次打开会自动连接，看到 Claude 界面即可使用",
+        "",
+        `有效期至：${day(state.key.expires_at)}`,
+        "如果提示找不到 claude，请先安装 Claude Code 官方客户端，再打开一次。",
+        "有任何问题随时联系我～",
+      ].join("\n");
+      const cmd = state.key.tunnel_secret ? manualCommand(state.key) : "";
+      body().innerHTML = `
+        <div class="wiz"><div class="w done"><i>✓</i>选择客户电脑</div><div class="w on"><i>2</i>下载并发给客户</div></div>
+        ${zipped
+          ? `<div class="box okbox"><h4>✅ 整合包已下载</h4><p>在浏览器的下载列表里找到 <b>Claude-${esc(p.profile_id)}-${esc(state.os)}.zip</b>，把它和下面这段话一起发给客户。</p></div>`
+          : `<div class="box warnbox"><h4>已生成交付指令</h4><p>服务器没有对应的客户端程序，请把下面的「命令行指令」发给客户。</p></div>`}
+        <label>发给客户的话（可直接复制）</label>
+        <pre class="msgbox" id="d-msg">${esc(zipped ? msg : `您好，您的 Claude Pro 已开通，有效期至 ${day(state.key.expires_at)}。请按下面的指令操作：`)}</pre>
+        <div class="actions" style="margin-top:10px"><button class="btn btn-primary" id="d-copy-msg">复制这段话</button></div>
+        ${cmd ? `<details class="raw" style="margin-top:18px" ${zipped ? "" : "open"}><summary>命令行指令（客户懂技术时可用）</summary>
+          <pre style="margin-top:8px" id="d-cmd">${esc(cmd)}</pre>
+          <div class="actions" style="margin-top:8px"><button class="btn btn-sm" id="d-copy-cmd">复制指令</button></div></details>` : ""}`;
+      $("#d-copy-msg").onclick = () => copyText($("#d-msg").textContent, "已复制，去发给客户吧");
+      const cc = $("#d-copy-cmd");
+      if (cc) cc.onclick = () => copyText(cmd, "指令已复制");
+      foot().innerHTML = `<button class="btn" id="d-again">再下载一个系统的</button><button class="btn btn-primary" id="d-done">完成</button>`;
+      $("#d-done").onclick = () => { closeDrawer(); STORE.tab = "done"; refreshAll(); };
+      $("#d-again").onclick = () => { closeDrawer(); setTimeout(() => openDrawer("deliver", { id: p.profile_id, reuse: true }), 250); };
+    };
+
+    step1();
+  },
+
+  /* ---------------- import wizard ---------------- */
+  import() {
+    setTitle("添加账号");
+    const st = {
+      mode: STORE.drafts.importMode || "single",
+      step: 1,
+      email: STORE.drafts.sEmail || "",
+      pw: STORE.drafts.sPw || "",
+      proxy: STORE.drafts.sProxy || "",
+      text: STORE.drafts.importText || "",
+      tpl: STORE.drafts.importTpl || "",
+      warmupDays: STORE.drafts.warmupDays ?? 3,
+      planMode: STORE.drafts.planMode || "free_pool",
+      rows: [],
+    };
+    const warmupSelector = () => `
+      <div class="field" style="margin-top:14px">
+        <label>④ 防风控与保值策略（默认养满 3 天后存池不扣卡，客户下单付款才自动开 Pro，0 时间损耗！）</label>
+        <div class="seg" id="w-strategy">
+          <button type="button" data-w="3:free_pool" class="${st.warmupDays === 3 && st.planMode === "free_pool" ? "on" : ""}">🏊 养 3 天成熟白号存池·按单开 Pro（推荐·0损耗）</button>
+          <button type="button" data-w="2:free_pool" class="${st.warmupDays === 2 && st.planMode === "free_pool" ? "on" : ""}">🏊 养 2 天成熟白号存池·按单开 Pro</button>
+          <button type="button" data-w="3:pro" class="${st.warmupDays === 3 && st.planMode === "pro" ? "on" : ""}">🌱 养 3 天后直接开好 Pro 备货</button>
+          <button type="button" data-w="0:pro" class="${st.warmupDays === 0 && st.planMode === "pro" ? "on" : ""}">⚡ 0 天直开 Pro（老号适用）</button>
+        </div>
+      </div>`;
+    const wireWarmup = () => {
+      body().querySelectorAll("[data-w]").forEach((b) => b.onclick = () => {
+        const [d, pm] = b.dataset.w.split(":");
+        st.warmupDays = Number(d);
+        st.planMode = pm;
+        STORE.drafts.warmupDays = st.warmupDays;
+        STORE.drafts.planMode = st.planMode;
+        st.mode === "single" ? renderSingle() : s1();
+      });
+    };
+    const modeBar = () => `<div class="seg" style="margin-bottom:16px">
+      <button data-mode="single" class="${st.mode === "single" ? "on" : ""}">单个填写（新手推荐）</button>
+      <button data-mode="batch" class="${st.mode === "batch" ? "on" : ""}">批量粘贴（多账号）</button>
+    </div>`;
+    const wireMode = () => {
+      body().querySelectorAll("[data-mode]").forEach((b) => b.onclick = () => {
+        st.mode = b.dataset.mode;
+        STORE.drafts.importMode = st.mode;
+        st.mode === "single" ? renderSingle() : s1();
+      });
+    };
+
+    const renderSingle = () => {
+      const avail = STORE.status?.cards?.available || 0;
+      body().innerHTML = `${modeBar()}
+        ${!avail ? `<div class="box warnbox"><p>⚠️ 目前可用充值卡为 0 张。您可以先添加账号，但记得补充充值卡才能自动开通 Pro。</p></div>` : ""}
+        <div class="box tip"><p>把要开通的 Gmail 和住宅代理填在下面，先点测试按钮确认能用，再点底部按钮即可全自动开号。</p></div>
+        <div class="field">
+          <label>① Gmail 邮箱地址</label>
+          <input id="s-email" placeholder="example@gmail.com" value="${esc(st.email)}">
+        </div>
+        <div class="field">
+          <label>② Gmail 16 位应用专用密码（<a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">点此去 Google 生成</a>，不是邮箱登录密码）</label>
+          <div style="display:flex;gap:8px">
+            <input id="s-pw" placeholder="abcd efgh ijkl mnop" value="${esc(st.pw)}">
+            <button class="btn btn-sm" id="s-test-mail">测试邮箱</button>
+          </div>
+          <div class="hint" id="s-mail-res"></div>
+        </div>
+        <div class="field">
+          <label>③ 美国住宅代理地址（向代理商购买后复制过来，出口 IP 会自动识别）</label>
+          <div style="display:flex;gap:8px">
+            <input id="s-proxy" placeholder="socks5://用户名:密码@地址:端口" value="${esc(st.proxy)}">
+            <button class="btn btn-sm" id="s-test-proxy">测试代理</button>
+          </div>
+          <div class="verdict" id="s-proxy-res" hidden></div>
+        </div>
+        ${warmupSelector()}
+        <div class="box" style="margin-top:16px"><h4>提交后系统会自动完成：</h4>
+          <div class="flowmap"><span>① 纯净 ISP 校验 + 注册白号</span><em>→</em><span>② 养号池每天自然对话 (${st.warmupDays}天)</span><em>→</em><span>③ ${st.planMode === "free_pool" ? "在池待命（随时一键开Pro）" : "同州邮编绑卡开 Pro + 取凭证"}</span></div>
+        </div>`;
+      wireMode();
+      wireWarmup();
+      $("#s-email").oninput = (e) => { st.email = e.target.value.trim(); STORE.drafts.sEmail = st.email; };
+      $("#s-pw").oninput = (e) => { st.pw = e.target.value; STORE.drafts.sPw = st.pw; };
+      $("#s-proxy").oninput = (e) => { st.proxy = e.target.value.trim(); STORE.drafts.sProxy = st.proxy; };
+      $("#s-test-mail").onclick = async () => {
+        if (!st.email || !st.email.includes("@")) return toast("请先填好 Gmail 邮箱", "err");
+        if (!st.pw.trim()) return toast("请先填 16 位应用专用密码", "err");
+        const box = $("#s-mail-res");
+        box.textContent = "正在连接 Gmail 测试…";
+        try {
+          const r = await apiFetch(`/admin/mail/check?email=${enc(st.email)}&app_password=${enc(st.pw.trim())}`);
+          box.innerHTML = r.ok
+            ? `<span style="color:var(--ok)">✅ 邮箱连接成功，可以正常收验证码</span>`
+            : `<span style="color:var(--bad)">❌ 连接失败：${esc(r.error || "请检查两步验证与 16 位应用密码")}</span>`;
+        } catch (e) {
+          box.innerHTML = `<span style="color:var(--bad)">❌ ${esc(e.message)}</span>`;
+        }
+      };
+      $("#s-test-proxy").onclick = async () => {
+        if (!st.proxy) return toast("请先填写代理地址", "err");
+        const box = $("#s-proxy-res");
+        box.hidden = false; box.className = "verdict"; box.textContent = "正在检测代理，约 5–15 秒…";
+        try {
+          const r = await apiFetch("/admin/proxy-check", {
+            method: "POST", body: JSON.stringify({ upstream_proxy_url: st.proxy, expected_ip: "" }),
+          });
+          box.className = `verdict ${r.grade}`;
+          box.innerHTML = verdictHtml(r);
+        } catch (e) {
+          box.className = "verdict bad"; box.textContent = `检测失败：${e.message}`;
+        }
+      };
+      foot().innerHTML = `<button class="btn btn-primary btn-lg" id="s-submit">添加并自动开始开通 →</button>`;
+      $("#s-submit").onclick = async () => {
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(st.email)) return toast("请填写正确的 Gmail 邮箱地址", "err");
+        if (!st.pw.trim()) return toast("请填写 16 位 Gmail 应用专用密码", "err");
+        if (!st.proxy) return toast("请填写住宅代理地址", "err");
+        const btn = $("#s-submit");
+        btn.disabled = true; btn.textContent = "正在识别代理 IP 并创建任务…";
+        try {
+          const line = `${st.email},${st.pw.trim()},${st.proxy}`;
+          const r = await apiFetch("/admin/jobs/import", {
+            method: "POST",
+            body: JSON.stringify({
+              text: line,
+              proxy_template: "",
+              warmup_days: st.warmupDays,
+              plan: st.planMode,
+            }),
+          });
+          if (r.failed?.length) {
+            toast(r.failed[0], "err");
+            btn.disabled = false; btn.textContent = "添加并自动开始开通 →";
+            return;
+          }
+          STORE.drafts.sEmail = ""; STORE.drafts.sPw = ""; STORE.drafts.sProxy = "";
+          toast("账号已添加，系统开始自动开通", "ok");
+          closeDrawer();
+          STORE.tab = "auto";
+          refreshAll();
+        } catch {
+          btn.disabled = false; btn.textContent = "重试添加 →";
+        }
+      };
+    };
+
+    const wiz = () => `<div class="wiz">
+      <div class="w ${st.step === 1 ? "on" : "done"}"><i>${st.step > 1 ? "✓" : 1}</i>粘贴账号</div>
+      <div class="w ${st.step === 2 ? "on" : ""}"><i>2</i>检查并导入</div></div>`;
+
+    const s1 = () => {
+      st.step = 1;
+      body().innerHTML = `${modeBar()}${wiz()}
+        <div class="box tip"><h4>每行一个账号，用英文逗号隔开：</h4>
+          <p><code>邮箱, Gmail应用专用密码, 代理地址</code></p>
+          <p class="hint" style="color:#b9c8ea">可以直接从 Excel 复制多行粘贴。出口 IP 不用填，系统自动识别。</p></div>
+        <div class="field"><label>粘贴到这里</label>
+          <textarea id="d-import" rows="9" placeholder="acct1@gmail.com,abcd efgh ijkl mnop,socks5://user:pass@1.2.3.4:1080
+acct2@gmail.com,qrst uvwx yzab cdef,socks5://user:pass@5.6.7.8:1080">${esc(st.text)}</textarea></div>
+        <details class="raw"><summary>高级：只有 IP、没有完整代理地址？</summary>
+          <div style="font-family:inherit;color:var(--muted)">填一个代理模板，系统会把每行第三列的 IP 套进去：</div>
+          <input id="d-tpl" style="margin-top:8px" placeholder="socks5://user:pass@{ip}:1080" value="${esc(st.tpl)}"></details>
+        ${warmupSelector()}
+        <div class="box" style="margin-top:16px"><h4>导入之后会发生什么？</h4>
+          <div class="flowmap"><span>① 纯净度校验 + 注册</span><em>→</em><span>② 养号池每天自然对话 (${st.warmupDays}天)</span><em>→</em><span>③ ${st.planMode === "free_pool" ? "作为成熟白号存池待命" : "自动绑卡开 Pro + 取凭证"}</span></div>
+          <p class="hint">全程自动。养号期间不会消耗充值卡，养满后才会绑卡开 Pro。</p></div>`;
+      wireMode();
+      wireWarmup();
+      $("#d-import").addEventListener("input", (e) => { st.text = e.target.value; STORE.drafts.importText = st.text; });
+      $("#d-tpl").addEventListener("input", (e) => { st.tpl = e.target.value; STORE.drafts.importTpl = st.tpl; });
+      foot().innerHTML = `<button class="btn btn-primary btn-lg" id="d-next">下一步：检查 →</button>`;
+      $("#d-next").onclick = () => {
+        st.rows = parseRows(st.text, st.tpl);
+        if (!st.rows.length) return toast("还没有粘贴任何账号", "err");
+        s2();
+      };
+    };
+
+    const s2 = () => {
+      st.step = 2;
+      const bad = st.rows.filter((r) => r.problems.length).length;
+      const good = st.rows.length - bad;
+      const avail = STORE.status?.cards?.available || 0;
+      body().innerHTML = `${wiz()}
+        <div class="box ${bad ? "warnbox" : "okbox"}"><p>${good} 个账号格式正确${bad ? `，<b>${bad} 个有问题</b>（红色行，不会导入）` : ""}。</p></div>
+        ${avail < good ? `<div class="box warnbox"><p>⚠️ 可用充值卡只有 ${avail} 张，少于要开通的 ${good} 个账号。多出来的会卡在「开通 Pro」，建议先补卡。</p></div>` : ""}
+        <div class="actions" style="margin-top:0"><button class="btn btn-sm" id="d-check">检测所有代理能不能用（可选）</button><span class="hint" id="d-check-hint" style="margin:0"></span></div>
+        <table class="pv"><thead><tr><th>邮箱</th><th>代理</th><th>代理检测</th><th>格式</th></tr></thead>
+          <tbody id="d-rows"></tbody></table>`;
+      const paint = () => {
+        $("#d-rows").innerHTML = st.rows.map((r) => `<tr class="${r.problems.length ? "bad" : ""}">
+          <td>${esc(r.email || "—")}</td>
+          <td class="mono">${esc(maskProxy(r.proxy) || "—")}</td>
+          <td>${r.probe ? `<span class="pill ${esc(r.probe.grade)}">${r.probe.grade === "good" ? "可以用" : r.probe.grade === "ok" ? "勉强" : "不能用"}</span>` : "—"}</td>
+          <td>${r.problems.length ? "缺 " + r.problems.join("、") : "✓"}</td></tr>`).join("");
+      };
+      paint();
+      $("#d-check").onclick = async () => {
+        const list = st.rows.filter((r) => r.proxy && !r.problems.length);
+        $("#d-check").disabled = true;
+        for (const [i, r] of list.entries()) {
+          $("#d-check-hint").textContent = `检测中 ${i + 1}/${list.length}…`;
+          try {
+            r.probe = await apiFetch("/admin/proxy-check", {
+              method: "POST", quiet: true, body: JSON.stringify({ upstream_proxy_url: r.proxy, expected_ip: r.ip }),
+            });
+          } catch { r.probe = { grade: "unreachable" }; }
+          paint();
+        }
+        const failed = list.filter((r) => r.probe?.grade !== "good").length;
+        $("#d-check-hint").textContent = failed ? `有 ${failed} 个代理不理想，建议换掉再导入` : "全部代理都能用 👍";
+        $("#d-check").disabled = false;
+      };
+      foot().innerHTML = `<button class="btn" id="d-back">← 返回修改</button>
+        <button class="btn btn-primary btn-lg" id="d-do" ${good ? "" : "disabled"}>导入 ${good} 个账号并自动开始</button>`;
+      $("#d-back").onclick = s1;
+      $("#d-do").onclick = async () => {
+        const btn = $("#d-do");
+        btn.disabled = true; btn.textContent = "正在导入（会自动识别出口 IP，稍等）…";
+        try {
+          const text = st.rows.filter((r) => !r.problems.length).map((r) => r.raw).join("\n");
+          const r = await apiFetch("/admin/jobs/import", {
+            method: "POST",
+            body: JSON.stringify({
+              text,
+              proxy_template: st.tpl.trim(),
+              warmup_days: st.warmupDays,
+              plan: st.planMode,
+            }),
+          });
+          STORE.drafts.importText = ""; STORE.drafts.importTpl = "";
+          if (r.failed?.length) {
+            body().innerHTML = `<div class="box ${r.created ? "warnbox" : "warnbox"}"><h4>成功导入 ${r.created} 个，${r.failed.length} 个失败</h4></div>
+              <pre>${esc(r.failed.join("\n"))}</pre>`;
+            foot().innerHTML = `<button class="btn btn-primary" id="d-ok">知道了</button>`;
+            $("#d-ok").onclick = closeDrawer;
+          } else {
+            toast(`已导入 ${r.created} 个账号，系统开始自动开通`, "ok");
+            closeDrawer();
+          }
+          STORE.tab = "auto";
+          refreshAll();
+        } catch {
+          btn.disabled = false; btn.textContent = "重试导入";
+        }
+      };
+    };
+    st.mode === "single" ? renderSingle() : s1();
+  },
+
+  /* ---------------- cards ---------------- */
+  cards() {
+    setTitle("充值卡");
+    const issuer = STORE.status?.vcc_issuer || {};
+    let mode = issuer.configured ? "api" : "single";
+    const paint = () => {
+      body().innerHTML = `
+        <div class="box ${issuer.configured ? "okbox" : "tip"}">
+          <h4>${issuer.configured ? `⚡ 已连接：${esc(issuer.label)}` : "💳 双轨发卡支持（手动卡池 + A/B 类自动发卡 API）"}</h4>
+          <p>${issuer.configured
+            ? "当本地卡池用完时，开 Pro 会自动调 API 实时开出一张 $21 单次卡，并在扣款后自动锁卡防续费；你也可以在下方提前批量出卡。"
+            : "现在可先用「单张填写 / 批量粘贴」；在服务器 cce.env 中配置 VCC_API_URL+VCC_API_KEY（A类 USDT 卡台）或 LITHIC_API_KEY（B类美国 EIN 下来后），即可全自动无人值守开卡。"}</p>
+        </div>
+        <div class="seg" style="margin-bottom:14px">
+          ${issuer.configured ? `<button data-cmode="api" class="${mode === "api" ? "on" : ""}">⚡ API 一键自动开卡</button>` : ""}
+          <button data-cmode="single" class="${mode === "single" ? "on" : ""}">单张填写（新手推荐）</button>
+          <button data-cmode="batch" class="${mode === "batch" ? "on" : ""}">批量粘贴（多张卡）</button>
+        </div>
+        ${mode === "api" ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div class="field"><label>开卡数量（张）</label><input id="m-cnt" type="number" min="1" max="20" value="1"></div>
+            <div class="field"><label>单卡限额（美元）</label><input id="m-amt" type="number" step="0.5" value="${esc(issuer.default_amount_usd || 21)}"></div>
+            <div class="field"><label>默认免税州邮编</label><input id="m-zip" placeholder="97204（俄勒冈免税州）" value="97204"></div>
+          </div>
+          <div class="actions" style="margin-top:0"><button class="btn btn-primary" id="d-card-mint">⚡ 立即从 ${esc(issuer.provider === "lithic" ? "Lithic" : "发卡平台")} 生成新卡</button></div>
+        ` : mode === "single" ? `
+          <div class="field"><label>卡号（16 位数字，空格会自动去掉）</label>
+            <input id="c-pan" placeholder="4242 4242 4242 4242"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+            <div class="field"><label>到期月份</label><input id="c-mm" placeholder="08"></div>
+            <div class="field"><label>到期年份</label><input id="c-yy" placeholder="2029"></div>
+            <div class="field"><label>CVV 安全码</label><input id="c-cvv" placeholder="123"></div>
+            <div class="field"><label>美国账单邮编</label><input id="c-zip" placeholder="97204" value="97204"></div>
+          </div>
+          <div class="actions" style="margin-top:0"><button class="btn btn-primary" id="d-card-one">＋ 添加这张充值卡</button></div>
+        ` : `
+          <div class="field"><label>每行一张，格式 <code>卡号,月,年,CVV,邮编</code></label>
+            <textarea id="d-cards" rows="5" placeholder="4242424242424242,12,2029,123,97204"></textarea></div>
+          <div class="actions" style="margin-top:-4px"><button class="btn btn-primary" id="d-cards-add">添加这些卡</button></div>
+        `}
+        <h4 style="margin:24px 0 6px">现有的卡</h4>
+        <div id="d-cards-sum" class="hint">加载中…</div>
+        <div id="d-cards-list"></div>`;
+      body().querySelectorAll("[data-cmode]").forEach((b) => b.onclick = () => { mode = b.dataset.cmode; paint(); });
+      const mintBtn = $("#d-card-mint");
+      if (mintBtn) mintBtn.onclick = async () => {
+        const count = Math.max(1, Math.min(20, Number($("#m-cnt").value || 1)));
+        const amount_usd = Number($("#m-amt").value || 21);
+        const billing_zip = ($("#m-zip").value || "97204").trim();
+        mintBtn.disabled = true; mintBtn.textContent = "正在调 API 生成虚拟卡…";
+        try {
+          const r = await apiFetch("/admin/cards/mint", {
+            method: "POST", body: JSON.stringify({ count, amount_usd, billing_zip }),
+          });
+          toast(`⚡ 已自动开出 ${r.created} 张新卡`, "ok");
+          loadCards(); refreshAll();
+        } finally {
+          mintBtn.disabled = false; mintBtn.textContent = "⚡ 立即生成新卡";
+        }
+      };
+      const oneBtn = $("#d-card-one");
+      if (oneBtn) oneBtn.onclick = async () => {
+        const pan = ($("#c-pan").value || "").replace(/\s+/g, "");
+        const exp_month = ($("#c-mm").value || "").trim();
+        const exp_year = ($("#c-yy").value || "").trim();
+        const cvv = ($("#c-cvv").value || "").trim();
+        const billing_zip = ($("#c-zip").value || "").trim();
+        if (!pan || !exp_month || !exp_year || !cvv) return toast("请把卡号、到期月/年、CVV 填写完整", "err");
+        const r = await apiFetch("/admin/cards", {
+          method: "POST", body: JSON.stringify({ items: [{ pan, exp_month, exp_year, cvv, billing_zip }] }),
+        });
+        toast(r.created ? "已添加 1 张充值卡" : (r.failed?.[0] || "添加失败"), r.created ? "ok" : "err");
+        if (r.created) { $("#c-pan").value = ""; $("#c-cvv").value = ""; loadCards(); refreshAll(); }
+      };
+      const batchBtn = $("#d-cards-add");
+      if (batchBtn) batchBtn.onclick = async () => {
+        const items = $("#d-cards").value.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+          const [pan, month, year, cvv, zip] = line.split(/[,，\s]+/).map((c) => (c || "").trim());
+          return { pan, exp_month: month, exp_year: year, cvv, billing_zip: zip };
+        }).filter((i) => i.pan && i.cvv);
+        if (!items.length) return toast("没有识别到卡片，请检查格式", "err");
+        const r = await apiFetch("/admin/cards", { method: "POST", body: JSON.stringify({ items }) });
+        toast(`已添加 ${r.created} 张${r.failed.length ? `，${r.failed.length} 张格式有误：${r.failed[0]}` : ""}`, r.failed.length ? "err" : "ok");
+        $("#d-cards").value = "";
+        loadCards(); refreshAll();
+      };
+      loadCards();
+    };
+    paint();
+  },
+
+  /* ---------------- manual import credentials ---------------- */
+  importcred(ctx) {
+    const p = STORE.profiles.find((x) => x.profile_id === ctx.id);
+    if (!p) return closeDrawer();
+    setTitle(`手动导入凭证 · ${p.email || p.profile_id}`);
+    body().innerHTML = `
+      <div class="box tip"><p>如果您或技术同事已经在服务器上手动用 <code>claude login</code> 登录好了这个账号，可以把生成的 <code>.claude</code> 文件夹路径填在下面，系统会把它加密封存为可交付凭证。</p></div>
+      <div class="field"><label>服务器上的 .claude 目录路径</label>
+        <input id="ic-path" placeholder="/home/deploy/.claude"></div>`;
+    foot().innerHTML = `<button class="btn btn-primary" id="ic-go">导入并标为可交付</button>`;
+    $("#ic-go").onclick = async () => {
+      const path = ($("#ic-path").value || "").trim();
+      if (!path) return toast("请填写服务器上的 .claude 目录路径", "err");
+      await apiFetch(`/admin/profiles/${enc(p.profile_id)}/import-credentials`, {
+        method: "POST", body: JSON.stringify({ path }),
+      });
+      toast("凭证已导入，账号可以交付了", "ok");
+      closeDrawer();
+      refreshAll();
+    };
+  },
+
+  /* ---------------- clients ---------------- */
+  clients() {
+    setTitle("客户端文件");
+    const cl = clientsReady();
+    body().innerHTML = `
+      <div class="box tip"><p>客户拿到的「整合包」里装的就是这些文件。服务器上有哪个系统的程序，就能给哪个系统的客户一键交付。</p></div>
+      <table class="pv"><thead><tr><th>文件</th><th>用途</th><th>状态</th></tr></thead><tbody>
+        <tr><td class="mono">tls.crt</td><td>网关证书（必须）</td><td>${cl.ca ? '<span class="pill good">已就绪</span>' : '<span class="pill bad">缺少</span>'}</td></tr>
+        ${OS_LIST.map((o) => `<tr><td class="mono">${o.file}</td><td>${o.icon} ${o.name} 客户端</td>
+          <td>${cl.files.includes(o.file) ? '<span class="pill good">已就绪</span>' : '<span class="pill ok">未上传</span>'}</td></tr>`).join("")}
+      </tbody></table>
+      ${!cl.ca || cl.os.length < OS_LIST.length ? `<div class="box warnbox" style="margin-top:16px"><h4>怎么补齐？</h4>
+        <p>把缺少的文件交给技术同事，放到服务器的客户端目录（环境变量 <code>CCE_CLIENT_DIR</code>，默认 <code>data/clients</code>），刷新本页即可，不需要重启。</p></div>` : ""}
+      ${cl.files.length ? `<h4 style="margin:20px 0 8px">下载到本地</h4><div class="actions" style="margin-top:0">${cl.files.map((f) =>
+        `<button class="btn btn-sm" data-dl="${esc(f)}">${esc(f)}</button>`).join("")}</div>` : ""}`;
+    body().querySelectorAll("[data-dl]").forEach((b) => b.onclick = async () => {
+      const res = await fetch(`${B}/admin/client/${enc(b.dataset.dl)}`, { headers: TOKEN ? { "x-admin-token": TOKEN } : {}, credentials: "same-origin" });
+      if (!res.ok) return toast(`下载失败（${res.status}）`, "err");
+      downloadBlob(await res.blob(), b.dataset.dl);
+    });
+  },
+
+  /* ---------------- engine ---------------- */
+  engine() {
+    setTitle("自动引擎");
+    const s = STORE.status || {};
+    const w = s.worker || {};
+    const stages = s.stages || {};
+    body().innerHTML = `
+      <div class="box ${s.ready === false || !w.enabled ? "warnbox" : "okbox"}">
+        <h4>${s.ready === false ? "⚠️ 配置不完整" : !w.enabled ? "⏸ 已停止" : "✅ 正常运行"}</h4>
+        <p>${s.ready === false ? esc((s.problems || []).join("；")) + "（请转告技术同事）"
+          : `每 ${w.interval ?? 20} 秒自动处理一个排队的账号，一次一个，避免被风控。`}</p></div>
+      <div class="box"><h4>现在在做什么</h4><p>${w.busy ? `正在处理 <b>${esc(w.running_email || w.running_profile)}</b>（${esc(w.running_stage)}）` : "空闲"} · 排队 ${w.queued || 0} 个</p></div>
+      <div class="box"><h4>各阶段数量</h4><p class="mono">${Object.keys(stages).length ? Object.entries(stages).map(([k, v]) => `${esc(k)}: ${v}`).join(" · ") : "暂无"}</p></div>
+      <div class="hint">一般不需要动这里。只有在账号长时间卡在「排队」不动时，才点下面的按钮。</div>`;
+    foot().innerHTML = `<button class="btn btn-primary" id="d-run">立即推进一次</button>`;
+    $("#d-run").onclick = () => onAction("run-worker");
+  },
+
+  /* ---------------- standby (zero time-loss vs instant hot shelf) ---------------- */
+  standby() {
+    setTitle("Pro 热备水位与时间价值保护");
+    const pool = STORE.status?.pool || {};
+    let cur = Number(pool.hot_standby_target || 0);
+    const paint = () => {
+      body().innerHTML = `
+        <div class="box tip">
+          <h4>为什么不把所有养好的号立刻开成 Pro？</h4>
+          <p>Claude Pro 从绑卡扣 $20 那一刻起就开始倒计时 30 天。如果提前把 50 个号全开成 Pro 放着等客户买，每天都在白白浪费订阅天数；客户晚买 10 天就只剩 20 天有效期。</p>
+        </div>
+        <div class="box okbox">
+          <h4>当前号池库存结构</h4>
+          <p>🏊 <b>已养熟待命白号（$0 成本 · 0 时间损耗）：${pool.mature_free || 0} 个</b><br>
+             🌱 正在养号中（1~3 天）：${pool.warming_free || 0} 个<br>
+             🎁 架上现成可秒发 Pro 号：${pool.ready_pro || 0} 个</p>
+        </div>
+        <label>选择出池开 Pro 的模式：</label>
+        <div class="seg" style="margin-bottom:14px">
+          <button type="button" data-hb="0" class="${cur === 0 ? "on" : ""}">🏊 0 热备 · 客户付款才自动开 Pro（0 时间损耗 · 满 30 天）</button>
+          <button type="button" data-hb="1" class="${cur === 1 ? "on" : ""}">⚡ 常备 1 个现成 Pro（0 秒极速发货，卖掉 1 个自动从白号池补 1 个）</button>
+          <button type="button" data-hb="2" class="${cur === 2 ? "on" : ""}">⚡ 常备 2 个现成 Pro（高峰期推荐）</button>
+        </div>
+        <div class="hint">${cur === 0
+          ? "当前为「0 时间损耗模式」：商城显示有货（计入成熟白号），客户付款后系统立即自动挑选最早养熟的 1 个白号绑卡开 Pro（约 2–3 分钟自动发货到客户订单并带满 30 天有效期）。"
+          : `当前为「微热备模式」：系统始终只把 ${cur} 个成熟白号提前开成 Pro 放在架上供 0 秒秒发；其余所有账号都以 $0 白号形态保存在池子里不掉天数。`}</div>`;
+      body().querySelectorAll("[data-hb]").forEach((b) => b.onclick = () => { cur = Number(b.dataset.hb); paint(); });
+      foot().innerHTML = `<button class="btn btn-primary" id="hb-save">保存这个模式</button>`;
+      $("#hb-save").onclick = async () => {
+        await apiFetch("/admin/pool/hot-standby", { method: "POST", body: JSON.stringify({ target: cur }) });
+        toast("热备水位已更新", "ok");
+        closeDrawer();
+        refreshAll();
+      };
+    };
+    paint();
+  },
+
+  /* ---------------- proxy (from more menu, non-todo) ---------------- */
+  proxy(ctx) {
+    const p = STORE.profiles.find((x) => x.profile_id === ctx.id);
+    if (!p) return closeDrawer();
+    setTitle(`更换代理 · ${p.email || p.profile_id}`);
+    body().innerHTML = proxyForm(p);
+    body().querySelectorAll("[data-act]").forEach((el) => el.onclick = async () => {
+      if (el.dataset.act === "proxychk") await checkProxyInto(p.profile_id);
+      else { try { await saveProxy(p); closeDrawer(); refreshAll(); } catch { /* reported */ } }
+    });
+  },
+
+  /* ---------------- help ---------------- */
+  help() {
+    setTitle("使用说明");
+    body().innerHTML = `<div class="faq">
+      <div class="box tip"><p>这个工作台只做一件事：<b>把 Gmail 变成可以卖的 Claude Pro 账号，再交给客户</b>。大部分步骤是自动的，你只需要处理系统搞不定的少数情况。</p></div>
+      <h4>整体流程</h4>
+      <div class="flowmap"><span>① 添加充值卡</span><em>→</em><span>② 添加 Gmail 账号</span><em>→</em><span>自动开通（3–10 分钟）</span><em>→</em><span>③ 交付给客户</span></div>
+      <h4>每天要做的事</h4>
+      <ol><li>打开页面，看最上面那条提示，<b>它会告诉你现在该做什么</b>。</li>
+        <li>「需要你处理」里有账号，就照着每张卡片上的说明点按钮。</li>
+        <li>充值卡快用完时（顶部变黄/红），及时补卡。</li></ol>
+      <h4>Gmail 应用专用密码是什么？</h4>
+      <p>系统要登录 Gmail 收 Claude 发来的验证码，但不能用你的 Gmail 登录密码。需要在 Google 账号里开启「两步验证」后，到 <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">应用专用密码页面</a> 生成一个 16 位密码。</p>
+      <h4>代理是什么？去哪里买？</h4>
+      <p>每个账号要用一个固定的美国住宅代理，看起来像真实用户在用。格式一般是 <code>socks5://用户名:密码@地址:端口</code>，从代理商后台复制即可。导入前可以先点「检测」确认能用。</p>
+      <h4>商城卖出去的账号会怎样？</h4>
+      <p>客户在商城付款后，系统会<b>自动</b>从「可以交付」里挑一个分配给他，客户可在订单页一键下载整合包。你不需要手动操作，它会自动出现在「已交付」。</p>
+      <h4>客户说用不了怎么办？</h4>
+      <ol><li>在「已交付」找到这个账号，看是不是过期了。</li>
+        <li>点「更多 → 检查网络环境是否正常」。</li>
+        <li>还不行就「撤销收回」，再从「可以交付」重新给他一个。</li></ol>
+    </div>`;
+  },
+};
+
+async function loadCards() {
+  const list = $("#d-cards-list");
+  if (!list) return;
   try {
     const data = await apiFetch("/admin/cards");
     const s = data.summary || {};
-    box.innerHTML = `总数 ${s.total || 0} · 可用 ${s.available || 0} · 使用中 ${s.in_use || 0} · 已废 ${s.dead || 0}`
-      + (data.items || []).slice(0, 8).map((c) =>
-        `<div>${esc(c.card_bin)}******${esc(c.last4)} · ${esc(c.exp)} · ${esc(c.status)}</div>`).join("");
+    $("#d-cards-sum").innerHTML = `共 ${s.total || 0} 张 · <b style="color:var(--ok)">可用 ${s.available || 0}</b> · 扣款中 ${s.in_use || 0} · 已用完 ${s.used || 0} · 已失效 ${s.dead || 0}`;
+    const label = { available: "可用", in_use: "扣款中", used: "已用", dead: "已失效" };
+    list.innerHTML = (data.items || []).map((c) => `<div class="cardrow">
+      <span class="num">${esc(c.card_bin)} •••• ${esc(c.last4)} <span class="err">${esc(c.exp)}</span></span>
+      <span class="pill ${esc(c.status)}">${label[c.status] || esc(c.status)}</span>
+      ${c.last_error ? `<span class="err" title="${esc(c.last_error)}">${esc(friendlyShort(c.last_error))}</span>` : ""}
+      ${c.status === "dead" || c.status === "used" ? `<button class="btn btn-ghost btn-sm" data-card-reset="${c.id}">重新启用</button>` : ""}
+      ${c.status !== "in_use" ? `<button class="btn btn-ghost btn-sm btn-danger" data-card-del="${c.id}">删除</button>` : ""}
+    </div>`).join("") || `<div class="hint">还没有卡片</div>`;
+    list.querySelectorAll("[data-card-reset]").forEach((b) => b.onclick = async () => {
+      await apiFetch(`/admin/cards/${b.dataset.cardReset}/reset`, { method: "POST" });
+      toast("已重新启用", "ok"); loadCards(); refreshAll();
+    });
+    list.querySelectorAll("[data-card-del]").forEach((b) => b.onclick = async () => {
+      if (!confirm("确定删除这张卡吗？")) return;
+      await apiFetch(`/admin/cards/${b.dataset.cardDel}`, { method: "DELETE" });
+      toast("已删除", "ok"); loadCards(); refreshAll();
+    });
   } catch { /* reported */ }
 }
 
-/* ------------------------------------------------------- import preview */
+/* ============================================================ import parse */
 
-function parseRows() {
-  const tpl = $("#d-tpl")?.value.trim() || "";
+function parseRows(text, tpl) {
   const rows = [];
-  let bad = 0;
   const looksLikeProxy = (cell) => /:\/\//.test(cell) || /@/.test(cell);
-  for (const raw of ($("#d-import")?.value || "").split("\n")) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const parts = line.split(",").map((c) => c.trim());
+  const seen = new Set();
+  for (const raw0 of (text || "").split("\n")) {
+    // Excel pastes tabs; Chinese keyboards produce full-width commas.
+    const raw = raw0.trim().replace(/\t/g, ",").replace(/，/g, ",");
+    if (!raw || raw.startsWith("#")) continue;
+    const parts = raw.split(",").map((c) => c.trim());
     const email = (parts[0] || "").toLowerCase();
     const pw = parts[1] || "";
-    // Third column is either an IP or the proxy itself; the old 3-column form
-    // put the IP there, so sniff it instead of demanding a column order.
     const third = parts[2] || "";
-    let ip = looksLikeProxy(third) ? "" : third;
+    const ip = looksLikeProxy(third) ? "" : third;
     let proxy = looksLikeProxy(third) ? third : (parts[3] || "");
     if (!proxy && tpl && ip) proxy = tpl.replace("{ip}", ip);
     const problems = [];
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) problems.push("邮箱");
+    else if (seen.has(email)) problems.push("重复邮箱");
     if (!pw) problems.push("应用密码");
     if (!proxy) problems.push("代理");
-    if (problems.length) bad += 1;
-    rows.push({ email, pw, ip, proxy, plan: parts[4] || "pro", problems });
+    seen.add(email);
+    rows.push({ raw: parts.join(","), email, pw, ip, proxy, problems });
   }
-  return { rows, bad };
+  return rows;
 }
 
-function renderPreview(probedRows = null) {
-  const parsed = probedRows ? { rows: probedRows, bad: probedRows.filter((r) => r.problems.length).length } : parseRows();
-  const { rows, bad } = parsed;
-  const hint = $("#d-preview-hint");
-  const box = $("#d-preview");
-  if (!box) return;
-  if (!rows.length) {
-    hint.textContent = "粘贴后这里实时预览解析结果。";
-    box.innerHTML = "";
+function maskProxy(url) {
+  return String(url || "").replace(/\/\/([^:@/]+):([^@/]+)@/, "//$1:••••@");
+}
+
+function manualCommand(key) {
+  const host = location.origin + B;
+  const gw = `${location.hostname}:8444`;
+  const H = `-H "Authorization: Bearer ${key.card_key}" -H "x-tunnel-secret: ${key.tunnel_secret}"`;
+  return [
+    "# Windows（PowerShell）",
+    `curl.exe ${H} -o claude-box.exe "${host}/launcher/client/claude-box-windows-x64.exe"`,
+    `curl.exe ${H} -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
+    '$env:CCE_TUNNEL_CA="$PWD\\gateway-ca.pem"',
+    `.\\claude-box.exe cli --key ${key.card_key} --secret ${key.tunnel_secret} --host ${host} --gateway ${gw}`,
+    "",
+    "# macOS / Linux",
+    `curl ${H} -o claude-box "${host}/launcher/client/claude-box"`,
+    `curl ${H} -o gateway-ca.pem "${host}/launcher/client/tls.crt"`,
+    "chmod +x claude-box",
+    `CCE_TUNNEL_CA=./gateway-ca.pem ./claude-box cli --key ${key.card_key} --secret ${key.tunnel_secret} --host ${host} --gateway ${gw}`,
+  ].join("\n");
+}
+
+/* ==================================================================== wire */
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-act],[data-tab],[data-open],[data-go],[data-menu]");
+  if (!t) { closeMenus(); return; }
+  if (t.dataset.menu) {
+    const m = document.getElementById(`menu-${t.dataset.menu}`);
+    const wasHidden = m?.hidden;
+    closeMenus();
+    if (m) m.hidden = !wasHidden;
+    e.stopPropagation();
     return;
   }
-  hint.textContent = `${rows.length} 行，${bad ? `${bad} 行有问题（红底）` : "格式全部通过"}`;
-  box.innerHTML = `<table class="preview">
-    <thead><tr><th>邮箱</th><th>密码</th><th>出口 IP</th><th>代理</th><th>体检</th><th>校验</th></tr></thead>
-    <tbody>${rows.map((r) => `<tr class="${r.problems.length ? "bad" : ""}">
-      <td>${esc(r.email || "—")}</td><td>${esc(r.pw ? "••••" : "—")}</td>
-      <td>${esc(r.ip || "自动")}</td>
-      <td>${esc(r.proxy || "—")}</td>
-      <td class="st">${r.probe ? `<span class="pv ${esc(r.probe.grade)}">${esc(r.probe.verdict || r.probe.grade)}</span>` : "—"}</td>
-      <td class="st">${r.problems.length ? "缺 " + r.problems.join("/") : "OK"}</td>
-    </tr>`).join("")}</tbody></table>`;
-}
+  if (t.dataset.tab) { STORE.tab = t.dataset.tab; renderAll(); return; }
+  if (t.dataset.open) { openDrawer(t.dataset.open); return; }
+  if (t.dataset.go) {
+    const [kind, arg] = t.dataset.go.split(":");
+    if (kind === "tab") { STORE.tab = arg; renderAll(); window.scrollTo({ top: $("#flow").offsetTop - 12, behavior: "smooth" }); }
+    else if (kind === "open") openDrawer(arg);
+    else onAction(t.dataset.go);
+    return;
+  }
+  if (t.dataset.act && t.closest("#list")) { onAction(t.dataset.act, t.dataset.id); }
+});
 
-/* ------------------------------------------------------------------- boot */
+$("#drawer-close").onclick = closeDrawer;
+$("#scrim").onclick = closeDrawer;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDrawer(); closeMenus(); } });
+
+function showGate() {
+  TOKEN = "";
+  localStorage.removeItem("cce_token");
+  $("#app").hidden = true;
+  $("#gate").style.display = "";
+  setTimeout(() => $("#token")?.focus(), 50);
+}
 
 $("#btn-login").onclick = async () => {
   const value = $("#token").value.trim();
   if (!value) return toast("请输入管理密码", "err");
   TOKEN = value;
   try {
-    await apiFetch("/admin/status");
+    await apiFetch("/admin/status", { quiet: true });
     localStorage.setItem("cce_token", value);
     enter();
-  } catch { /* reported */ }
+  } catch { toast("密码不对，请重新输入", "err"); }
 };
 $("#token").addEventListener("keydown", (e) => e.key === "Enter" && $("#btn-login").click());
-$("#btn-logout").onclick = logout;
-
-$("#btn-import").onclick = () => openDrawer("import");
-$("#btn-cards").onclick = () => openDrawer("client");
-$("#drawer-close").onclick = closeDrawer;
-$("#scrim").onclick = closeDrawer;
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+$("#btn-logout").onclick = showGate;
 
 function enter() {
-  hideBoot();
   $("#gate").style.display = "none";
   $("#app").hidden = false;
   refreshAll();
 }
 
-// Cookie-first: a logged-in admin never sees the password gate.
-apiFetch("/admin/status")
-  .then(enter)
-  .catch(() => {
-    TOKEN = "";
-    localStorage.removeItem("cce_token");
-    hideBoot();
-    $("#gate").style.display = "";
-  });
+// Cookie-first: an operator already signed in to the store backend skips the gate.
+apiFetch("/admin/status", { quiet: true }).then(enter).catch(() => showGate());
 </script>
 </body>
 </html>

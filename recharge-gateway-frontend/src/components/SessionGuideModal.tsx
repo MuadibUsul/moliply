@@ -13,7 +13,7 @@ export function SessionGuideModal({
 }: {
   open: boolean;
   onClose: () => void;
-  kind: "chatgpt" | "claude";
+  kind: "chatgpt" | "claude" | "gemini";
 }) {
   const chatgptSteps = [
     "在同一个浏览器中登录需要充值的 ChatGPT 账号。",
@@ -27,7 +27,12 @@ export function SessionGuideModal({
     "找到 claude.ai 下的 sessionKey，复制它的值（通常以 sk-ant- 开头）。",
     "回到充能中心粘贴 sessionKey，提交后等待上游通道完成充值。",
   ];
-  const steps = kind === "chatgpt" ? chatgptSteps : claudeSteps;
+  const geminiSteps = [
+    "无需提取任何 Cookie 或交出账号密码，仅需填写您常用的 Gmail / Google 邮箱。",
+    "提交后系统会自动从 Google One AI Premium (2TB) 家庭组车位池为您分配专属席位。",
+    "打开 Gmail 查收 Google Family 官方邀请邮件（或点击核销完成页展示的专属加入链接）即可生效。",
+  ];
+  const steps = kind === "chatgpt" ? chatgptSteps : kind === "gemini" ? geminiSteps : claudeSteps;
 
   return (
     <Modal open={open} onClose={onClose} title={kind === "chatgpt" ? "如何获取 ChatGPT Session" : "如何获取 Claude Session"} maxWidth="max-w-xl">

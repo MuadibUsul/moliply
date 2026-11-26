@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from core import sms_client
 from core.cloudflare import open_with_challenge_retry
 from core.mail_reader import GmailReader, MailError
 
@@ -219,7 +220,8 @@ async def run_signup(
 
     if needs_human(page.url):
         if not await _solve_captcha(page):
-            return SignupOutcome("needs_human", f"验证码已填写（{code}），后续出现验证码/手机校验，需人工", url=page.url)
+            if not await _try_automated_phone_verification(page):
+                return SignupOutcome("needs_human", f"验证码已填写（{code}），后续出现验证码/手机校验，需人工", url=page.url)
 
     # Step 3: password, if this build still asks for one.
     password_set = await _fill_first(
@@ -259,6 +261,51 @@ async def run_signup(
         password=password,
         url=page.url,
     )
+
+
+PHONE_INPUT_SELECTORS = (
+    'input[type="tel"]',
+    'input[name="phone"]',
+    'input[name="phoneNumber"]',
+    'input[autocomplete="tel"]',
+)
+SMS_CODE_SELECTORS = (
+    'input[autocomplete="one-time-code"]',
+    'input[name="code"]',
+    'input[inputmode="numeric"]',
+)
+
+
+async def _try_automated_phone_verification(page: Any) -> bool:
+    """Complete US Non-VoIP phone verification automatically when SMSPool/5sim is configured."""
+    if not sms_client.sms_configured():
+        return False
+    has_phone_field = await _fill_first(page, PHONE_INPUT_SELECTORS, "")
+    if not has_phone_field and not any(k in page.url.lower() for k in ("phone", "sms")):
+        return False
+
+    for _attempt in range(2):
+        lease = await sms_client.lease_us_number("claude")
+        if lease is None:
+            return False
+        try:
+            if not await _fill_first(page, PHONE_INPUT_SELECTORS, lease.phone):
+                await sms_client.cancel_lease(lease)
+                return False
+            await _click_first(page, ("send code", "send", "verify", "continue", "next"))
+            sms_code = await sms_client.poll_sms_code(lease, timeout_seconds=105)
+            if not sms_code:
+                await sms_client.cancel_lease(lease)
+                continue
+            if not await _fill_first(page, SMS_CODE_SELECTORS, sms_code):
+                return False
+            await _click_first(page, SUBMIT_LABELS)
+            await asyncio.sleep(3.0)
+            return not any(k in page.url.lower() for k in ("phone", "sms"))
+        except Exception:  # noqa: BLE001
+            await sms_client.cancel_lease(lease)
+            return False
+    return False
 
 
 __all__ = ["SignupError", "SignupOutcome", "run_signup", "MailError"]

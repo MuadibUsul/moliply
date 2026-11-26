@@ -57,6 +57,17 @@ async def lifespan(_: FastAPI):
             cleared = redeem_service.cleanup_sensitive_tokens(db)
             if cleared:
                 logger.info("Cleared %s expired session credentials", cleared)
+            from app.models import FulfillmentStrategy, Product
+            from app.seed import upsert_gemini_products
+
+            claude_prod = db.query(Product).filter(Product.slug == "claude-pro-account").first()
+            if claude_prod and claude_prod.fulfillment_strategy == FulfillmentStrategy.STOCK:
+                claude_prod.fulfillment_strategy = FulfillmentStrategy.CCE_ACCOUNT_KEY
+                db.add(claude_prod)
+                db.commit()
+                logger.info("Bound claude-pro-account to FulfillmentStrategy.CCE_ACCOUNT_KEY")
+            if settings.seed_demo_data:
+                upsert_gemini_products(db)
     except Exception:
         logger.exception("Startup cleanup failed")
     logger.info(
@@ -108,7 +119,8 @@ app.add_middleware(
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    frame_policy = "SAMEORIGIN" if request.url.path.startswith("/cce") else "DENY"
+    response.headers.setdefault("X-Frame-Options", frame_policy)
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if settings.is_production:

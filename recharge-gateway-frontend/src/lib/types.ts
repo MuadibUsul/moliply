@@ -181,7 +181,7 @@ export type RedeemVerify = {
   status: string;
   status_label: string;
   bound_email_masked: string | null;
-  session_kind: "chatgpt" | "claude";
+  session_kind: "chatgpt" | "claude" | "gemini";
   requires_session?: boolean;
   /** SMS codes open the receipt workbench instead of the charge wizard. */
   sms?: boolean;
@@ -196,7 +196,7 @@ export type RedeemPrecheck = {
   current_plan: string;
   message: string;
   warning: string | null;
-  session_kind: "chatgpt" | "claude";
+  session_kind: "chatgpt" | "claude" | "gemini";
   requires_session?: boolean;
   plan_expires_at?: string | null;
   session_expires_at?: string | null;

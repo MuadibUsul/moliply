@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { AccountCredentialViewer } from "@/components/AccountCredentialViewer";
 import { BrandTile } from "@/components/BrandTile";
 import { CceBundleDownload } from "@/components/CceBundleDownload";
 import { CopyButton } from "@/components/CopyButton";
@@ -341,9 +342,7 @@ function PayContent() {
                               <span className="text-[10px] text-slate-500">账号凭证</span>
                               {delivery.payload && <CopyButton value={delivery.payload} label="复制全部" />}
                             </div>
-                            <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-6 text-slate-300">
-                              {delivery.payload}
-                            </pre>
+                            <AccountCredentialViewer payload={delivery.payload} />
                             {delivery.kind === "CCE_DELIVERY_KEY" && (
                               <CceBundleDownload orderNo={order.order_no} deliveryId={delivery.id} />
                             )}

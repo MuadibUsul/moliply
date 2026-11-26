@@ -8,6 +8,7 @@
  */
 
 const CLAUDE_KEY = /sk-ant-[A-Za-z0-9_\-.]{8,}/;
+const EMAIL_RE = /^(?:gemini:)?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})$/;
 
 export function maskEmail(email: string): string {
   const [local, domain] = email.split("@");
@@ -20,9 +21,21 @@ export type LocalSessionParse =
   | { ok: true; email: string; maskedEmail: string }
   | { ok: false; reason: string };
 
-export function parseSessionLocally(raw: string, kind: "chatgpt" | "claude"): LocalSessionParse {
+export function parseSessionLocally(
+  raw: string,
+  kind: "chatgpt" | "claude" | "gemini",
+): LocalSessionParse {
   const text = raw.trim();
   if (!text) return { ok: false, reason: "" };
+
+  if (kind === "gemini") {
+    const match = text.match(EMAIL_RE);
+    if (match) {
+      const email = match[1].toLowerCase();
+      return { ok: true, email, maskedEmail: maskEmail(email) };
+    }
+    return { ok: false, reason: "请输入要加入 Google One 家庭组的 Gmail / Google 邮箱地址" };
+  }
 
   if (kind === "claude") {
     const match = text.match(CLAUDE_KEY);

@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { AccountCredentialViewer } from "@/components/AccountCredentialViewer";
 import { BrandTile } from "@/components/BrandTile";
 import { CceBundleDownload } from "@/components/CceBundleDownload";
 import { CopyButton } from "@/components/CopyButton";
@@ -48,6 +49,11 @@ function OrdersContent() {
   const [error, setError] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedNo, setSelectedNo] = useState<string | null>(null);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetCode, setResetCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [resetHint, setResetHint] = useState<string | null>(null);
+  const [sendingCode, setSendingCode] = useState(false);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -124,6 +130,60 @@ function OrdersContent() {
     setError(null);
   }
 
+  async function sendResetCode() {
+    if (!email.trim()) {
+      setError("请先填写下单邮箱");
+      return;
+    }
+    setSendingCode(true);
+    setError(null);
+    setResetHint(null);
+    try {
+      const res = await api<{ ok: boolean; message: string }>("/api/v1/auth/forgot-password", {
+        method: "POST",
+        body: { email: email.trim() },
+      });
+      setResetHint(res.message || "验证码已发送至邮箱，请在 10 分钟内完成重置");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSendingCode(false);
+    }
+  }
+
+  async function submitPasswordReset(event: React.FormEvent) {
+    event.preventDefault();
+    if (!email.trim() || !resetCode.trim() || newPassword.length < 8) {
+      setError("请填写邮箱、6 位验证码与至少 8 位的新密码");
+      return;
+    }
+    setLoginLoading(true);
+    setError(null);
+    try {
+      const data = await api<UserLoginResult>("/api/v1/auth/reset-password", {
+        method: "POST",
+        body: {
+          email: email.trim(),
+          code: resetCode.trim(),
+          new_password: newPassword,
+        },
+      });
+      setUserToken(data.token);
+      setUserEmail(data.email);
+      setToken(data.token);
+      setEmail(data.email);
+      setResetMode(false);
+      setResetCode("");
+      setNewPassword("");
+      setResetHint(null);
+      await loadOrders();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
   const selected = orders.find((order) => order.order_no === selectedNo) || orders[0] || null;
 
   return (
@@ -152,57 +212,147 @@ function OrdersContent() {
                   </div>
                 </div>
                 <p className="mt-4 text-[11px] leading-6 text-slate-500">
-                  下单时填写的邮箱与密码就是你的订单账户。登录后可查看交付内容、充值进度与售后记录。
+                  {resetMode
+                    ? "向你的下单邮箱发送 6 位验证码即可自助设置新密码；如未收到邮件，也可联系在线客服核实订单号重置。"
+                    : "下单时填写的邮箱与密码就是你的订单账户。登录后可查看交付内容、充值进度与售后记录。"}
                 </p>
-                <form onSubmit={login} className="mt-5 space-y-3">
-                  <div>
-                    <label htmlFor="login-email" className="mb-2 block text-[11px] text-slate-400">下单邮箱</label>
-                    <div className="relative">
-                      <Mail size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                {!resetMode ? (
+                  <form onSubmit={login} className="mt-5 space-y-3">
+                    <div>
+                      <label htmlFor="login-email" className="mb-2 block text-[11px] text-slate-400">下单邮箱</label>
+                      <div className="relative">
+                        <Mail size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input
+                          id="login-email"
+                          type="email"
+                          value={email}
+                          onChange={(event) => setEmail(event.target.value)}
+                          placeholder="name@example.com"
+                          className="field pl-10"
+                          autoComplete="email"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <label htmlFor="login-password" className="block text-[11px] text-slate-400">订单密码</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetMode(true);
+                            setError(null);
+                            setResetHint(null);
+                          }}
+                          className="text-[11px] text-brand-300 hover:text-brand-200"
+                        >
+                          忘记密码？
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <KeyRound size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input
+                          id="login-password"
+                          type={showPassword ? "text" : "password"}
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          placeholder="下单时设置的密码"
+                          className="field pl-10 pr-11"
+                          autoComplete="current-password"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((value) => !value)}
+                          className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-slate-500 hover:text-slate-300"
+                          aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                        >
+                          {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                        </button>
+                      </div>
+                    </div>
+                    {error && (
+                      <p className="rounded-lg border border-rose-400/20 bg-rose-400/[0.07] px-3 py-2.5 text-[11px] leading-5 text-rose-200">
+                        {error}
+                      </p>
+                    )}
+                    <button type="submit" disabled={loginLoading} className="btn-primary w-full">
+                      {loginLoading ? "正在登录..." : "登录并查看订单"}
+                      {!loginLoading && <ArrowRight size={15} />}
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={submitPasswordReset} className="mt-5 space-y-3">
+                    <div>
+                      <label htmlFor="reset-email" className="mb-2 block text-[11px] text-slate-400">下单邮箱</label>
+                      <div className="flex gap-2">
+                        <input
+                          id="reset-email"
+                          type="email"
+                          value={email}
+                          onChange={(event) => setEmail(event.target.value)}
+                          placeholder="name@example.com"
+                          className="field flex-1"
+                          autoComplete="email"
+                        />
+                        <button
+                          type="button"
+                          disabled={sendingCode}
+                          onClick={() => void sendResetCode()}
+                          className="btn-secondary shrink-0 px-3 py-2 text-[11px]"
+                        >
+                          {sendingCode ? "发送中..." : "获取验证码"}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="reset-code" className="mb-2 block text-[11px] text-slate-400">6 位邮箱验证码</label>
                       <input
-                        id="login-email"
-                        type="email"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        placeholder="name@example.com"
-                        className="field pl-10"
-                        autoComplete="email"
+                        id="reset-code"
+                        value={resetCode}
+                        onChange={(event) => setResetCode(event.target.value)}
+                        placeholder="输入邮件中的 6 位数字"
+                        className="field font-mono tracking-widest"
+                        maxLength={8}
                       />
                     </div>
-                  </div>
-                  <div>
-                    <label htmlFor="login-password" className="mb-2 block text-[11px] text-slate-400">订单密码</label>
-                    <div className="relative">
-                      <KeyRound size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <div>
+                      <label htmlFor="reset-new-pw" className="mb-2 block text-[11px] text-slate-400">设置新密码（至少 8 位）</label>
                       <input
-                        id="login-password"
+                        id="reset-new-pw"
                         type={showPassword ? "text" : "password"}
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        placeholder="下单时设置的密码"
-                        className="field pl-10 pr-11"
-                        autoComplete="current-password"
+                        value={newPassword}
+                        onChange={(event) => setNewPassword(event.target.value)}
+                        placeholder="请输入至少 8 位的新密码"
+                        className="field"
+                        autoComplete="new-password"
                       />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((value) => !value)}
-                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-slate-500 hover:text-slate-300"
-                        aria-label={showPassword ? "隐藏密码" : "显示密码"}
-                      >
-                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                      </button>
                     </div>
-                  </div>
-                  {error && (
-                    <p className="rounded-lg border border-rose-400/20 bg-rose-400/[0.07] px-3 py-2.5 text-[11px] leading-5 text-rose-200">
-                      {error}
-                    </p>
-                  )}
-                  <button type="submit" disabled={loginLoading} className="btn-primary w-full">
-                    {loginLoading ? "正在登录..." : "登录并查看订单"}
-                    {!loginLoading && <ArrowRight size={15} />}
-                  </button>
-                </form>
+                    {resetHint && (
+                      <p className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.08] px-3 py-2.5 text-[11px] leading-5 text-emerald-200">
+                        {resetHint}
+                      </p>
+                    )}
+                    {error && (
+                      <p className="rounded-lg border border-rose-400/20 bg-rose-400/[0.07] px-3 py-2.5 text-[11px] leading-5 text-rose-200">
+                        {error}
+                      </p>
+                    )}
+                    <button type="submit" disabled={loginLoading} className="btn-primary w-full">
+                      {loginLoading ? "正在重置..." : "重置密码并登录"}
+                      {!loginLoading && <ArrowRight size={15} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetMode(false);
+                        setError(null);
+                        setResetHint(null);
+                      }}
+                      className="btn-ghost w-full text-[11px]"
+                    >
+                      返回密码登录
+                    </button>
+                  </form>
+                )}
                 <div className="mt-5 space-y-2 border-t border-white/[0.06] pt-4 text-[10px] leading-5 text-slate-600">
                   <p className="flex items-start gap-2"><ShieldCheck size={13} className="mt-0.5 shrink-0" /> 密码使用加盐哈希存储，客服也无法查看明文。</p>
                   <p className="flex items-start gap-2"><RefreshCw size={13} className="mt-0.5 shrink-0" /> 忘记密码请联系在线客服，核实订单后为你重置。</p>
@@ -373,9 +523,7 @@ function OrdersContent() {
                                   <span className="text-[10px] text-slate-500">账号凭证</span>
                                   {delivery.payload && <CopyButton value={delivery.payload} label="复制全部" />}
                                 </div>
-                                <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-6 text-slate-300">
-                                  {delivery.payload}
-                                </pre>
+                                <AccountCredentialViewer payload={delivery.payload} />
                                 {delivery.kind === "CCE_DELIVERY_KEY" && (
                                   <CceBundleDownload orderNo={selected.order_no} deliveryId={delivery.id} />
                                 )}

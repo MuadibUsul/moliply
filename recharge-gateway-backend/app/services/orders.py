@@ -30,6 +30,7 @@ from app.models import (
     OrderStatus,
     PaymentEvent,
     Product,
+    ProductVariant,
     utcnow,
 )
 from app.services import feishu
@@ -688,6 +689,32 @@ def fulfill_order(db: Session, order: Order) -> Order:
                 db.add(delivery)
                 item.deliveries.append(delivery)
                 missing -= 1
+            if missing > 0:
+                fallback_accounts = (
+                    db.query(AccountInventory)
+                    .filter(
+                        AccountInventory.product_id == item.product_id,
+                        AccountInventory.status == InventoryStatus.AVAILABLE,
+                    )
+                    .order_by(AccountInventory.id.asc())
+                    .with_for_update(skip_locked=True)
+                    .limit(missing)
+                    .all()
+                )
+                for account in fallback_accounts:
+                    account.status = InventoryStatus.SOLD
+                    account.order_item_id = item.id
+                    account.sold_at = utcnow()
+                    db.add(account)
+                    delivery = OrderDelivery(
+                        order_item_id=item.id,
+                        kind="ACCOUNT_CREDENTIALS",
+                        account_id=account.id,
+                        payload_enc=account.payload_enc,
+                    )
+                    db.add(delivery)
+                    item.deliveries.append(delivery)
+                    missing -= 1
             if missing > 0:
                 pending = True
         elif _is_jit_item(db, item):

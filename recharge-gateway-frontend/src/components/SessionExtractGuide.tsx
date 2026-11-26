@@ -12,7 +12,32 @@ const CHATGPT_SESSION_API = "https://chatgpt.com/api/auth/session";
  * links open in a new tab and the copy instruction sits between them instead of
  * inside a modal.
  */
-export function SessionExtractGuide({ kind }: { kind: "chatgpt" | "claude" }) {
+export function SessionExtractGuide({ kind }: { kind: "chatgpt" | "claude" | "gemini" }) {
+  if (kind === "gemini") {
+    return (
+      <ol className="mt-5 space-y-2.5">
+        <li className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3.5 py-3">
+          <p className="text-[11px] font-medium text-slate-200">① 填写您自己的 Gmail / Google 邮箱</p>
+          <p className="mt-1 text-[10px] leading-5 text-slate-500">
+            无需密码、无需提取 Cookie，直接输入您要升级 Gemini Advanced 的 Google 邮箱地址即可
+          </p>
+        </li>
+        <li className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3.5 py-3">
+          <p className="text-[11px] font-medium text-slate-200">② 系统自动分配 Google One AI Premium (2TB) 家庭组车位</p>
+          <p className="mt-1 text-[10px] leading-5 text-slate-500">
+            每个家庭主号最多共享 5 个独立席位，聊天记录与云盘文件 100% 隔离保密
+          </p>
+        </li>
+        <li className="rounded-xl border border-brand-400/20 bg-brand-500/[0.07] px-3.5 py-3">
+          <p className="text-[11px] font-medium text-slate-100">③ 查收 Gmail 邀请邮件或点击专属链接确认加入</p>
+          <p className="mt-1 text-[10px] leading-5 text-slate-400">
+            提交后打开 Gmail 邮箱点击 Google Family 官方邀请链接确认，即可直享 Gemini Advanced + 2TB 云空间
+          </p>
+        </li>
+      </ol>
+    );
+  }
+
   if (kind === "claude") {
     return (
       <ol className="mt-5 space-y-2.5">

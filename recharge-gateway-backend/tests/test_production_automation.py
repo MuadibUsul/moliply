@@ -743,6 +743,7 @@ def test_http_bridge_prevents_double_sell_when_active_key_omitted(monkeypatch):
 
 def test_cce_console_admin_profiles_exposes_active_key_and_launcher_bundle_reuses_key(tmp_path, monkeypatch):
     """CCE /admin/profiles must expose active_key, ignore 1-byte creds, and /launcher/bundle must not re-mint."""
+    import base64
     import io
     import json
     import zipfile
@@ -759,6 +760,7 @@ def test_cce_console_admin_profiles_exposes_active_key_and_launcher_bundle_reuse
     (client_dir / "claude-box").write_bytes(b"ELF-fake-linux-bin")
     (client_dir / "tls.crt").write_bytes(b"-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n")
 
+    monkeypatch.setenv("CCE_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
     monkeypatch.setenv("CCE_ADMIN_TOKEN", "cce-test-admin-token")
     monkeypatch.setenv("CCE_TUNNEL_SECRETS", str(tmp_path / "cce.secrets"))
     monkeypatch.setattr(cce_app_mod, "CLIENT_DIR", client_dir)
@@ -843,6 +845,48 @@ def test_cce_console_admin_profiles_exposes_active_key_and_launcher_bundle_reuse
 
         keys_after = cce_client.get("/admin/keys/real-account", headers=headers).json()["keys"]
         assert len(keys_after) == 1
+
+        # Workbench: admin bundle with card_key reuses the delivered key (no second key)
+        admin_bundle = cce_client.get(
+            f"/admin/bundle/real-account?os_name=windows&card_key={key_data['card_key']}",
+            headers=headers,
+        )
+        assert admin_bundle.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(admin_bundle.content)) as zf:
+            assert json.loads(zf.read("cce.json").decode("utf-8"))["key"] == key_data["card_key"]
+        assert len(cce_client.get("/admin/keys/real-account", headers=headers).json()["keys"]) == 1
+        bad_key = cce_client.get(
+            "/admin/bundle/real-account?os_name=windows&card_key=cce_not_real", headers=headers
+        )
+        assert bad_key.status_code == 404
+
+        # Workbench status exposes published client files
+        status_body = cce_client.get("/admin/status", headers=headers).json()
+        assert "tls.crt" in status_body["clients"]
+
+        # Workbench: deleting an account with a live customer key is refused unless forced
+        refused = cce_client.delete("/admin/profiles/real-account", headers=headers)
+        assert refused.status_code == 409
+        assert cce_client.delete("/admin/profiles/probe-empty", headers=headers).status_code == 200
+        assert cce_client.delete("/admin/profiles/real-account?force=true", headers=headers).status_code == 200
+        remaining = {p["profile_id"] for p in cce_client.get("/admin/profiles", headers=headers).json()["profiles"]}
+        assert remaining == set()
+
+        # Workbench: dead cards can be re-enabled and removed
+        cce_client.post(
+            "/admin/cards",
+            headers=headers,
+            json={"items": [{"pan": "4242424242424242", "exp_month": "12", "exp_year": "2030", "cvv": "123"}]},
+        )
+        card = cce_client.get("/admin/cards", headers=headers).json()["items"][0]
+        reset = cce_client.post(f"/admin/cards/{card['id']}/reset", headers=headers)
+        assert reset.status_code == 200 and reset.json()["card"]["status"] == "available"
+        assert cce_client.delete(f"/admin/cards/{card['id']}", headers=headers).status_code == 200
+        assert cce_client.get("/admin/cards", headers=headers).json()["summary"]["total"] == 0
+
+        # Workbench HTML is served and carries the beginner flow
+        ui = cce_client.get("/ui")
+        assert ui.status_code == 200 and "Claude 账号工作台" in ui.text
 
 
 def test_store_customer_cce_bundle_download_over_http(client, db, monkeypatch):
@@ -991,3 +1035,437 @@ def test_store_customer_cce_bundle_download_over_http(client, db, monkeypatch):
     with zipfile.ZipFile(io.BytesIO(r_linux.content)) as zf:
         assert zf.read("claude-box") == b"LINUX-ELF-BYTES"
         assert (zf.getinfo("claude-box").external_attr >> 16) & 0o111 == 0o111
+
+
+def test_customer_self_service_password_reset_and_cce_autorenew_cancel(client, db, monkeypatch):
+    """Customer can recover forgotten order password via 6-digit email OTP, revoking old JWTs."""
+    from app.security import create_user_token
+    from app.services import accounts, mailer
+    from cce_console.core import subscribe as cce_sub
+
+    user, _ = accounts.get_or_create_user(db, "forgot-pw@example.com", "OldPass123!")
+    old_token, _ = create_user_token(user)
+
+    # Without SMTP configured, returns 409 with helpful customer-service fallback message
+    monkeypatch.setattr(mailer, "smtp_configured", lambda: False)
+    r_no_smtp = client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    assert r_no_smtp.status_code == 409
+
+    # With SMTP configured, sends 6-digit code and enforces verification + session revocation
+    sent_codes: list[tuple[str, str]] = []
+    monkeypatch.setattr(mailer, "smtp_configured", lambda: True)
+
+    def _fake_send_reset(email: str, code: str, *, ttl_minutes: int = 10) -> bool:
+        sent_codes.append((email, code))
+        return True
+
+    monkeypatch.setattr(mailer, "send_password_reset_email", _fake_send_reset)
+    accounts._clear_reset_entry(user.email)
+
+    r_forgot = client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    assert r_forgot.status_code == 200
+    assert len(sent_codes) == 1
+    _, otp_code = sent_codes[0]
+    assert len(otp_code) == 6 and otp_code.isdigit()
+
+    # Cooldown prevents immediate resend spam
+    r_cooldown = client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    assert r_cooldown.status_code == 429
+
+    # Wrong code is rejected
+    r_bad_code = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "code": "000000" if otp_code != "000000" else "999999", "new_password": "NewPassword123!"},
+    )
+    assert r_bad_code.status_code == 400
+
+    # Correct code resets password and returns a fresh token
+    r_reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "code": otp_code, "new_password": "NewPassword123!"},
+    )
+    assert r_reset.status_code == 200
+    new_token = r_reset.json()["token"]
+    assert new_token
+
+    # Old JWT is immediately revoked via token_version increment
+    assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"}).status_code == 401
+    assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {new_token}"}).status_code == 200
+
+    # CCE auto-renew cancel helper is fault-tolerant and non-fatal
+    class DummyPage:
+        frames = []
+
+        async def goto(self, *_a, **_k):
+            raise RuntimeError("billing layout changed")
+
+    assert asyncio.run(cce_sub._best_effort_cancel_autorenew(DummyPage())) is False
+
+
+def test_dual_track_vcc_issuers_lithic_and_category_a_auto_mint_and_close(tmp_path, monkeypatch):
+    """Both Track A (VMCard/FotonCard USDT REST) and Track B (Lithic) auto-mint, align AVS ZIP, and auto-close."""
+    import base64
+
+    from cce_console.core import card_pool, vcc_issuers
+    from cce_console.db.database import Database
+
+    monkeypatch.setenv("CCE_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    db = Database(tmp_path / "cce_vcc.sqlite3")
+    asyncio.run(db.connect())
+
+    try:
+        # 1. AVS Geo -> State ZIP alignment
+        assert vcc_issuers.zip_for_geo({"region": "California", "city": "San Francisco"}) == "94107"
+        assert vcc_issuers.zip_for_geo({"region": "Oregon"}) == "97204"
+        assert vcc_issuers.zip_for_geo({"postal": "10011", "region": "New York"}) == "10011"
+
+        # 2. Track A (VMCard / FotonCard / Generic REST with HMAC signature)
+        monkeypatch.setenv("CCE_VCC_PROVIDER", "auto")
+        monkeypatch.delenv("LITHIC_API_KEY", raising=False)
+        monkeypatch.setenv("VCC_PROVIDER_NAME", "VMCard")
+        monkeypatch.setenv("VCC_API_URL", "https://vcc-a.example.com/v1/cards/create")
+        monkeypatch.setenv("VCC_API_KEY", "vmcard_key_123")
+        monkeypatch.setenv("VCC_API_SECRET", "vmcard_sec_456")
+        monkeypatch.setenv("VCC_CARD_BIN", "485932")
+        monkeypatch.setenv("VCC_CLOSE_URL", "https://vcc-a.example.com/v1/cards/{id}/close")
+
+        calls: list[tuple[str, str, dict]] = []
+
+        class FakeResp:
+            def __init__(self, status_code: int, payload: dict):
+                self.status_code = status_code
+                self._payload = payload
+                self.text = str(payload)
+
+            def json(self):
+                return self._payload
+
+        class FakeAsyncClient:
+            def __init__(self, *a, **kw):
+                self.base_url = kw.get("base_url", "")
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def post(self, url, headers=None, json=None, content=None):
+                calls.append(("POST", f"{self.base_url}{url}", headers or {}))
+                if "vcc-a.example.com" in str(url) and "create" in str(url):
+                    assert headers and "X-Signature" in headers
+                    return FakeResp(
+                        200,
+                        {
+                            "code": 200,
+                            "data": {
+                                "card_id": "vm_9001",
+                                "card_number": "4859320000008899",
+                                "cvv": "654",
+                                "exp": "09/2029",
+                                "balance": 21.0,
+                            },
+                        },
+                    )
+                if "close" in str(url):
+                    return FakeResp(200, {"ok": True})
+                if str(url) == "/cards":
+                    assert headers and headers.get("Authorization") == "lithic_live_key"
+                    return FakeResp(
+                        201,
+                        {
+                            "token": "lithic_tok_777",
+                            "pan": "5567660000001122",
+                            "cvv": "321",
+                            "exp_month": "11",
+                            "exp_year": "2030",
+                            "state": "OPEN",
+                        },
+                    )
+                raise AssertionError(f"unexpected POST {url}")
+
+            async def patch(self, url, headers=None, json=None):
+                calls.append(("PATCH", f"{self.base_url}{url}", json or {}))
+                return FakeResp(200, {"state": "CLOSED"})
+
+        monkeypatch.setattr(vcc_issuers.httpx, "AsyncClient", FakeAsyncClient)
+
+        assert vcc_issuers.active_provider() == "category_a"
+        # Pool is empty -> lease_card automatically mints a Track A card with California ZIP
+        leased_a = asyncio.run(
+            card_pool.lease_card(db, profile_id="acct-ca", geo={"region": "California"})
+        )
+        assert leased_a.pan == "4859320000008899"
+        assert leased_a.zip == "94107"
+        asyncio.run(card_pool.settle_card(db, leased_a.card_id, success=True))
+        assert any("vm_9001/close" in c[1] for c in calls)
+
+        # 3. Track B (EIN arrives -> operator sets LITHIC_API_KEY; auto mode switches to Lithic!)
+        monkeypatch.setenv("LITHIC_API_KEY", "lithic_live_key")
+        assert vcc_issuers.active_provider() == "lithic"
+        assert "Lithic" in vcc_issuers.issuer_status()["label"]
+
+        leased_b = asyncio.run(
+            card_pool.lease_card(db, profile_id="acct-or", geo={"region": "Oregon"})
+        )
+        assert leased_b.pan == "5567660000001122"
+        assert leased_b.zip == "97204"
+        asyncio.run(card_pool.settle_card(db, leased_b.card_id, success=True))
+        assert any(c[0] == "PATCH" and "/cards/lithic_tok_777" in c[1] and c[2].get("state") == "CLOSED" for c in calls)
+    finally:
+        asyncio.run(db.close())
+
+
+def test_multi_day_warmup_account_pool_and_isp_purity_gate(tmp_path, monkeypatch):
+    """Accounts register into a 2-3 day warm-up pool (no card burned during warm-up), reject datacenter IPs, and graduate or fast-track to Pro."""
+    import base64
+    from contextlib import asynccontextmanager
+
+    from cce_console.core import card_pool, pipeline, signup, subscribe, warmup
+    from cce_console.db.database import Database
+
+    monkeypatch.setenv("CCE_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("CCE_WARMUP_DAYS", "2")
+    monkeypatch.setenv("CCE_STRICT_ISP_PROXY", "true")
+
+    db = Database(tmp_path / "cce_warmup.sqlite3")
+    asyncio.run(db.connect())
+
+    class FakeProfiles:
+        def __init__(self):
+            self._port = 10010
+
+        async def create_profile(self, *, profile_id, upstream_proxy_url, expected_ip, **_kw):
+            self._port += 1
+            record = {
+                "profile_id": profile_id,
+                "batch_id": None,
+                "local_proxy_port": self._port,
+                "upstream_proxy_url": upstream_proxy_url,
+                "expected_ip": expected_ip,
+                "os_type": "windows",
+                "noise_seed": 42,
+                "fingerprint_json": "{}",
+            }
+            await db.insert_profile(record)
+            return record
+
+    profiles = FakeProfiles()
+
+    class FakePage:
+        url = "https://claude.ai/new"
+        frames = []
+
+    class FakeContext:
+        async def new_page(self):
+            return FakePage()
+
+    class FakePool:
+        def __init__(self):
+            self.synced: list[str] = []
+
+        @asynccontextmanager
+        async def acquire_context(self, _profile_id):
+            yield FakeContext()
+
+        async def sync_claude_cli_credentials(self, profile_id, **_kw):
+            self.synced.append(profile_id)
+            await db.save_credentials(profile_id, b"sealed-high-weight-credentials")
+            return b"sealed-high-weight-credentials"
+
+    pool = FakePool()
+    signup_calls: list[str] = []
+    warmup_rounds: list[tuple[str, int]] = []
+    subscribe_calls: list[str] = []
+
+    async def fake_signup(page, *, email, **_kw):
+        signup_calls.append(email)
+        return signup.SignupOutcome("created", email=email)
+
+    async def fake_warmup(page, *, round_index=1, **_kw):
+        warmup_rounds.append(("round", round_index))
+        return {"ok": True, "round": round_index, "messages_sent": 2}
+
+    async def fake_subscribe(page, *, card, plan="pro", **_kw):
+        subscribe_calls.append(card["zip"])
+        return subscribe.SubscribeOutcome("subscribed", "订阅成功（已关闭自动续费）")
+
+    monkeypatch.setattr(pipeline.signup, "run_signup", fake_signup)
+    monkeypatch.setattr(pipeline.warmup, "run_warmup_session", fake_warmup)
+    monkeypatch.setattr(pipeline.subscribe, "run_subscribe", fake_subscribe)
+
+    try:
+        # 1. Datacenter IP is blocked by the pre-signup ISP purity gate before touching signup
+        dc_row = pipeline.ImportRow(
+            email="datacenter@gmail.com",
+            app_password="abcd efgh ijkl mnop",
+            ip="198.51.100.10",
+            proxy_url="socks5://u:p@198.51.100.10:1080",
+            warmup_days=2,
+        )
+        dc_job = asyncio.run(pipeline.create_job(db, profiles, dc_row))
+        asyncio.run(
+            db.save_geo(
+                dc_job["profile_id"],
+                '{"ip":"198.51.100.10","country_code":"US","region":"Virginia","is_hosting":true}',
+            )
+        )
+        dc_res = asyncio.run(pipeline.run_job(db, pool, dc_job["profile_id"]))
+        assert dc_res["stage"] == "needs_human"
+        assert "机房" in dc_res["human_note"]
+        assert signup_calls == []  # Clean Gmail was NOT burned!
+
+        # 2. Clean residential ISP account enters the 2-day Warm-up Pool
+        isp_row = pipeline.ImportRow(
+            email="highweight@gmail.com",
+            app_password="abcd efgh ijkl mnop",
+            ip="203.0.113.55",
+            proxy_url="socks5://u:p@203.0.113.55:1080",
+            warmup_days=2,
+        )
+        job = asyncio.run(pipeline.create_job(db, profiles, isp_row))
+        pid = job["profile_id"]
+        asyncio.run(
+            db.save_geo(
+                pid,
+                '{"ip":"203.0.113.55","country_code":"US","region":"Oregon","is_hosting":false}',
+            )
+        )
+        # Seed one subscription card (must NOT be leased during Day 1 or Day 2 warm-up!)
+        asyncio.run(
+            card_pool.issue_card(
+                db, pan="4859320000001234", cvv="789", exp_month="10", exp_year="2029", billing_zip=""
+            )
+        )
+
+        # Day 1 run: registers + runs warm-up round 1 -> parks in 'registered' with warmup_completed=1
+        d1 = asyncio.run(pipeline.run_job(db, pool, pid))
+        assert d1["stage"] == "registered"
+        assert d1["warmup_completed"] == 1
+        assert d1["warmup_days"] == 2
+        assert d1["next_action_at"] is not None
+        assert len(signup_calls) == 1
+        assert subscribe_calls == []  # Card NOT touched on Day 1!
+        assert asyncio.run(card_pool.list_cards(db))["summary"]["available"] == 1
+
+        # Day 2 run: does NOT re-register; runs warm-up round 2 -> schedules final 4h pre-payment cooldown
+        d2 = asyncio.run(pipeline.run_job(db, pool, pid))
+        assert d2["stage"] == "registered"
+        assert d2["warmup_completed"] == 2
+        assert len(signup_calls) == 1  # Still only 1 signup!
+        assert len(warmup_rounds) == 2
+        assert subscribe_calls == []  # Still in final cooldown before card binding!
+
+        # Graduation run (after cooldown or fast-track): leases card with Oregon ZIP (97204), subscribes Pro, syncs creds -> 'ready'
+        grad = asyncio.run(pipeline.run_job(db, pool, pid))
+        assert grad["stage"] == "ready"
+        assert subscribe_calls == ["97204"]
+        assert pool.synced == [pid]
+        assert asyncio.run(card_pool.list_cards(db))["summary"]["used"] == 1
+    finally:
+        asyncio.run(db.close())
+
+
+def test_zero_time_loss_jit_promotion_and_hot_standby_watermark(monkeypatch):
+    """Storefront counts mature free pool accounts as stock and triggers /admin/jobs/promote on payment when ready_pro=0."""
+    from app.services.fulfillment import cce_delivery
+
+    _cce_env(monkeypatch)
+    # 0 ready Pro accounts on shelf, 1 mature free account in the warm-up pool (3/3 days done)
+    profiles = [
+        {
+            "profile_id": "mature-white-1",
+            "status": "IDLE",
+            "has_credentials": False,
+            "active_key": None,
+            "job_stage": "registered",
+            "warmup_days": 3,
+            "warmup_completed": 3,
+            "plan": "free_pool",
+            "created_at": "2026-11-20T00:00:00+00:00",
+        },
+        {
+            "profile_id": "still-warming-2",
+            "status": "IDLE",
+            "has_credentials": False,
+            "active_key": None,
+            "job_stage": "registered",
+            "warmup_days": 3,
+            "warmup_completed": 1,
+            "plan": "free_pool",
+            "created_at": "2026-11-24T00:00:00+00:00",
+        },
+    ]
+    promoted_requests: list[dict] = []
+
+    class FakeResp:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, path):
+            assert path == "/admin/profiles"
+            return FakeResp({"profiles": profiles})
+
+        def post(self, path, json):
+            assert path == "/admin/jobs/promote"
+            promoted_requests.append(json)
+            return FakeResp({"promoted": ["mature-white-1"], "count": 1})
+
+    monkeypatch.setattr(cce_delivery, "_http_client", lambda: FakeClient())
+    monkeypatch.setattr(cce_delivery, "redis_lock", lambda *a, **k: _ctx(True), raising=False)
+
+    # Storefront sees 1 available account (the mature 3/3 white account; the 1/3 warming one is not yet sellable)
+    assert cce_delivery.available_cce_profiles() == 1
+    # Customer pays -> ready Pro shelf is 0, so claim_and_mint_key triggers JIT promotion and returns None (order waits ~2m for sweeper)
+    assert cce_delivery.claim_and_mint_key(plan_tier="pro", valid_days=30) is None
+    assert len(promoted_requests) == 1
+    assert promoted_requests[0]["count"] == 1
+
+
+def test_unified_claude_store_backend_and_non_voip_sms_and_avs_profile(client, db, admin_headers, monkeypatch):
+    """Storefront claude-pro-account is unified with CCE pool overview, full US AVS billing profile, and Non-VoIP SMS client."""
+    from app.models import FulfillmentStrategy, Product
+    from cce_console.core import sms_client, vcc_issuers
+
+    # 1. Full US AVS billing profile alignment
+    or_avs = vcc_issuers.billing_profile_for_zip("97204", "lithic:tok_1")
+    assert or_avs["holder_name"] == "ALEX MERCER"
+    assert or_avs["city"] == "Portland" and or_avs["state"] == "OR"
+    ca_avs = vcc_issuers.billing_profile_for_zip("94107", "JANE DOE")
+    assert ca_avs["holder_name"] == "JANE DOE"
+    assert ca_avs["city"] == "San Francisco" and ca_avs["state"] == "CA"
+
+    # 2. Non-VoIP US phone normalization
+    assert sms_client._normalize_us_phone("+1 (415) 555-0199") == "4155550199"
+
+    # 3. Unified admin overview & one-click product binding
+    claude_prod = db.query(Product).filter(Product.slug == "claude-pro-account").first()
+    assert claude_prod is not None
+    r_bind = client.post(f"/api/v1/admin/claude/bind-product/{claude_prod.id}", headers=admin_headers)
+    assert r_bind.status_code == 200
+    db.refresh(claude_prod)
+    assert claude_prod.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY
+
+    r_overview = client.get("/api/v1/admin/claude/overview", headers=admin_headers)
+    assert r_overview.status_code == 200
+    body = r_overview.json()
+    assert "pool" in body and "products" in body
+    assert any(p["slug"] == "claude-pro-account" and p["bound_to_cce"] is True for p in body["products"])
+
+    # 4. /cce routes allow SAMEORIGIN framing for /admin/claude while other routes stay DENY
+    assert client.get("/healthz").headers.get("x-frame-options") == "DENY"
+    assert client.get("/cce/healthz").headers.get("x-frame-options") == "SAMEORIGIN"

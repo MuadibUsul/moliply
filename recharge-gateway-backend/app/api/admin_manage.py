@@ -938,6 +938,51 @@ def admin_add_card(
     return {"id": card.id, "card_masked": mask_card_number(digits), "status": card.status.value}
 
 
+@protected.post("/cards/mint")
+def admin_mint_card(
+    request: Request,
+    spend_limit_usd: float = Query(default=22.0, ge=1.0, le=1000.0),
+    zip_code: str = Query(default="97204", max_length=16),
+    max_bind_count: int = Query(default=1, ge=1, le=20),
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Mint a virtual card via the shared A/B Dual-Track VCC Issuer API into MOLIPLY's VccCard pool."""
+    card = vcc_pool_scheduler.mint_card_to_pool(
+        db,
+        region="US",
+        spend_limit_usd=Decimal(str(spend_limit_usd)),
+        zip_code=zip_code,
+        max_bind_count=max_bind_count,
+        actor=admin.get("sub", "admin"),
+    )
+    if card is None:
+        raise HTTPException(
+            status_code=400,
+            detail="A/B 双轨 API 自动开卡未返回有效卡号，请检查 LITHIC_API_KEY 或 VCC_API_URL / VCC_API_KEY 配置",
+        )
+    digits = decrypt_text(card.card_number_enc)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="vcc.api_mint",
+            entity_type="vcc_card",
+            entity_id=str(card.id),
+            detail=f"provider={card.provider} bin={card.card_bin} limit={spend_limit_usd}",
+            ip=client_ip(request),
+        )
+    )
+    db.commit()
+    return {
+        "id": card.id,
+        "provider": card.provider,
+        "card_bin": card.card_bin,
+        "card_masked": mask_card_number(digits),
+        "available_balance": money(card.available_balance),
+        "status": card.status.value,
+    }
+
+
 @protected.post("/cards/batch-import")
 def admin_batch_import_cards(
     payload: VccCardBatchImportRequest,
@@ -1916,3 +1961,88 @@ def admin_run_recovery(
     )
     db.commit()
     return summary
+
+
+@protected.get("/claude/overview")
+def admin_claude_overview(db: Session = Depends(get_db)) -> dict:
+    """Unified view of storefront Claude products, pending orders, and the CCE warm-up/delivery pool."""
+    from app.models import OrderItem
+    from app.services.catalog import available_account_stock
+    from app.services.fulfillment import cce_delivery
+
+    products = (
+        db.query(Product)
+        .filter(
+            (Product.slug == "claude-pro-account")
+            | (Product.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY)
+            | (Product.brand.ilike("%claude%"))
+        )
+        .order_by(Product.sort_order.asc(), Product.id.asc())
+        .all()
+    )
+    cce_product_ids = [
+        p.id for p in products if p.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY
+    ]
+    pending_orders = 0
+    if cce_product_ids:
+        pending_orders = int(
+            db.query(func.count(func.distinct(Order.id)))
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .filter(
+                Order.status == OrderStatus.PAID,
+                Order.stock_pending.is_(True),
+                OrderItem.product_id.in_(cce_product_ids),
+            )
+            .scalar()
+            or 0
+        )
+
+    return {
+        "pool": cce_delivery.pool_overview(),
+        "pending_claude_orders": pending_orders,
+        "products": [
+            {
+                "id": p.id,
+                "slug": p.slug,
+                "name": p.name,
+                "subtitle": p.subtitle,
+                "delivery_type": p.delivery_type.value,
+                "fulfillment_strategy": p.fulfillment_strategy.value,
+                "bound_to_cce": p.fulfillment_strategy == FulfillmentStrategy.CCE_ACCOUNT_KEY,
+                "active": bool(p.active),
+                "price": float(p.price),
+                "sold_count": int((p.base_sales_count or 0) + (p.sold_count or 0)),
+                "available_stock": available_account_stock(db, p)
+                if p.delivery_type == DeliveryType.ACCOUNT_CREDENTIALS
+                else 0,
+            }
+            for p in products
+        ],
+    }
+
+
+@protected.post("/claude/bind-product/{product_id}")
+def admin_bind_claude_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Bind a storefront Claude account product to CCE automated delivery and trigger backorder sweep."""
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    product.delivery_type = DeliveryType.ACCOUNT_CREDENTIALS
+    product.fulfillment_strategy = FulfillmentStrategy.CCE_ACCOUNT_KEY
+    db.add(product)
+    db.add(
+        AuditLog(
+            actor=admin.get("sub", "admin"),
+            action="claude.bind_product",
+            entity_type="product",
+            entity_id=str(product.id),
+            detail=f"slug={product.slug} -> CCE_ACCOUNT_KEY",
+        )
+    )
+    db.commit()
+    auto_fulfilled = order_service.fulfill_pending_backorders(db, product_id=product.id)
+    return {"ok": True, "product_id": product.id, "auto_fulfilled": auto_fulfilled}

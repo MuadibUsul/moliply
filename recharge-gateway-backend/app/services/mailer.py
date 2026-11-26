@@ -141,3 +141,31 @@ def send_delivery_email(email: str, order_payload: dict, *, raise_on_error: bool
         if raise_on_error:
             raise
         return False
+
+
+def send_password_reset_email(email: str, code: str, *, ttl_minutes: int = 10) -> bool:
+    """Send a 6-digit password reset verification code to the customer's checkout email."""
+    if not smtp_configured():
+        return False
+    _, header_from = _resolve_from()
+    subject = f"【{settings.brand_name_cn}】订单账户密码重置验证码：{code}"
+    lines = [
+        f"您好，您正在重置 {settings.brand_name_cn}（{settings.brand_name_en}）订单中心登录密码。",
+        "",
+        f"您的 6 位验证码为：{code}",
+        f"有效期：{ttl_minutes} 分钟（请勿泄露给他人）",
+        "",
+        "如非本人操作，请忽略本邮件，您的账户仍然安全。",
+    ]
+    message = MIMEText("\n".join(lines), "plain", "utf-8")
+    message["Subject"] = subject
+    message["From"] = header_from
+    message["To"] = email
+    try:
+        _send_message(message, [email])
+        _log_email_result("auth.password_reset_email", subject, "sent")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Password reset email failed for %s: %s", email, exc.__class__.__name__)
+        _log_email_result("auth.password_reset_email", subject, "failed", str(exc))
+        return False

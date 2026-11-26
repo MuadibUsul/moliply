@@ -218,6 +218,17 @@ class Settings(BaseSettings):
     # How many different cards one order may burn through in a region before the
     # dispatcher gives up on the self-owned channel.
     vcc_card_retry_limit: int = 2
+    # Shared A/B Dual-Track VCC API auto-minting (Track B: Lithic, Track A: VMCard/FotonCard/Buvei)
+    vcc_auto_mint_enabled: bool = True
+    vcc_issuer_track: str = "AUTO"
+    lithic_api_key: str = ""
+    lithic_api_base: str = "https://api.lithic.com/v1"
+    lithic_spend_limit_cents: int = 2200
+    vcc_api_url: str = ""
+    vcc_api_key: str = ""
+    vcc_api_secret: str = ""
+    vcc_api_bin: str = ""
+    vcc_api_spend_limit: float = 22.0
     proxy_url: str = ""
     ph_residential_proxy_url: str = ""
     us_residential_proxy_url: str = ""

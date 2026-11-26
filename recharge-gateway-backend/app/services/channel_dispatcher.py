@@ -17,9 +17,13 @@ from app.config import settings
 from app.models import (
     ActivationCode,
     ChannelMode,
+    FreeAccountPool,
+    FreeAccountStatus,
+    Product,
     RechargeState,
     RechargeTask,
     RegionPreference,
+    SkuType,
     utcnow,
 )
 from app.services import feishu
@@ -408,6 +412,105 @@ def _as_recharge_error(exc: ChannelFallback, *, release_code: bool | None = None
     return error
 
 
+GEMINI_FAMILY_SKUS = {
+    SkuType.GEMINI_ADVANCED_1M,
+    SkuType.GEMINI_ADVANCED_3M,
+    SkuType.GEMINI_ADVANCED_12M,
+}
+GEMINI_FAMILY_MAX_SEATS = 5
+
+
+def _parse_seat_note(note: str) -> tuple[int, int]:
+    """Extract [seats:used/max] from FreeAccountPool.note without adding new schema columns."""
+    import re
+
+    match = re.search(r"\[seats:(\d+)/(\d+)\]", note or "")
+    if match:
+        return int(match.group(1)), max(1, int(match.group(2)))
+    return 0, GEMINI_FAMILY_MAX_SEATS
+
+
+def _format_seat_note(note: str, used: int, max_seats: int) -> str:
+    import re
+
+    tag = f"[seats:{used}/{max_seats}]"
+    cleaned = re.sub(r"\s*\[seats:\d+/\d+\]", "", note or "").strip()
+    return f"{cleaned} {tag}".strip()[:255]
+
+
+def _attempt_gemini_family(
+    db: Session,
+    task: RechargeTask,
+    code: ActivationCode,
+    session: SessionInfo,
+) -> DispatchOutcome:
+    """Allocate 1 seat from a 1-to-5 Google One AI Premium Family Host parked in FreeAccountPool.
+
+    Reuses ``FreeAccountPool`` so one Google One AI Premium host account can serve
+    up to 5 customers before transitioning from ``AVAILABLE`` to ``SOLD``.
+    """
+    gemini_product_ids = [
+        pid
+        for (pid,) in db.query(Product.id)
+        .filter(Product.slug.in_(["gemini-advanced-family-1m", "gemini-advanced-account"]))
+        .all()
+    ]
+    query = db.query(FreeAccountPool).filter(FreeAccountPool.status == FreeAccountStatus.AVAILABLE)
+    if gemini_product_ids:
+        query = query.filter(FreeAccountPool.product_id.in_(gemini_product_ids))
+    host = query.order_by(FreeAccountPool.id.asc()).with_for_update(skip_locked=True).first()
+    if host is None:
+        raise ChannelFallback("NO_GEMINI_FAMILY_HOST", "本地 Google One 家庭组主号池暂无空余车位，切换上游通道")
+
+    used, max_seats = _parse_seat_note(host.note)
+    used += 1
+    host.note = _format_seat_note(host.note, used, max_seats)
+    if used >= max_seats:
+        host.status = FreeAccountStatus.SOLD
+        host.sold_at = utcnow()
+    db.add(host)
+
+    invite_hint = ""
+    if host.session_raw_enc:
+        try:
+            raw_val = decrypt_text(host.session_raw_enc).strip()
+            if raw_val.startswith("http"):
+                invite_hint = f" 专属加入链接：{raw_val}"
+        except Exception:  # noqa: BLE001
+            invite_hint = ""
+
+    task.executed_channel = SELF_VCC
+    task.executed_region = "US"
+    task.billed_currency = "USD"
+    task.billed_amount = Decimal("4.00")
+    db.add(task)
+    db.commit()
+
+    feishu.dispatch_event(
+        "gemini.family_seat_allocated",
+        "MOLIPLY Gemini 家庭组车位已分配",
+        {
+            "任务编号": task.task_id,
+            "客户 Gmail": session.email,
+            "家庭主号": host.email,
+            "当前车位": f"{used}/{max_seats}",
+        },
+        severity="info",
+        link_path="/admin/tasks",
+    )
+    msg = (
+        f"已为您分配 Google One AI Premium (2TB + Gemini Advanced) 家庭组席位"
+        f"（主号 {host.email} · 席位 {used}/{max_seats}），邀请已发送至 {session.email}，请查收 Gmail 邮件确认加入。{invite_hint}"
+    ).strip()
+    return DispatchOutcome(
+        channel=SELF_VCC,
+        region="US",
+        currency="USD",
+        amount=Decimal("4.00"),
+        message=msg,
+    )
+
+
 def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: SessionInfo) -> DispatchOutcome:
     """Route a task: the local pool is the default, upstream is the optional net.
 
@@ -415,6 +518,18 @@ def dispatch(db: Session, task: RechargeTask, code: ActivationCode, session: Ses
     runs on the local card pool, and only an exhaustion/failure with a configured
     upstream falls back; without one the pool error surfaces for manual review.
     """
+    if code.sku_type in GEMINI_FAMILY_SKUS:
+        mode = effective_mode(code)
+        if mode != UPSTREAM_ONLY:
+            try:
+                return _attempt_gemini_family(db, task, code, session)
+            except ChannelFallback as exc:
+                task.fallback_reason = f"{exc.code}: {exc.message}"[:250]
+                db.add(task)
+                db.commit()
+                if mode == SELF_VCC_ONLY or not upstream_configured():
+                    raise _as_recharge_error(exc) from exc
+        return _attempt_upstream(db, task, code, session)
     mode = effective_mode(code)
     if mode == UPSTREAM_ONLY:
         return _attempt_upstream(db, task, code, session)

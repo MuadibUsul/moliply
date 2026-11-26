@@ -92,6 +92,17 @@ def _http_base_ready(profile: dict[str, Any]) -> bool:
     )
 
 
+def _http_mature_free(profile: dict[str, Any]) -> bool:
+    """Return True if the profile is a mature free account in the warm-up pool ready for JIT Pro upgrade."""
+    if str(profile.get("status") or "") != "IDLE":
+        return False
+    if str(profile.get("job_stage") or "") != "registered":
+        return False
+    w_days = max(1, int(profile.get("warmup_days") or 3))
+    w_done = int(profile.get("warmup_completed") or 0)
+    return w_done >= w_days
+
+
 def _keys_have_active(keys: list[dict[str, Any]], now_iso: str) -> bool:
     for record in keys:
         if not isinstance(record, dict):
@@ -149,6 +160,9 @@ def _http_available() -> int:
             for profile in profiles:
                 if _http_base_ready(profile) and not _http_profile_has_active_key(client, profile, now_iso):
                     count += 1
+                elif _http_mature_free(profile):
+                    # Mature free accounts in the warm-up pool are sellable via JIT promotion on payment.
+                    count += 1
             return count
     except Exception:  # noqa: BLE001 - a bridge probe must never raise
         logger.warning("CCE HTTP probe failed", exc_info=False)
@@ -156,7 +170,13 @@ def _http_available() -> int:
 
 
 def _http_claim(plan_tier: str, valid_days: int) -> dict | None:
-    """Pick a deliverable profile and mint its key through the console API."""
+    """Pick a deliverable profile and mint its key through the console API.
+
+    If no pre-upgraded Pro account is on the hot-standby shelf, but mature free
+    accounts exist in the warm-up pool, automatically triggers ``POST /admin/jobs/promote``
+    so CCE upgrades one mature account to a full 30-day Pro subscription right now;
+    the every-60s backorder sweeper then delivers it as soon as the upgrade finishes.
+    """
     from app.services.locks import redis_lock
 
     with redis_lock("lock:cce:claim", ttl_seconds=_CLAIM_LOCK_SECONDS) as acquired:
@@ -167,7 +187,8 @@ def _http_claim(plan_tier: str, valid_days: int) -> dict | None:
             with _http_client() as client:
                 listed = client.get("/admin/profiles")
                 listed.raise_for_status()
-                ready = [p for p in (listed.json().get("profiles") or []) if _http_base_ready(p)]
+                all_profiles = listed.json().get("profiles") or []
+                ready = [p for p in all_profiles if _http_base_ready(p)]
                 # Oldest account first, matching the SQLite ordering.
                 ready.sort(key=lambda p: str(p.get("created_at") or ""))
                 chosen: dict[str, Any] | None = None
@@ -176,6 +197,12 @@ def _http_claim(plan_tier: str, valid_days: int) -> dict | None:
                         chosen = candidate
                         break
                 if chosen is None:
+                    if any(_http_mature_free(p) for p in all_profiles):
+                        try:
+                            client.post("/admin/jobs/promote", json={"count": 1, "wait": False})
+                            logger.info("Triggered JIT Pro promotion for a mature CCE warm-up pool account")
+                        except Exception:  # noqa: BLE001
+                            logger.warning("Failed to trigger CCE JIT promotion", exc_info=False)
                     return None
                 profile_id = str(chosen["profile_id"])
 
@@ -253,13 +280,29 @@ def available_cce_profiles() -> int:
               AND NOT EXISTS (
                   SELECT 1 FROM delivery_keys k
                   WHERE k.profile_id = p.profile_id
-                    AND k.is_active = 1
-                    AND k.expires_at > ?
+                      AND k.is_active = 1
+                      AND k.expires_at > ?
               )
             """,
             (now_iso,),
         ).fetchone()
-        return int(row["cnt"] if row else 0)
+        ready_cnt = int(row["cnt"] if row else 0)
+        mature_cnt = 0
+        try:
+            mrow = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM account_jobs j
+                JOIN profiles p ON p.profile_id = j.profile_id
+                WHERE j.stage = 'registered'
+                  AND p.status = 'IDLE'
+                  AND COALESCE(j.warmup_completed, 0) >= CASE WHEN COALESCE(j.warmup_days, 3) < 1 THEN 1 ELSE COALESCE(j.warmup_days, 3) END
+                """
+            ).fetchone()
+            mature_cnt = int(mrow["cnt"] if mrow else 0)
+        except sqlite3.Error:
+            mature_cnt = 0
+        return ready_cnt + mature_cnt
     except sqlite3.Error:
         return 0
     finally:
@@ -548,3 +591,106 @@ def build_customer_bundle(payload_text: str, *, os_name: str = "windows") -> tup
     safe_profile = re.sub(r"[^A-Za-z0-9._-]", "-", profile_id).strip("-") or "claude"
     filename = f"moliply-claude-{safe_profile}-{os_key}.zip"
     return filename, out.getvalue()
+
+
+def pool_overview() -> dict[str, Any]:
+    """Return a unified CCE pool status snapshot for the MOLIPLY admin dashboard."""
+    if _http_ready():
+        try:
+            with _http_client(timeout=8.0) as client:
+                resp = client.get("/admin/status")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    pool = data.get("pool") or {}
+                    return {
+                        "reachable": True,
+                        "transport": "http",
+                        "ready": bool(data.get("ready", True)),
+                        "problems": data.get("problems") or [],
+                        "ready_pro": int(pool.get("ready_pro", 0)),
+                        "mature_free": int(pool.get("mature_free", 0)),
+                        "warming_free": int(pool.get("warming_free", 0)),
+                        "hot_standby_target": int(pool.get("hot_standby_target", 0)),
+                        "cards_available": int((data.get("cards") or {}).get("available", 0)),
+                        "vcc_issuer": data.get("vcc_issuer") or {},
+                        "clients": data.get("clients") or [],
+                        "worker": data.get("worker") or {},
+                    }
+        except Exception:  # noqa: BLE001
+            pass
+
+    conn = _connect()
+    if conn is None:
+        return {
+            "reachable": False,
+            "transport": "http" if _http_ready() else "sqlite",
+            "ready": False,
+            "problems": ["CCE 服务未连接或数据库未初始化"],
+            "ready_pro": 0,
+            "mature_free": 0,
+            "warming_free": 0,
+            "hot_standby_target": 0,
+            "cards_available": 0,
+            "vcc_issuer": {},
+            "clients": [],
+            "worker": {},
+        }
+    try:
+        now_iso = _now_iso()
+        ready_row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt FROM profiles p
+            WHERE p.status = 'IDLE'
+              AND p.claude_credentials_enc IS NOT NULL
+              AND length(p.claude_credentials_enc) > 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM delivery_keys k
+                  WHERE k.profile_id = p.profile_id AND k.is_active = 1 AND k.expires_at > ?
+              )
+            """,
+            (now_iso,),
+        ).fetchone()
+        ready_pro = int(ready_row["cnt"] if ready_row else 0)
+        mature_free = 0
+        warming_free = 0
+        cards_avail = 0
+        try:
+            m_row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM account_jobs j
+                JOIN profiles p ON p.profile_id = j.profile_id
+                WHERE j.stage = 'registered' AND p.status = 'IDLE'
+                  AND COALESCE(j.warmup_completed, 0) >= CASE WHEN COALESCE(j.warmup_days, 3) < 1 THEN 1 ELSE COALESCE(j.warmup_days, 3) END
+                """
+            ).fetchone()
+            mature_free = int(m_row["cnt"] if m_row else 0)
+            w_row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM account_jobs j
+                WHERE j.stage = 'registered'
+                  AND COALESCE(j.warmup_completed, 0) < CASE WHEN COALESCE(j.warmup_days, 3) < 1 THEN 1 ELSE COALESCE(j.warmup_days, 3) END
+                """
+            ).fetchone()
+            warming_free = int(w_row["cnt"] if w_row else 0)
+            c_row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM subscription_cards WHERE status = 'available'"
+            ).fetchone()
+            cards_avail = int(c_row["cnt"] if c_row else 0)
+        except sqlite3.Error:
+            pass
+        return {
+            "reachable": True,
+            "transport": "sqlite",
+            "ready": True,
+            "problems": [],
+            "ready_pro": ready_pro,
+            "mature_free": mature_free,
+            "warming_free": warming_free,
+            "hot_standby_target": int(os.environ.get("CCE_HOT_STANDBY_TARGET") or "0"),
+            "cards_available": cards_avail,
+            "vcc_issuer": {},
+            "clients": [],
+            "worker": {},
+        }
+    finally:
+        conn.close()

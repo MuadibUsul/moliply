@@ -82,6 +82,25 @@ fi
 
 printf '%s\n' "$STAMP" > "$BASE/.current_tag"
 
+# Sync vendored CCE console to the host systemd tree when co-located on this box.
+CCE_HOST_DIR="${CCE_HOST_DIR:-/home/deploy/cce/server}"
+if [ -d "$CCE_HOST_DIR" ] && [ -w "$CCE_HOST_DIR" ]; then
+  echo "==> syncing cce_console -> $CCE_HOST_DIR"
+  for sub in api core db util; do
+    if [ -d "$REL/recharge-gateway-backend/cce_console/$sub" ]; then
+      mkdir -p "$CCE_HOST_DIR/$sub"
+      cp -a "$REL/recharge-gateway-backend/cce_console/$sub/." "$CCE_HOST_DIR/$sub/"
+    fi
+  done
+  if systemctl --user is-active cce-api.service >/dev/null 2>&1; then
+    echo "==> restarting user unit cce-api.service"
+    systemctl --user restart cce-api.service || echo "WARN: failed to restart user cce-api.service" >&2
+  elif command -v sudo >/dev/null 2>&1 && sudo -n -u deploy XDG_RUNTIME_DIR="/run/user/$(id -u deploy 2>/dev/null || echo 1000)" systemctl --user is-active cce-api.service >/dev/null 2>&1; then
+    echo "==> restarting deploy user unit cce-api.service"
+    sudo -n -u deploy XDG_RUNTIME_DIR="/run/user/$(id -u deploy)" systemctl --user restart cce-api.service || echo "WARN: failed to restart deploy cce-api.service" >&2
+  fi
+fi
+
 echo "==> pruning old releases (keeping $KEEP)"
 ls -1dt "$BASE"/releases/*/ 2>/dev/null | tail -n "+$((KEEP + 1))" | xargs -r rm -rf
 
