@@ -190,7 +190,7 @@ def test_order_frequency_limits_and_payment_ip_match(db):
     intent = order_service.create_payment(db, first_small, "wechat", "203.0.113.10")
     assert intent["order_no"] == first_small.order_no
 
-    # 3. Large order (>= 200): first succeeds, second within 24h from same IP (even different email) fails with 429
+    # 3. Large order (>= 200): first succeeds, second within 24h from same IP (same email or different email) fails with 429
     large_qty = max(1, int((Decimal("200") // max(Decimal("1"), small_prod.price)) + 1))
     first_large = order_service.create_order(
         db,
@@ -201,17 +201,30 @@ def test_order_frequency_limits_and_payment_ip_match(db):
     )
     assert first_large.amount >= Decimal("200")
 
-    with pytest.raises(order_service.OrderError) as exc_large:
+    with pytest.raises(order_service.OrderError) as exc_large_same:
         order_service.create_order(
             db,
-            email="large.limit2@example.com",
+            email="large.limit1@example.com",
             items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=large_qty)],
             coupon_code=None,
             client_ip="203.0.113.20",
         )
-    assert exc_large.value.code == "LARGE_ORDER_DAILY_LIMIT"
-    assert exc_large.value.status_code == 429
-    assert "MOLIPLY-VIP" in exc_large.value.message
+    assert exc_large_same.value.code == "LARGE_ORDER_DAILY_LIMIT"
+    assert exc_large_same.value.status_code == 429
+    assert "MOLIPLY-VIP" in exc_large_same.value.message
+
+    # Same IP rotating to a second email is blocked by IP_MULTI_ACCOUNT_DAILY_LIMIT (1 order per IP per 24h across accounts)
+    with pytest.raises(order_service.OrderError) as exc_multi_ip:
+        order_service.create_order(
+            db,
+            email="large.limit2@example.com",
+            items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=1)],
+            coupon_code=None,
+            client_ip="203.0.113.20",
+        )
+    assert exc_multi_ip.value.code == "IP_MULTI_ACCOUNT_DAILY_LIMIT"
+    assert exc_multi_ip.value.status_code == 429
+    assert "MOLIPLY-VIP" in exc_multi_ip.value.message
 
 
 def test_pay_first_lock_after_payment_invariant(db):

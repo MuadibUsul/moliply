@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     large_order_window_hours: int = 24
     small_order_cooldown_minutes: int = 30
     enforce_payment_ip_match: bool = True
-    large_order_new_buyer_review_enabled: bool = True
+    large_order_new_buyer_review_enabled: bool = False
     trusted_buyer_min_days: int = 7
     enforce_stock: bool = True
     # When a shelf is empty, keep the product sellable if the operator's desk can

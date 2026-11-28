@@ -335,6 +335,26 @@ def _check_order_frequency_limits(
         identity_filters.append(Order.client_ip == clean_ip)
 
     countable_statuses = [OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.DELIVERED]
+
+    # Strict per-IP multi-account guard: one IP cannot rotate accounts to place multiple orders in 24h.
+    if clean_ip and clean_ip.lower() != "unknown":
+        ip_day_cutoff = now - timedelta(hours=24)
+        other_account_same_ip_q = db.query(Order.id).filter(
+            Order.client_ip == clean_ip,
+            Order.email != email,
+            Order.status.in_(countable_statuses),
+            Order.created_at >= ip_day_cutoff,
+        )
+        if exclude_order_id is not None:
+            other_account_same_ip_q = other_account_same_ip_q.filter(Order.id != exclude_order_id)
+        if other_account_same_ip_q.first() is not None:
+            raise OrderError(
+                "IP_MULTI_ACCOUNT_DAILY_LIMIT",
+                f"同一网络（IP）24 小时内仅限单账号下单，检测到多号操作已拦截；"
+                f"如有大量采购需求，请联系{contact}手动开通。",
+                429,
+            )
+
     base_query = db.query(Order.id).filter(
         or_(*identity_filters),
         Order.status.in_(countable_statuses),
