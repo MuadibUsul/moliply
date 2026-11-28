@@ -9,7 +9,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -143,7 +143,7 @@ def create_order(
 
     normalized_email = str(email).strip().lower()
     now = utcnow()
-    max_pending_email = runtime.get_int("max_pending_orders_per_email", 10 if settings.is_production else 0)
+    max_pending_email = runtime.get_int("max_pending_orders_per_email", 3 if settings.is_production else 0)
     if max_pending_email > 0:
         active_pending = int(
             db.query(func.count(Order.id))
@@ -158,7 +158,27 @@ def create_order(
         if active_pending >= max_pending_email:
             raise OrderError(
                 "TOO_MANY_PENDING_ORDERS",
-                "您当前有过多未支付订单，请先完成支付或等待超时后再下单",
+                f"您当前有过多未支付订单，请先完成支付或等待超时后再下单；如有批量需求请联系{_support_contact_hint()}。",
+                429,
+            )
+
+    clean_ip = (client_ip or "").strip()
+    max_pending_ip = runtime.get_int("max_pending_orders_per_ip", 5 if settings.is_production else 0)
+    if max_pending_ip > 0 and clean_ip and clean_ip.lower() != "unknown":
+        ip_pending = int(
+            db.query(func.count(Order.id))
+            .filter(
+                Order.client_ip == clean_ip,
+                Order.status == OrderStatus.PENDING,
+                (Order.expires_at.is_(None)) | (Order.expires_at > now),
+            )
+            .scalar()
+            or 0
+        )
+        if ip_pending >= max_pending_ip:
+            raise OrderError(
+                "TOO_MANY_PENDING_ORDERS",
+                f"当前网络存在过多未支付订单，请先完成支付后再下单；如有批量需求请联系{_support_contact_hint()}。",
                 429,
             )
 
@@ -178,6 +198,86 @@ def create_order(
             client_ip=client_ip,
             user_id=user_id,
         )
+
+
+def _risk_limits_active() -> bool:
+    default_on = (
+        settings.order_risk_limits_enabled
+        if settings.order_risk_limits_enabled is not None
+        else settings.is_production
+    )
+    return runtime.get_bool("order_risk_limits_enabled", default_on)
+
+
+def _support_contact_hint() -> str:
+    wechat = runtime.get("support_wechat", settings.support_wechat).strip()
+    return f"客服（微信：{wechat}）" if wechat else "在线客服"
+
+
+def _check_order_frequency_limits(
+    db: Session,
+    *,
+    email: str,
+    user_id: int | None,
+    client_ip: str,
+    order_amount: Decimal,
+    exclude_order_id: int | None = None,
+) -> None:
+    """Enforce per-person order velocity limits:
+    - Large orders (>= threshold, default ¥200): max 1 per 24 hours.
+    - Small orders (< threshold): max 1 per 30 minutes.
+    Guides high-volume buyers to contact customer service for manual bulk activation.
+    """
+    if not _risk_limits_active():
+        return
+
+    now = utcnow()
+    threshold = Decimal(str(runtime.get_float("large_order_threshold_cny", settings.large_order_threshold_cny)))
+    contact = _support_contact_hint()
+
+    identity_filters = [Order.email == email]
+    if user_id is not None:
+        identity_filters.append(Order.user_id == user_id)
+    clean_ip = (client_ip or "").strip()
+    if clean_ip and clean_ip.lower() != "unknown":
+        identity_filters.append(Order.client_ip == clean_ip)
+
+    countable_statuses = [OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.DELIVERED]
+    base_query = db.query(Order.id).filter(
+        or_(*identity_filters),
+        Order.status.in_(countable_statuses),
+    )
+    if exclude_order_id is not None:
+        base_query = base_query.filter(Order.id != exclude_order_id)
+
+    if order_amount >= threshold:
+        window_hours = max(1, runtime.get_int("large_order_window_hours", settings.large_order_window_hours))
+        cutoff = now - timedelta(hours=window_hours)
+        recent_large = base_query.filter(
+            Order.amount >= threshold,
+            Order.created_at >= cutoff,
+        ).first()
+        if recent_large is not None:
+            raise OrderError(
+                "LARGE_ORDER_DAILY_LIMIT",
+                f"为保障大额交易安全，单笔满 ¥{threshold:.0f} 的大额订单每人每 {window_hours} 小时限下 1 单；"
+                f"如有大量采购需求，请联系{contact}手动开通大客户通道。",
+                429,
+            )
+    else:
+        cooldown_minutes = max(1, runtime.get_int("small_order_cooldown_minutes", settings.small_order_cooldown_minutes))
+        cutoff = now - timedelta(minutes=cooldown_minutes)
+        recent_small = base_query.filter(
+            Order.amount < threshold,
+            Order.created_at >= cutoff,
+        ).first()
+        if recent_small is not None:
+            raise OrderError(
+                "SMALL_ORDER_RATE_LIMIT",
+                f"为防止刷单与保障库存公平，小额订单每人每 {cooldown_minutes} 分钟限下 1 单；"
+                f"如有大量采购需求，请联系{contact}手动开通批量通道。",
+                429,
+            )
 
 
 def _create_order_locked(
@@ -260,7 +360,16 @@ def _create_order_locked(
         )
 
     coupon, discount = validate_coupon(db, coupon_code, subtotal, lock_row=True)
-    order.amount = max(Decimal("0.01"), subtotal - discount)
+    final_amount = max(Decimal("0.01"), subtotal - discount)
+    _check_order_frequency_limits(
+        db,
+        email=email,
+        user_id=user_id,
+        client_ip=client_ip,
+        order_amount=final_amount,
+        exclude_order_id=order.id,
+    )
+    order.amount = final_amount
     order.discount_amount = discount
     order.coupon_code = coupon.code if coupon else None
     db.add(order)
@@ -343,6 +452,28 @@ def create_payment(db: Session, order: Order, provider_name: str, client_ip: str
         db.add(order)
         db.commit()
         raise OrderError("ORDER_EXPIRED", "订单已超时，请重新下单")
+
+    if _risk_limits_active() and runtime.get_bool("enforce_payment_ip_match", settings.enforce_payment_ip_match):
+        order_ip = (order.client_ip or "").strip()
+        pay_ip = (client_ip or "").strip()
+        if order_ip and order_ip.lower() != "unknown" and pay_ip and pay_ip.lower() != "unknown" and order_ip != pay_ip:
+            db.add(
+                AuditLog(
+                    actor="security",
+                    action="payment.ip_mismatch",
+                    entity_type="order",
+                    entity_id=order.order_no,
+                    detail=f"order_ip={order_ip} pay_ip={pay_ip}",
+                    ip=pay_ip,
+                )
+            )
+            db.commit()
+            raise OrderError(
+                "PAYMENT_IP_MISMATCH",
+                f"检测到当前支付 IP 与下单时不一致，为防止代付及盗刷风险已拦截本次支付。"
+                f"请切换回下单时的网络环境重试，或联系{_support_contact_hint()}手动处理。",
+                403,
+            )
 
     direct_mode = (
         provider_name in {"crypto", "usdt_trc20", "usdc_erc20", "eth", "btc"}

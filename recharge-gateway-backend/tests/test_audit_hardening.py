@@ -133,3 +133,119 @@ def test_secret_redacting_log_filter_masks_pans_and_tokens():
     assert "[REDACTED_PAN]" in sanitized
     assert "[REDACTED_TOKEN]" in sanitized
     assert "[REDACTED_CLAUDE_KEY]" in sanitized
+
+
+def test_order_frequency_limits_and_payment_ip_match(db):
+    """Large orders (>=200) limited to 1/24h, small orders (<200) limited to 1/30m, and payment IP must match order IP."""
+    from types import SimpleNamespace
+    import pytest
+    from app.services import orders as order_service
+    from app.services import runtime_settings
+
+    runtime_settings.update_settings(
+        db,
+        {
+            "order_risk_limits_enabled": "true",
+            "large_order_threshold_cny": "200",
+            "large_order_window_hours": "24",
+            "small_order_cooldown_minutes": "30",
+            "enforce_payment_ip_match": "true",
+            "support_wechat": "MOLIPLY-VIP",
+        },
+        actor="test",
+    )
+
+    small_prod = db.query(Product).filter(Product.price < Decimal("200"), Product.active.is_(True)).first()
+    assert small_prod is not None
+
+    # 1. Small order: first succeeds, second within 30 min from same email/IP fails with 429 + support guidance
+    first_small = order_service.create_order(
+        db,
+        email="small.limit@example.com",
+        items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=1)],
+        coupon_code=None,
+        client_ip="203.0.113.10",
+    )
+    assert first_small.order_no.startswith("MOL")
+
+    with pytest.raises(order_service.OrderError) as exc_small:
+        order_service.create_order(
+            db,
+            email="small.limit@example.com",
+            items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=1)],
+            coupon_code=None,
+            client_ip="203.0.113.10",
+        )
+    assert exc_small.value.code == "SMALL_ORDER_RATE_LIMIT"
+    assert exc_small.value.status_code == 429
+    assert "MOLIPLY-VIP" in exc_small.value.message
+
+    # 2. Payment IP mismatch is blocked with 403; matching IP succeeds
+    with pytest.raises(order_service.OrderError) as exc_ip:
+        order_service.create_payment(db, first_small, "wechat", "198.51.100.99")
+    assert exc_ip.value.code == "PAYMENT_IP_MISMATCH"
+    assert exc_ip.value.status_code == 403
+    assert "MOLIPLY-VIP" in exc_ip.value.message
+
+    intent = order_service.create_payment(db, first_small, "wechat", "203.0.113.10")
+    assert intent["order_no"] == first_small.order_no
+
+    # 3. Large order (>= 200): first succeeds, second within 24h from same IP (even different email) fails with 429
+    large_qty = max(1, int((Decimal("200") // max(Decimal("1"), small_prod.price)) + 1))
+    first_large = order_service.create_order(
+        db,
+        email="large.limit1@example.com",
+        items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=large_qty)],
+        coupon_code=None,
+        client_ip="203.0.113.20",
+    )
+    assert first_large.amount >= Decimal("200")
+
+    with pytest.raises(order_service.OrderError) as exc_large:
+        order_service.create_order(
+            db,
+            email="large.limit2@example.com",
+            items=[SimpleNamespace(product_id=small_prod.id, variant_id=None, quantity=large_qty)],
+            coupon_code=None,
+            client_ip="203.0.113.20",
+        )
+    assert exc_large.value.code == "LARGE_ORDER_DAILY_LIMIT"
+    assert exc_large.value.status_code == 429
+    assert "MOLIPLY-VIP" in exc_large.value.message
+
+
+def test_pay_first_lock_after_payment_invariant(db):
+    """Unpaid PENDING orders must never lock inventory or generate deliveries until payment is settled."""
+    from types import SimpleNamespace
+    from app.models import AccountInventory, InventoryStatus
+    from app.services import orders as order_service
+
+    acct_prod = (
+        db.query(Product)
+        .filter(Product.delivery_type == DeliveryType.ACCOUNT_CREDENTIALS, Product.active.is_(True))
+        .first()
+    )
+    assert acct_prod is not None
+
+    before_avail = (
+        db.query(AccountInventory)
+        .filter(AccountInventory.product_id == acct_prod.id, AccountInventory.status == InventoryStatus.AVAILABLE)
+        .count()
+    )
+    order = order_service.create_order(
+        db,
+        email="payfirst@example.com",
+        items=[SimpleNamespace(product_id=acct_prod.id, variant_id=None, quantity=1)],
+        coupon_code=None,
+        client_ip="203.0.113.55",
+    )
+    assert order.status == OrderStatus.PENDING
+    assert sum(len(item.deliveries) for item in order.items) == 0
+
+    after_create_avail = (
+        db.query(AccountInventory)
+        .filter(AccountInventory.product_id == acct_prod.id, AccountInventory.status == InventoryStatus.AVAILABLE)
+        .count()
+    )
+    # Zero inventory locked before payment!
+    assert after_create_avail == before_avail

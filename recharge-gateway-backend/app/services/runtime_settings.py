@@ -56,6 +56,8 @@ BOOL_KEYS = {
     "feishu_mention_all",
     "self_vcc_headless",
     "self_vcc_cancel_autorenew",
+    "order_risk_limits_enabled",
+    "enforce_payment_ip_match",
 }
 
 INT_KEYS = {
@@ -80,6 +82,10 @@ INT_KEYS = {
     "sms_cancel_min_seconds",
     "sms_weight_smspool",
     "sms_weight_fivesim",
+    "large_order_window_hours",
+    "small_order_cooldown_minutes",
+    "max_pending_orders_per_email",
+    "max_pending_orders_per_ip",
 }
 
 FLOAT_KEYS = {
@@ -107,12 +113,24 @@ FLOAT_KEYS = {
     "us_pro_200v2_amount_usd",
     "us_pro_500_amount_usd",
     "us_plus_cost_usd",
+    "large_order_threshold_cny",
 }
 
 ENV_DEFAULTS = {
     "payment_mode": lambda: settings.payment_mode,
     "payment_gateway": lambda: "wechat",
     "mock_payment_enabled": lambda: settings.mock_payment_enabled,
+    "order_risk_limits_enabled": lambda: (
+        settings.order_risk_limits_enabled
+        if settings.order_risk_limits_enabled is not None
+        else settings.is_production
+    ),
+    "enforce_payment_ip_match": lambda: settings.enforce_payment_ip_match,
+    "large_order_threshold_cny": lambda: settings.large_order_threshold_cny,
+    "large_order_window_hours": lambda: settings.large_order_window_hours,
+    "small_order_cooldown_minutes": lambda: settings.small_order_cooldown_minutes,
+    "max_pending_orders_per_email": lambda: 3 if settings.is_production else 0,
+    "max_pending_orders_per_ip": lambda: 5 if settings.is_production else 0,
     "official_payment_subject_prefix": lambda: settings.official_payment_subject_prefix,
     "alipay_app_id": lambda: settings.alipay_app_id,
     "alipay_public_key": lambda: settings.alipay_public_key,
