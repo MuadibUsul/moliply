@@ -93,14 +93,17 @@ class Settings(BaseSettings):
     # Hard safety gate: production never accepts mock settlement unless this
     # environment-only switch is explicitly enabled for a controlled test.
     allow_mock_payment_in_production: bool = False
-    order_expire_minutes: int = 15
-    # Risk controls: large order 1/day, small order 1/30min, payment IP == order IP.
+    order_expire_minutes: int = 3
+    # Risk controls: large order 1/day, small order 1/30min, payment IP == order IP,
+    # and new-buyer large-order manual risk hold.
     # None means "auto-enabled in production, off in local/unit tests unless overridden".
     order_risk_limits_enabled: bool | None = None
     large_order_threshold_cny: float = 200.0
     large_order_window_hours: int = 24
     small_order_cooldown_minutes: int = 30
     enforce_payment_ip_match: bool = True
+    large_order_new_buyer_review_enabled: bool = True
+    trusted_buyer_min_days: int = 7
     enforce_stock: bool = True
     # When a shelf is empty, keep the product sellable if the operator's desk can
     # still fill it. Off means an empty shelf always greys the buy button out.

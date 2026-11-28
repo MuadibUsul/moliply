@@ -249,3 +249,65 @@ def test_pay_first_lock_after_payment_invariant(db):
     )
     # Zero inventory locked before payment!
     assert after_create_avail == before_avail
+
+
+def test_disposable_email_blocked_and_new_buyer_large_order_held_until_approved(client, db, admin_headers):
+    """Disposable emails are rejected; new buyers' large orders (>=200) hold for manual risk review until approved."""
+    from types import SimpleNamespace
+    import pytest
+    from app.services import orders as order_service
+    from app.services import runtime_settings
+
+    runtime_settings.update_settings(
+        db,
+        {
+            "order_risk_limits_enabled": "true",
+            "large_order_threshold_cny": "200",
+            "large_order_new_buyer_review_enabled": "true",
+            "trusted_buyer_min_days": "7",
+        },
+        actor="test",
+    )
+
+    prod = (
+        db.query(Product)
+        .filter(Product.delivery_type == DeliveryType.ACTIVATION_CODE, Product.active.is_(True))
+        .first()
+    )
+    assert prod is not None
+
+    # 1. Disposable email rejected
+    with pytest.raises(order_service.OrderError) as exc_disp:
+        order_service.create_order(
+            db,
+            email="fraudster@tempmail.com",
+            items=[SimpleNamespace(product_id=prod.id, variant_id=None, quantity=1)],
+            coupon_code=None,
+            client_ip="198.51.100.12",
+        )
+    assert exc_disp.value.code == "DISPOSABLE_EMAIL_NOT_ALLOWED"
+    assert exc_disp.value.status_code == 400
+
+    # 2. New buyer large order is held after payment (not auto-delivered)
+    qty = max(1, int((Decimal("200") // max(Decimal("1"), prod.price)) + 1))
+    order = order_service.create_order(
+        db,
+        email="new.whale@gmail.com",
+        items=[SimpleNamespace(product_id=prod.id, variant_id=None, quantity=qty)],
+        coupon_code=None,
+        client_ip="198.51.100.13",
+        user_agent="Mozilla/5.0 TestBrowser",
+    )
+    order_service.mark_order_paid(db, order, "wechat", "WX-RISK-TEST-001")
+    db.refresh(order)
+    assert order.status == OrderStatus.PAID
+    assert order.stock_pending is True
+    assert sum(len(i.deliveries) for i in order.items) == 0
+
+    # 3. Admin approves risk -> immediately delivered
+    approve_resp = client.post(
+        f"/api/v1/admin/orders/{order.order_no}/approve-risk?note=verified",
+        headers=admin_headers,
+    )
+    assert approve_resp.status_code == 200, approve_resp.text
+    assert approve_resp.json()["order"]["status"] == "DELIVERED"

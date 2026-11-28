@@ -58,6 +58,7 @@ BOOL_KEYS = {
     "self_vcc_cancel_autorenew",
     "order_risk_limits_enabled",
     "enforce_payment_ip_match",
+    "large_order_new_buyer_review_enabled",
 }
 
 INT_KEYS = {
@@ -86,6 +87,7 @@ INT_KEYS = {
     "small_order_cooldown_minutes",
     "max_pending_orders_per_email",
     "max_pending_orders_per_ip",
+    "trusted_buyer_min_days",
 }
 
 FLOAT_KEYS = {
@@ -126,6 +128,8 @@ ENV_DEFAULTS = {
         else settings.is_production
     ),
     "enforce_payment_ip_match": lambda: settings.enforce_payment_ip_match,
+    "large_order_new_buyer_review_enabled": lambda: settings.large_order_new_buyer_review_enabled,
+    "trusted_buyer_min_days": lambda: settings.trusted_buyer_min_days,
     "large_order_threshold_cny": lambda: settings.large_order_threshold_cny,
     "large_order_window_hours": lambda: settings.large_order_window_hours,
     "small_order_cooldown_minutes": lambda: settings.small_order_cooldown_minutes,

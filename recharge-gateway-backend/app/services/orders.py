@@ -137,11 +137,13 @@ def create_order(
     coupon_code: str | None,
     client_ip: str,
     user_id: int | None = None,
+    user_agent: str = "",
 ) -> Order:
     from contextlib import nullcontext
     from app.services.locks import redis_lock
 
     normalized_email = str(email).strip().lower()
+    _check_disposable_email(normalized_email)
     now = utcnow()
     max_pending_email = runtime.get_int("max_pending_orders_per_email", 3 if settings.is_production else 0)
     if max_pending_email > 0:
@@ -197,6 +199,7 @@ def create_order(
             coupon_code=coupon_code,
             client_ip=client_ip,
             user_id=user_id,
+            user_agent=user_agent,
         )
 
 
@@ -212,6 +215,95 @@ def _risk_limits_active() -> bool:
 def _support_contact_hint() -> str:
     wechat = runtime.get("support_wechat", settings.support_wechat).strip()
     return f"客服（微信：{wechat}）" if wechat else "在线客服"
+
+
+DISPOSABLE_EMAIL_DOMAINS: frozenset[str] = frozenset(
+    {
+        "tempmail.com",
+        "temp-mail.org",
+        "temp-mail.io",
+        "10minutemail.com",
+        "10minutemail.net",
+        "guerrillamail.com",
+        "guerrillamail.net",
+        "guerrillamail.org",
+        "sharklasers.com",
+        "mailinator.com",
+        "yopmail.com",
+        "trashmail.com",
+        "dispostable.com",
+        "getnada.com",
+        "maildrop.cc",
+        "mohmal.com",
+        "tempail.com",
+        "emailondeck.com",
+        "fakeinbox.com",
+        "throwawaymail.com",
+        "linshi-email.com",
+        "bccto.me",
+        "chacuo.net",
+        "027168.com",
+        "mailnesia.com",
+        "mintemail.com",
+    }
+)
+
+
+def _check_disposable_email(email: str) -> None:
+    if not _risk_limits_active():
+        return
+    if "@" not in email:
+        return
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    if domain in DISPOSABLE_EMAIL_DOMAINS:
+        raise OrderError(
+            "DISPOSABLE_EMAIL_NOT_ALLOWED",
+            "为保障交易与售后安全，暂不支持一次性临时邮箱下单，请使用常用邮箱（如 QQ、网易、Gmail 或 Outlook）",
+            400,
+        )
+
+
+def _is_trusted_veteran_buyer(db: Session, order: Order) -> bool:
+    """True if this buyer has at least 1 prior DELIVERED order older than trusted_buyer_min_days."""
+    min_days = max(1, runtime.get_int("trusted_buyer_min_days", settings.trusted_buyer_min_days))
+    cutoff = utcnow() - timedelta(days=min_days)
+    filters = [Order.email == order.email]
+    if order.user_id is not None:
+        filters.append(Order.user_id == order.user_id)
+    prior = (
+        db.query(Order.id)
+        .filter(
+            or_(*filters),
+            Order.id != order.id,
+            Order.status == OrderStatus.DELIVERED,
+            Order.delivered_at.isnot(None),
+            Order.delivered_at <= cutoff,
+        )
+        .first()
+    )
+    return prior is not None
+
+
+def _order_needs_risk_hold(db: Session, order: Order) -> bool:
+    """New-buyer large-order AML/anti-fraud hold: prevents remote QR-forwarding ('跑分代付') instant cashout."""
+    if not _risk_limits_active():
+        return False
+    if not runtime.get_bool("large_order_new_buyer_review_enabled", settings.large_order_new_buyer_review_enabled):
+        return False
+    threshold = Decimal(str(runtime.get_float("large_order_threshold_cny", settings.large_order_threshold_cny)))
+    if order.amount < threshold:
+        return False
+    approved = (
+        db.query(AuditLog.id)
+        .filter(
+            AuditLog.action == "order.risk_approved",
+            AuditLog.entity_id == order.order_no,
+        )
+        .first()
+    )
+    if approved is not None:
+        return False
+    return not _is_trusted_veteran_buyer(db, order)
 
 
 def _check_order_frequency_limits(
@@ -288,6 +380,7 @@ def _create_order_locked(
     coupon_code: str | None,
     client_ip: str,
     user_id: int | None = None,
+    user_agent: str = "",
 ) -> Order:
     order = Order(
         order_no=generate_order_no(db),
@@ -379,7 +472,7 @@ def _create_order_locked(
             action="order.create",
             entity_type="order",
             entity_id=order.order_no,
-            detail=f"amount={order.amount}",
+            detail=f"amount={order.amount} ua={(user_agent or '')[:160]}".strip(),
             ip=client_ip,
         )
     )
@@ -827,6 +920,46 @@ def fulfill_order(db: Session, order: Order) -> Order:
         raise OrderError("ORDER_NOT_PAID", "订单尚未支付")
     if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
         raise OrderError("ORDER_NOT_FULFILLABLE", "当前订单状态不可发货")
+
+    if _order_needs_risk_hold(db, order):
+        order.stock_pending = True
+        db.add(order)
+        already_held = (
+            db.query(AuditLog.id)
+            .filter(
+                AuditLog.action == "order.risk_review_hold",
+                AuditLog.entity_id == order.order_no,
+            )
+            .first()
+        )
+        if already_held is None:
+            db.add(
+                AuditLog(
+                    actor="security",
+                    action="order.risk_review_hold",
+                    entity_type="order",
+                    entity_id=order.order_no,
+                    detail=f"amount={order.amount} provider={order.payment_provider or ''} reason=new_buyer_large_order",
+                    ip=order.client_ip,
+                )
+            )
+        db.commit()
+        db.refresh(order)
+        if already_held is None:
+            feishu.dispatch_event(
+                "order.risk_review_hold",
+                "MOLIPLY 新客大额订单已触发风控挂起（待人工审核）",
+                {
+                    "订单号": order.order_no,
+                    "金额": f"¥{order.amount:.2f}",
+                    "买家邮箱": mask_email(order.email),
+                    "下单 IP": order.client_ip or "—",
+                    "处理建议": "核验付款人实名后在后台放行，异常则一键退款吊销",
+                },
+                severity="warning",
+                link_path=f"/admin/orders?q={order.order_no}",
+            )
+        return order
 
     was_delivered = order.status == OrderStatus.DELIVERED
     was_stock_pending = order.stock_pending
@@ -1393,3 +1526,38 @@ def refund_and_revoke_order(
         "disabled_codes": disabled_codes,
         "revoked_cce_keys": revoked_cce_keys,
     }
+
+
+def approve_risk_review_order(
+    db: Session,
+    order_no: str,
+    *,
+    note: str = "",
+    actor: str = "admin",
+    ip: str = "",
+) -> Order:
+    """Manually approve a risk-held new-buyer large order and immediately trigger delivery."""
+    order = (
+        db.query(Order)
+        .filter(func.upper(Order.order_no) == order_no.strip().upper())
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
+    if order.status not in {OrderStatus.PAID, OrderStatus.DELIVERED}:
+        raise OrderError("ORDER_NOT_PAID", "仅已支付订单可风控放行", 409)
+    db.add(
+        AuditLog(
+            actor=actor,
+            action="order.risk_approved",
+            entity_type="order",
+            entity_id=order.order_no,
+            detail=note[:200] or "manual risk review approved",
+            ip=ip,
+        )
+    )
+    db.commit()
+    order = fulfill_order(db, order)
+    if order.status == OrderStatus.DELIVERED:
+        _send_delivery_notification_async(db, order)
+    return order

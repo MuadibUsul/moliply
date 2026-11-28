@@ -581,6 +581,25 @@ def admin_codes(
     }
 
 
+@protected.post("/orders/{order_no}/approve-risk")
+def admin_approve_risk_order(
+    order_no: str,
+    request: Request,
+    note: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Approve a risk-held new-buyer large order and immediately fulfill it."""
+    order = order_service.approve_risk_review_order(
+        db,
+        order_no,
+        note=note,
+        actor=admin.get("sub", "admin"),
+        ip=client_ip(request),
+    )
+    return {"order": order_service.serialize_order(db, order, reveal=True, reveal_email=True)}
+
+
 @protected.post("/orders/{order_no}/refund-and-revoke")
 def admin_refund_and_revoke_order(
     order_no: str,

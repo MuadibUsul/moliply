@@ -134,6 +134,7 @@ def create_order(payload: OrderCreateRequest, request: Request, db: Session = De
         items=payload.items,
         coupon_code=payload.coupon_code,
         client_ip=client_ip(request),
+        user_agent=request.headers.get("user-agent", "")[:200],
     )
     user_token, _ = create_user_token(user)
     return {
