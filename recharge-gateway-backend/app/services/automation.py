@@ -316,3 +316,87 @@ def run_all_recovery(db: Session) -> dict:
         "recovered_tasks": task_res,
         "fulfilled_backorders": backorders,
     }
+
+
+def send_renewal_reminders(
+    db: Session,
+    *,
+    days_since_delivery: int = 27,
+    coupon_amount: Decimal = Decimal("5.00"),
+    min_amount: Decimal = Decimal("30.00"),
+    limit: int = 50,
+) -> dict[str, int]:
+    """Send 27-day renewal reminder emails with a 48h single-use comeback coupon."""
+    import secrets
+    from app.models import Coupon
+    from app.services import mailer
+
+    now = utcnow()
+    window_end = now - timedelta(days=days_since_delivery)
+    window_start = now - timedelta(days=days_since_delivery + 1)
+
+    orders = (
+        db.query(Order)
+        .filter(
+            Order.status == OrderStatus.DELIVERED,
+            Order.delivered_at.isnot(None),
+            Order.delivered_at >= window_start,
+            Order.delivered_at <= window_end,
+        )
+        .order_by(Order.delivered_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+    reminded = 0
+    coupons_created = 0
+    for order in orders:
+        already_sent = (
+            db.query(AuditLog.id)
+            .filter(
+                AuditLog.action == "renewal.reminder_sent",
+                AuditLog.entity_id == order.order_no,
+            )
+            .first()
+        )
+        if already_sent:
+            continue
+        code = f"RENEW{secrets.token_hex(3).upper()}"
+        coupon = Coupon(
+            code=code,
+            amount=coupon_amount,
+            min_amount=min_amount,
+            active=True,
+            max_uses=1,
+            expires_at=now + timedelta(hours=48),
+        )
+        db.add(coupon)
+        db.add(
+            AuditLog(
+                actor="system",
+                action="renewal.reminder_sent",
+                entity_type="order",
+                entity_id=order.order_no,
+                detail=f"coupon={code} email={order.email}",
+            )
+        )
+        coupons_created += 1
+        if mailer.smtp_configured():
+            try:
+                mailer.send_operator_email(
+                    f"【{settings.brand_name_en}】您的订阅即将到期，专属 ¥{coupon_amount:.0f} 续费券已送达",
+                    {
+                        "原订单号": order.order_no,
+                        "专属续费优惠码": code,
+                        "立减金额": f"¥{coupon_amount:.2f}（满 ¥{min_amount:.0f} 可用，48 小时内有效）",
+                        "续费入口": settings.public_store_url,
+                    },
+                    to_email=order.email,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Renewal email failed for %s", order.order_no, exc_info=False)
+        reminded += 1
+
+    if reminded:
+        db.commit()
+    return {"checked": len(orders), "reminded": reminded, "coupons_created": coupons_created}

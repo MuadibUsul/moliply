@@ -35,14 +35,48 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+class _SecretRedactingFilter(logging.Filter):
+    """Mask card PANs, bearer tokens, and Anthropic session keys before log emission."""
+
+    import re as _re
+
+    _PATTERNS = (
+        (_re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[REDACTED_PAN]"),
+        (_re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]{12,}", _re.IGNORECASE), r"\1[REDACTED_TOKEN]"),
+        (_re.compile(r"sk-ant-[A-Za-z0-9_\-.]{10,}"), "[REDACTED_CLAUDE_KEY]"),
+    )
+
+    @classmethod
+    def sanitize(cls, text: str) -> str:
+        out = text
+        for pat, repl in cls._PATTERNS:
+            out = pat.sub(repl, out)
+        return out
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self.sanitize(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(self.sanitize(a) if isinstance(a, str) else a for a in record.args)
+            elif isinstance(record.args, dict):
+                record.args = {k: (self.sanitize(v) if isinstance(v, str) else v) for k, v in record.args.items()}
+        return True
+
+
 def _configure_logging() -> None:
     level = logging.DEBUG if settings.debug else logging.INFO
+    redactor = _SecretRedactingFilter()
     if settings.log_format.lower() == "json":
         handler = logging.StreamHandler()
         handler.setFormatter(_JsonFormatter())
+        handler.addFilter(redactor)
         logging.basicConfig(level=level, handlers=[handler], force=True)
     else:
-        logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        handler.addFilter(redactor)
+        logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
 _configure_logging()

@@ -36,7 +36,7 @@ from app.models import (
 from app.services import feishu
 from app.services import runtime_settings as runtime
 from app.services.fulfillment import jit_delivery
-from app.services.catalog import available_sku_stock, available_stock, money
+from app.services.catalog import available_account_stock, available_sku_stock, available_stock, money
 from app.services.crypto import decrypt_text, encrypt_text, mask_email
 from app.services.mailer import send_delivery_email
 from app.services.payments import get_callback_provider, get_provider, masked_order_title
@@ -91,10 +91,19 @@ def generate_order_no(db: Session) -> str:
     raise OrderError("ORDER_NO_FAILED", "订单号生成失败，请重试", 500)
 
 
-def validate_coupon(db: Session, code: str | None, amount: Decimal) -> tuple[Coupon | None, Decimal]:
+def validate_coupon(
+    db: Session,
+    code: str | None,
+    amount: Decimal,
+    *,
+    lock_row: bool = False,
+) -> tuple[Coupon | None, Decimal]:
     if not code:
         return None, Decimal("0")
-    coupon = db.query(Coupon).filter(func.upper(Coupon.code) == code.strip().upper()).first()
+    query = db.query(Coupon).filter(func.upper(Coupon.code) == code.strip().upper())
+    if lock_row:
+        query = query.with_for_update()
+    coupon = query.first()
     if not coupon or not coupon.active:
         raise OrderError("COUPON_INVALID", "优惠码无效")
     now = utcnow()
@@ -129,10 +138,61 @@ def create_order(
     client_ip: str,
     user_id: int | None = None,
 ) -> Order:
+    from contextlib import nullcontext
+    from app.services.locks import redis_lock
+
+    normalized_email = str(email).strip().lower()
+    now = utcnow()
+    max_pending_email = runtime.get_int("max_pending_orders_per_email", 10 if settings.is_production else 0)
+    if max_pending_email > 0:
+        active_pending = int(
+            db.query(func.count(Order.id))
+            .filter(
+                Order.email == normalized_email,
+                Order.status == OrderStatus.PENDING,
+                (Order.expires_at.is_(None)) | (Order.expires_at > now),
+            )
+            .scalar()
+            or 0
+        )
+        if active_pending >= max_pending_email:
+            raise OrderError(
+                "TOO_MANY_PENDING_ORDERS",
+                "您当前有过多未支付订单，请先完成支付或等待超时后再下单",
+                429,
+            )
+
+    lock_ctx = (
+        redis_lock(f"lock:coupon:{coupon_code.strip().upper()}", ttl_seconds=10)
+        if coupon_code and coupon_code.strip()
+        else nullcontext(True)
+    )
+    with lock_ctx as acquired:
+        if not acquired:
+            raise OrderError("COUPON_BUSY", "优惠码核验繁忙，请稍后重试", 429)
+        return _create_order_locked(
+            db,
+            email=normalized_email,
+            items=items,
+            coupon_code=coupon_code,
+            client_ip=client_ip,
+            user_id=user_id,
+        )
+
+
+def _create_order_locked(
+    db: Session,
+    *,
+    email: str,
+    items: list[Any],
+    coupon_code: str | None,
+    client_ip: str,
+    user_id: int | None = None,
+) -> Order:
     order = Order(
         order_no=generate_order_no(db),
         user_id=user_id,
-        email=str(email).strip().lower(),
+        email=email,
         amount=Decimal("0"),
         status=OrderStatus.PENDING,
         client_ip=client_ip,
@@ -165,7 +225,7 @@ def create_order(
             stock = (
                 available_sku_stock(db, sku_type)
                 if product.delivery_type == DeliveryType.ACTIVATION_CODE
-                else available_stock(db, product)
+                else available_account_stock(db, product)
             )
             if stock < requested.quantity:
                 from app.services.catalog import secondary_market_ready
@@ -199,7 +259,7 @@ def create_order(
             )
         )
 
-    coupon, discount = validate_coupon(db, coupon_code, subtotal)
+    coupon, discount = validate_coupon(db, coupon_code, subtotal, lock_row=True)
     order.amount = max(Decimal("0.01"), subtotal - discount)
     order.discount_amount = discount
     order.coupon_code = coupon.code if coupon else None
@@ -1123,3 +1183,82 @@ def process_payment_notify(
         except IntegrityError:
             db.rollback()
     return provider.success_body()
+
+
+def refund_and_revoke_order(
+    db: Session,
+    order_no: str,
+    *,
+    reason: str = "",
+    actor: str = "admin",
+    ip: str = "",
+) -> dict[str, Any]:
+    """Mark an order REFUNDED and immediately revoke delivered digital entitlements.
+
+    - Disables any unused/locked ``ActivationCode`` bound to this order.
+    - Remotely revokes any ``CCE_DELIVERY_KEY`` via CCE HTTP/SQLite so the buyer's
+      Claude tunnel disconnects within 1 second.
+    """
+    from app.services.fulfillment import cce_delivery
+
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.deliveries))
+        .filter(func.upper(Order.order_no) == order_no.strip().upper())
+        .with_for_update()
+        .first()
+    )
+    if not order:
+        raise OrderError("ORDER_NOT_FOUND", "订单不存在", 404)
+
+    disabled_codes = 0
+    revoked_cce_keys = 0
+    for item in order.items:
+        for delivery in item.deliveries:
+            if delivery.kind == "ACTIVATION_CODE" and delivery.code_id:
+                code = db.get(ActivationCode, delivery.code_id)
+                if code and code.status != CodeStatus.DISABLED:
+                    code.status = CodeStatus.DISABLED
+                    db.add(code)
+                    disabled_codes += 1
+            elif delivery.kind == "CCE_DELIVERY_KEY":
+                try:
+                    raw_payload = decrypt_text(delivery.payload_enc)
+                    if cce_delivery.revoke_delivery_payload(raw_payload):
+                        revoked_cce_keys += 1
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to revoke CCE key for order %s", order.order_no, exc_info=False)
+
+    order.status = OrderStatus.REFUNDED
+    order.stock_pending = False
+    db.add(order)
+    db.add(
+        AuditLog(
+            actor=actor,
+            action="order.refund_and_revoke",
+            entity_type="order",
+            entity_id=order.order_no,
+            detail=f"codes_disabled={disabled_codes} cce_revoked={revoked_cce_keys} reason={reason[:120]}",
+            ip=ip,
+        )
+    )
+    db.commit()
+    feishu.dispatch_event(
+        "order.refunded",
+        "MOLIPLY 订单退款并吊销权益",
+        {
+            "订单号": order.order_no,
+            "金额": f"¥{order.amount:.2f}",
+            "禁用卡密": disabled_codes,
+            "吊销 CCE 隧道": revoked_cce_keys,
+            "原因": reason or "管理员退款吊销",
+        },
+        severity="warning",
+        link_path=f"/admin/orders?q={order.order_no}",
+    )
+    return {
+        "order_no": order.order_no,
+        "status": order.status.value,
+        "disabled_codes": disabled_codes,
+        "revoked_cce_keys": revoked_cce_keys,
+    }

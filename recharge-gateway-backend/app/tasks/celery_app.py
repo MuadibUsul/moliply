@@ -22,6 +22,12 @@ celery_app.conf.update(
     task_time_limit=600,
     task_soft_time_limit=570,
     broker_connection_retry_on_startup=True,
+    task_default_queue="fast",
+    task_routes={
+        "app.tasks.celery_worker.execute_recharge_task": {"queue": "browser"},
+        "app.tasks.celery_worker.execute_jit_job": {"queue": "browser"},
+        "app.tasks.celery_worker.*": {"queue": "fast"},
+    },
     beat_schedule={
         "cleanup-sensitive-tokens": {
             "task": "app.tasks.celery_worker.cleanup_tokens_task",
@@ -59,6 +65,10 @@ celery_app.conf.update(
         "feishu-daily-summary": {
             "task": "app.tasks.celery_worker.feishu_daily_summary_task",
             "schedule": crontab(hour=9, minute=0),
+        },
+        "send-renewal-reminders": {
+            "task": "app.tasks.celery_worker.send_renewal_reminders_task",
+            "schedule": crontab(hour=10, minute=30),
         },
     },
 )

@@ -118,9 +118,9 @@ services:
       args:
         INSTALL_BROWSER: "true"
     restart: unless-stopped
-    mem_limit: 2g
-    pids_limit: 1024
-    shm_size: 1gb
+    mem_limit: 1536m
+    pids_limit: 512
+    shm_size: 512m
     security_opt:
       - no-new-privileges:true
     env_file: ${MOLIPLY_ENV_FILE:-../.env}
@@ -151,13 +151,62 @@ services:
     volumes:
       - moliply_console_data:/data
       - moliply_artifacts:/artifacts
-    command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "--concurrency=2"]
+    command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "-Q", "browser", "--concurrency=1", "-n", "browser@%h"]
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.tasks.celery_worker.celery_app inspect ping -t 5 >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import os, redis; redis.Redis.from_url(os.environ['REDIS_URL'], socket_timeout=2).ping()\" >/dev/null 2>&1 || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 20s
+    logging: *logging
+    networks:
+      - internal
+
+  worker-fast:
+    image: moliply-api:${MOLIPLY_IMAGE_TAG:-latest}
+    build:
+      context: ../recharge-gateway-backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_BROWSER: "false"
+    restart: unless-stopped
+    mem_limit: 384m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    env_file: ${MOLIPLY_ENV_FILE:-../.env}
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      TASK_MODE: celery
+      LOG_FORMAT: json
+      DATABASE_URL: postgresql+psycopg2://moliply:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/moliply
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_STORE_URL: ${PUBLIC_STORE_URL:?PUBLIC_STORE_URL required}
+      PUBLIC_REDEEM_URL: ${PUBLIC_REDEEM_URL:?PUBLIC_REDEEM_URL required}
+      API_BASE_URL: ${PUBLIC_STORE_URL}
+      CORS_ORIGINS: ${PUBLIC_STORE_URL}
+      CCE_DB_PATH: /data/cce.sqlite3
+      CCE_TUNNEL_SECRETS: /data/cce.secrets
+      CCE_API_BASE: ${CCE_API_BASE:-}
+      CCE_ADMIN_TOKEN: ${CCE_ADMIN_TOKEN:-}
+      CCE_GATEWAY_ADDR: ${CCE_GATEWAY_ADDR:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - moliply_console_data:/data
+    command: ["celery", "-A", "app.tasks.celery_worker.celery_app", "worker", "-l", "INFO", "-Q", "fast,celery", "--concurrency=2", "-n", "fast@%h"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, redis; redis.Redis.from_url(os.environ['REDIS_URL'], socket_timeout=2).ping()\" >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     logging: *logging
     networks:
       - internal

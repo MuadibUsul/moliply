@@ -694,3 +694,37 @@ def pool_overview() -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def revoke_delivery_payload(payload_text: str) -> bool:
+    """Revoke a previously delivered CCE tunnel key (used on refund / chargeback / abuse)."""
+    parsed = parse_delivery_payload(payload_text)
+    card_key = parsed.get("CCE_KEY", "").strip()
+    if not card_key:
+        return False
+    if _http_ready():
+        try:
+            with _http_client() as client:
+                resp = client.post(f"/admin/keys/{card_key}/revoke")
+                if resp.status_code < 300:
+                    return True
+                # Fallback if the CCE daemon uses DELETE /admin/keys/{card_key}
+                resp2 = client.delete(f"/admin/keys/{card_key}")
+                return resp2.status_code < 300
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to revoke CCE key %s over HTTP", card_key[:12], exc_info=False)
+            return False
+    conn = _connect()
+    if conn is None:
+        return False
+    try:
+        cur = conn.execute("UPDATE delivery_keys SET is_active = 0 WHERE card_key = ?", (card_key,))
+        conn.commit()
+        if cur.rowcount > 0:
+            _export_tunnel_secrets(conn)
+            return True
+        return False
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()

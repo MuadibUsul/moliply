@@ -581,6 +581,24 @@ def admin_codes(
     }
 
 
+@protected.post("/orders/{order_no}/refund-and-revoke")
+def admin_refund_and_revoke_order(
+    order_no: str,
+    request: Request,
+    reason: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Mark an order REFUNDED, disable its activation codes, and remotely revoke any CCE delivery keys."""
+    return order_service.refund_and_revoke_order(
+        db,
+        order_no,
+        reason=reason,
+        actor=admin.get("sub", "admin"),
+        ip=client_ip(request),
+    )
+
+
 @protected.post("/codes/generate")
 def admin_generate_codes(
     payload: CodeGenerateRequest,

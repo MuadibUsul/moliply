@@ -156,6 +156,17 @@ def scan_direct_crypto_payments_task() -> int:
         db.close()
 
 
+@celery_app.task(name="app.tasks.celery_worker.send_renewal_reminders_task")
+def send_renewal_reminders_task() -> dict:
+    from app.services import automation
+
+    db = SessionLocal()
+    try:
+        return automation.send_renewal_reminders(db)
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.celery_worker.feishu_daily_summary_task")
 def feishu_daily_summary_task() -> dict:
     """09:00 Asia/Shanghai business summary for the Feishu bot."""
